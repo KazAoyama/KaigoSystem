@@ -1,0 +1,218 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_MOUSHIOKURI_ICHIRAN.EXCEL : 介護実績データ検索EXCEL出力
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+awk '$1=="'${shisetsu_select}'"'                       |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   > $tmp-riyosha_status
+cp $tmp-riyosha_status ${work}/riyosha_status
+
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+echo "99999999" "利用者以外"                                 > $tmp-riyosha_igai
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     |
+cat - $tmp-riyosha_igai                                      > $tmp-riyosha_master
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2 3                                                   > $tmp-riyosha_master_kana
+
+# SHISETSU_RIYOSHA_STATUSの準備
+
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                  > $tmp-all
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1                                                 |
+  join1 key=1 $tmp-riyosha_master                                   |
+  cat $tmp-all -                                                    |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME
+  join0 key=1 <(echo "${riyosha_name}")                             |
+  self 2                                                            > ${tmp}-riyosha_name
+else
+  :                                                                 > ${tmp}-riyosha_name
+fi
+
+# 施設の取得
+if [ -n "${shisetsu_select}" -a "${shisetsu_select}" != "_" ];then
+  echo "0" "全て"                                              |
+  cat - ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON              |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${shisetsu_select})                              |
+  self 2                                                       > ${tmp}-shisetsu_name
+else
+  :                                                            > ${tmp}-shisetsu_name
+fi
+
+# 建屋の取得
+if [ -n "${tateya}" -a "${tateya}" != "_" ];then
+  echo "${tateya}"                                             |
+  awk '{if($1=="1"){print "シニア"}else{print "ケア"}}'        > ${tmp}-tateya_name
+else
+  :                                                            > ${tmp}-tateya_name
+fi
+
+# フロアの取得
+if [ "${floor}" != 0 ];then
+  echo "${floor}F"
+else
+  echo "全て"
+fi                    > $tmp-floor_name
+
+# 実施者の取得
+if [ -n "${JISSHISHA}" -a "${JISSHISHA}" != "_" ];then
+  sakuseisha=$(echo ${JISSHISHA} | sed 's/+++/ /g' | self 1)
+  echo "0" "全て"                                              > $tmp-all_jisshisha
+  awk '$(NF-2)!=9' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER      |
+  self 1 2                                                       > $tmp-user_master
+  cat $tmp-all_jisshisha $tmp-user_master                        |
+  LANG=C sort -u                                                 |
+# 1:JISSISHA_CODE 2:JISSHISHA_NAME
+  join0 key=1 <(echo "${sakuseisha}")                             |
+  self 2                                                       > ${tmp}-jisshisha
+else
+  :                                                            > ${tmp}-jisshisha
+fi
+
+
+echo "0" "全て" |
+cat - ${apptbl_dir}/MOUSHIOKURI_SELECT |
+join0 key=1 <(echo "${moushiokuri_select}") |
+self 2          > ${tmp}-okuri_select
+echo "0" "全て" |
+cat - ${apptbl_dir}/MOUSHIOKURI_TAISHO  |
+join0 key=1 <(echo "${moushiokuri_taisho}") |
+self 2          > ${tmp}-okuri_taisho
+echo "0" "全て" |
+cat - ${apptbl_dir}/MOUSHIOKURI_KOUMOKU |
+join0 key=1 <(echo "${moushiokuri_koumoku}") |
+self 2          > ${tmp}-okuri_koumoku
+echo "${keyword}"   > ${tmp}-keyword
+
+echo  "${text_sakuseibi}" > ${tmp}-day1
+echo  "${text_sakuseibi2}" > ${tmp}-day2
+echo  "${time_from}" > ${tmp}-time_from
+echo  "${time_to}" > ${tmp}-time_to
+
+
+# searchfileの処理
+LANG=C sort -k6,7 $tmp-riyosha_status           |
+self 6 5                                        |
+getlast 1 1                                     > $tmp-riyosha_status_room
+cp $tmp-riyosha_status_room ${work}/riyosha_status_room
+
+if [ -e "${searchfile}" ];then
+  cat ${searchfile}                             |
+  awk '{gsub(/+++/," ",$4);print}'              |
+  delf 4                                        |
+  LANG=C sort -k1,1                             |
+tee ${work}/okuri_search_shokuin |
+  join2 +"職員連絡" key=1 $tmp-riyosha_master_kana          |
+  join2 +"---" key=1 $tmp-riyosha_status_room   |
+  delf 1                                        |
+tee ${work}/okuri_search |
+  LANG=C sort -k4,4 -k5,5                     |
+  delf 3                                        |
+  self 1 2 3 4 5 6 7 8 9 10 11                  > ${tmp}-search
+  # 1:目印 2:共有 3:開始時間 4:介護分類 5:介護項目 6:内容 7:備考 8:時間 9:実施者
+else
+  :
+fi
+
+
+TEMPLA=${temp_dir}/KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-shisetsu_name                \
+                    1 d4 ${tmp}-tateya_name                  \
+                    1 f4 ${tmp}-floor_name                   \
+                    1 h4 ${tmp}-riyosha_name                 \
+                    1 b5 ${tmp}-day1                         \
+                    1 d5 ${tmp}-day2                         \
+                    1 b6 ${tmp}-time_from                    \
+                    1 d6 ${tmp}-time_to                      \
+                    1 b7 ${tmp}-keyword                      \
+                    1 b8 ${tmp}-jisshisha                    \
+                    1 b9 ${tmp}-okuri_select                 \
+                    1 d9 ${tmp}-okuri_taisho                 \
+                    1 f9 ${tmp}-okuri_koumoku                \
+                    1 a13 ${tmp}-search                      > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

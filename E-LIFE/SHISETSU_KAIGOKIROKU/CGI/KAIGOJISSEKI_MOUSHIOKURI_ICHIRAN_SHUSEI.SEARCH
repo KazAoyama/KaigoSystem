@@ -1,0 +1,126 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_SHUSEI.SEARCH : 介護実績一覧表示検索用CGI
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_SHUSEI.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月日の取得
+from_month="$(echo ${hd_sakuseibi} | awk '{print substr($1,1,6)}')"
+to_month="$(echo ${hd_sakuseibi2} | awk '{print substr($1,1,6)}')"
+keisan=$(mdate ${from_month}m ${to_month}m)
+if [ "${keisan}" -ne "0" ];then
+  mdate -e ${to_month}m/${keisan} > ${tmp}-searchmonth
+else
+  echo ${to_month}                > ${tmp}-searchmonth
+fi
+
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+self 1 2                                                       > $tmp-user_master
+
+# 処理の分岐
+if [ "${tateya}" = "01" ];then
+  for month in $(cat ${tmp}-searchmonth);do
+    cat ${pompa_dir}/${shisetsu_select}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR       |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    LANG=C sort -k13,13                                                                          |
+    join0 key=13 <(echo ${ShuseiId})                                                             |
+    self 1 2 4 3 5 6 8 9 10 11 13                                                                |
+    # 1:利用者 2:作成日 3:時刻 4:申送り種別 5:対象 6:項目 7:日誌共有 8:支援経過共有 9:内容 10:色 11:ID
+    awk '{print $1,$2,$3,"'${userid}'",$4,$5,$6,$7,$8,$9,$10,$11}'                               |
+    join1 key=4 $tmp-user_master                                                                 |
+    awk '{print $1,$2,$3,$4"+++"$5,$6,$7,$8,$9,$10,$11,$12}'                                     >> ${tmp}-search_kekka
+    # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  done
+else
+  for month in $(cat ${tmp}-searchmonth);do
+    cat ${pompa_dir}/${shisetsu_select}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI              |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    LANG=C sort -k13,13                                                                          |
+    join0 key=13 <(echo ${ShuseiId})                                                             |
+    self 1 2 4 3 5 6 8 9 10 11 13                                                                |
+    # 1:利用者 2:作成日 3:時刻 4:申送り種別 5:対象 6:項目 7:日誌共有 8:支援経過共有 9:内容 10:色 11:ID
+    awk '{print $1,$2,$3,"'${userid}'",$4,$5,$6,$7,$8,$9,$10,$11}'                               |
+tee koko |
+    join1 key=4 $tmp-user_master                                                                 |
+    awk '{print $1,$2,$3,$4"+++"$5,$6,$7,$8,$9,$10,$11,$12}'                                     >> ${tmp}-search_kekka
+    # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  done
+fi
+
+if [ "$(gyo ${tmp}-search_kekka)" = 0 ];then
+  exit 0
+else
+  cat ${tmp}-search_kekka
+fi
+cp ${tmp}-search_kekka search_kekka
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

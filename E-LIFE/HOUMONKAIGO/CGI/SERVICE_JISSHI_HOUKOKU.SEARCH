@@ -1,0 +1,166 @@
+#!/bin/bash
+#
+# SERVICE_JISSHI_HOUKOKU.SEARCH
+# サービス実施報告書　検索用CGI
+#
+# Written by K.Aoyama :20131216
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+HoukokuID
+slKyotakuKaigoShienJigyousho
+slKaigoShienSenmonin
+slHoumonkaigoJigyousho
+slServiceTeikyoSekininsha
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+cat <<- FIN > $tmp-header_date
+regdate
+FIN
+
+cat ${tmp}-header_date   |
+yarr                > ${tmp}-header_date_yoko
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# データID
+# --------------------------
+# 
+if [ -z "${HoukokuID}" -o "${HoukokuID}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${HoukokuID}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# IDが指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1 3                    |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-houkoku_base
+
+:> ${tmp}-houkoku_date_base
+if [ -s ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU_DATE ] ; then
+#--------------------------------------------------------------
+# 登録日付ファイルの取得
+  cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU_DATE |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# データID
+# --------------------------
+# 
+  if [ -z "${HoukokuID}" -o "${HoukokuID}" = "_" ] ; then
+    cat -
+  else
+    awk '$2=="'${HoukokuID}'"'
+  fi |
+# --------------------------
+#--------------------------------------------------------------
+# IDが指定されていない（初期状態）時は最新のものを表示する
+  getlast 1 1                 |
+#--------------------------------------------------------------
+# 日付のみ
+  self 3                    |
+  cat ${tmp}-header_date_yoko -    |
+  tateyoko                    |
+  awk '{print "k",$0}'        > ${tmp}-houkoku_date_base
+else
+  echo "k" "@" > ${tmp}-houkoku_date_base
+fi
+
+
+# 報告リストデータ取得用対象ID
+awk '{print $2}' $tmp-result > $tmp-taishouid
+
+cp -p $tmp-taishouid $work_dir/taishouid_houkoku
+
+
+
+#--------------------------------------------------------------
+# 長期目標ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/HOUKOKULIST |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishouid -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、データID、更新日付をはずす
+delf 1/2 NF-2/NF                     |
+#--------------------------------------------------------------
+awk '{print "l",$0}'        > ${tmp}-houkokulist
+
+
+# 報告書データを表示
+cat ${tmp}-houkoku_base ${tmp}-houkoku_date_base ${tmp}-houkokulist
+
+
+## 終了
+rm -f $tmp-*
+exit 0

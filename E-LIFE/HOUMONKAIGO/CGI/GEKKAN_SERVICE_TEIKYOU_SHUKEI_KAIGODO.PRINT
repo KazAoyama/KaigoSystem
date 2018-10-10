@@ -1,0 +1,127 @@
+#!/bin/bash
+#
+# GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.PRINT : 月間サービス提供回数集計表印刷
+#
+# Usage : GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.PRINT namefile datafile
+#
+# Written by K.Aoyama(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+function error_exit {
+  message="$1"
+cat << FIN > $tmp-html
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+# ファイル名をはく
+  cat $tmp-html
+  rm -f $tmp-*
+  exit 0
+}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#///////////////////////////////////////////////////////////////////
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#//////////////////////////////////////////////////////////////////
+
+#  サーチで取得したデータをリストにセット
+if [ "$(gyo ${searchfile})" != 0 ] ; then
+   cat ${searchfile} > $tmp-listdata
+else
+# 空のリストデータを作成する
+   : > $tmp-listdata
+fi
+
+[ "$(gyo $tmp-listdata)" = "0" ] && error_exit "データが見つかりません"
+
+# 合計欄用データ作成
+sm2 0 0 4 12 $tmp-listdata > ${tmp}-goukei
+
+
+
+# 対象年月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' > $tmp-disp_nengetsu
+
+dispTaishouNengetsu=$(cat $tmp-disp_nengetsu)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###TAISHOUNENGETSU### $dispTaishouNengetsu
+###DOMAIN### $domain
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###GEKKANRIYOUJISSEKIMEISAIICHIRAN### - $tmp-listdata |
+mojihame -l###GOUKEI### - $tmp-goukei |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-gekkan_service_teikyou_shukei_kaigodo_pdf.html
+#--------------------------------------------------------------
+cp $tmp-gekkan_service_teikyou_shukei_kaigodo_pdf.html $work_dir/gekkan_service_teikyou_shukei_kaigodo_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-gekkan_service_teikyou_shukei_kaigodo_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.pdf
+
+  # HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0
+

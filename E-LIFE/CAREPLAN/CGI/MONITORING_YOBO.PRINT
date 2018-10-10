@@ -1,0 +1,658 @@
+#!/bin/bash
+#
+# MONITORING_YOBO.PRINT : モニタリング印刷
+#
+# Usage : MONITORING_YOBO.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:和暦開始 5:誕生日月
+# 6:誕生日   7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 検索結果
+if [ "$(gyo ${result_data})" != 0 ] ; then
+   cat ${result_data}         > $tmp-listdata
+else
+   : > $tmp-listdata
+fi
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata)
+#--------------------------------------------------------
+
+# テスト
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" -o "$hdKeikakuSakuseiDate" = " " ] ; then
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+fi
+
+dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!="" {print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+disptaChoukiMokuhyou6=$(echo $taChoukiMokuhyou6 | sed 's/\\n//g')
+disptaChoukiMokuhyou7=$(echo $taChoukiMokuhyou7 | sed 's/\\n//g')
+disptaChoukiMokuhyou8=$(echo $taChoukiMokuhyou8 | sed 's/\\n//g')
+disptaChoukiMokuhyou9=$(echo $taChoukiMokuhyou9 | sed 's/\\n//g')
+disptaChoukiMokuhyou10=$(echo $taChoukiMokuhyou10 | sed 's/\\n//g')
+
+cat << FIN | sed 's/ _/ @/g' > $tmp-calsed
+###RIYOUSHAID###   $Riyoushaid
+###HDKEIKAKUSAKUSEIDATE###   $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE###   $KeikakuSakuseiDate
+###USERID###   $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###HDMONITORINGSAKUSEIDATE###   $hdMonitoringSakuseiDate
+###HYOUKAKIKANFIRSTMONTH###   $HyoukakikanFirstMonth
+###HYOUKAKIKANFIRSTDAY###   $HyoukakikanFirstDay
+###HYOUKAKIKANSECONDMONTH###   $HyoukakikanSecondMonth
+###HYOUKAKIKANSECONDDAY###   $HyoukakikanSecondDay
+###HYOUKAKIKANTHIRDMONTH###   $HyoukakikanThirdMonth
+###HYOUKAKIKANTHIRDDAY###   $HyoukakikanThirdDay
+###HYOUKAKIKANFOURTHMONTH###   $HyoukakikanFourthMonth
+###HYOUKAKIKANFOURTHDAY###   $HyoukakikanFourthDay
+###HYOUKAKIKANFIFTHMONTH###   $HyoukakikanFifthMonth
+###HYOUKAKIKANFIFTHDAY###   $HyoukakikanFifthDay
+###HYOUKAKIKANSIXTHMONTH###   $HyoukakikanSixthMonth
+###HYOUKAKIKANSIXTHDAY###   $HyoukakikanSixthDay
+###HYOUKAKOUMOKU1###   $HyoukaKoumoku1
+###HYOUKAKIJUNFIRST1###   $HyoukakijunFirst1
+###HYOUKAKIJUNSECOND1###   $HyoukakijunSecond1
+###HYOUKAKIJUNTHIRD1###   $HyoukakijunThird1
+###HYOUKAKIJUNFOURTH1###   $HyoukakijunFourth1
+###HYOUKAKIJUNFIFTH1###   $HyoukakijunFifth1
+###HYOUKAKIJUNSIXTH1###   $HyoukakijunSixth1
+###HYOUKAKOUMOKU2###   $HyoukaKoumoku2
+###HYOUKAKIJUNFIRST2###   $HyoukakijunFirst2
+###HYOUKAKIJUNSECOND2###   $HyoukakijunSecond2
+###HYOUKAKIJUNTHIRD2###   $HyoukakijunThird2
+###HYOUKAKIJUNFOURTH2###   $HyoukakijunFourth2
+###HYOUKAKIJUNFIFTH2###   $HyoukakijunFifth2
+###HYOUKAKIJUNSIXTH2###   $HyoukakijunSixth2
+###HYOUKAKOUMOKU3###   $HyoukaKoumoku3
+###HYOUKAKIJUNFIRST3###   $HyoukakijunFirst3
+###HYOUKAKIJUNSECOND3###   $HyoukakijunSecond3
+###HYOUKAKIJUNTHIRD3###   $HyoukakijunThird3
+###HYOUKAKIJUNFOURTH3###   $HyoukakijunFourth3
+###HYOUKAKIJUNFIFTH3###   $HyoukakijunFifth3
+###HYOUKAKIJUNSIXTH3###   $HyoukakijunSixth3
+###HYOUKAKOUMOKU4###   $HyoukaKoumoku4
+###HYOUKAKIJUNFIRST4###   $HyoukakijunFirst4
+###HYOUKAKIJUNSECOND4###   $HyoukakijunSecond4
+###HYOUKAKIJUNTHIRD4###   $HyoukakijunThird4
+###HYOUKAKIJUNFOURTH4###   $HyoukakijunFourth4
+###HYOUKAKIJUNFIFTH4###   $HyoukakijunFifth4
+###HYOUKAKIJUNSIXTH4###   $HyoukakijunSixth4
+###HYOUKAKOUMOKU5###   $HyoukaKoumoku5
+###HYOUKAKIJUNFIRST5###   $HyoukakijunFirst5
+###HYOUKAKIJUNSECOND5###   $HyoukakijunSecond5
+###HYOUKAKIJUNTHIRD5###   $HyoukakijunThird5
+###HYOUKAKIJUNFOURTH5###   $HyoukakijunFourth5
+###HYOUKAKIJUNFIFTH5###   $HyoukakijunFifth5
+###HYOUKAKIJUNSIXTH5###   $HyoukakijunSixth5
+###JOUKYOUKIJUNFIRST1###   $JoukyoukijunFirst1
+###JOUKYOUKIJUNSECOND1###   $JoukyoukijunSecond1
+###JOUKYOUKIJUNTHIRD1###   $JoukyoukijunThird1
+###JOUKYOUKIJUNFOURTH1###   $JoukyoukijunFourth1
+###JOUKYOUKIJUNFIFTH1###   $JoukyoukijunFifth1
+###JOUKYOUKIJUNSIXTH1###   $JoukyoukijunSixth1
+###JOUKYOUKIJUNFIRST2###   $JoukyoukijunFirst2
+###JOUKYOUKIJUNSECOND2###   $JoukyoukijunSecond2
+###JOUKYOUKIJUNTHIRD2###   $JoukyoukijunThird2
+###JOUKYOUKIJUNFOURTH2###   $JoukyoukijunFourth2
+###JOUKYOUKIJUNFIFTH2###   $JoukyoukijunFifth2
+###JOUKYOUKIJUNSIXTH2###   $JoukyoukijunSixth2
+###JOUKYOUKIJUNFIRST3###   $JoukyoukijunFirst3
+###JOUKYOUKIJUNSECOND3###   $JoukyoukijunSecond3
+###JOUKYOUKIJUNTHIRD3###   $JoukyoukijunThird3
+###JOUKYOUKIJUNFOURTH3###   $JoukyoukijunFourth3
+###JOUKYOUKIJUNFIFTH3###   $JoukyoukijunFifth3
+###JOUKYOUKIJUNSIXTH3###   $JoukyoukijunSixth3
+###TACHOUKIMOKUHYOU1###   $taChoukiMokuhyou1
+###HYOUKAPLANJOUDANFIRST1###   $HyoukaPlanJoudanFirst1
+###HYOUKAPLANJOUDANSECOND1###   $HyoukaPlanJoudanSecond1
+###HYOUKAPLANJOUDANTHIRD1###   $HyoukaPlanJoudanThird1
+###HYOUKAPLANJOUDANFOURTH1###   $HyoukaPlanJoudanFourth1
+###HYOUKAPLANJOUDANFIFTH1###   $HyoukaPlanJoudanFifth1
+###HYOUKAPLANJOUDANSIXTH1###   $HyoukaPlanJoudanSixth1
+###HYOUKAPLANCHUDANFIRST1###   $HyoukaPlanChudanFirst1
+###HYOUKAPLANCHUDANSECOND1###   $HyoukaPlanChudanSecond1
+###HYOUKAPLANCHUDANTHIRD1###   $HyoukaPlanChudanThird1
+###HYOUKAPLANCHUDANFOURTH1###   $HyoukaPlanChudanFourth1
+###HYOUKAPLANCHUDANFIFTH1###   $HyoukaPlanChudanFifth1
+###HYOUKAPLANCHUDANSIXTH1###   $HyoukaPlanChudanSixth1
+###TACHOUKIMOKUHYOU2###   $taChoukiMokuhyou2
+###HYOUKAPLANJOUDANFIRST2###   $HyoukaPlanJoudanFirst2
+###HYOUKAPLANJOUDANSECOND2###   $HyoukaPlanJoudanSecond2
+###HYOUKAPLANJOUDANTHIRD2###   $HyoukaPlanJoudanThird2
+###HYOUKAPLANJOUDANFOURTH2###   $HyoukaPlanJoudanFourth2
+###HYOUKAPLANJOUDANFIFTH2###   $HyoukaPlanJoudanFifth2
+###HYOUKAPLANJOUDANSIXTH2###   $HyoukaPlanJoudanSixth2
+###HYOUKAPLANCHUDANFIRST2###   $HyoukaPlanChudanFirst2
+###HYOUKAPLANCHUDANSECOND2###   $HyoukaPlanChudanSecond2
+###HYOUKAPLANCHUDANTHIRD2###   $HyoukaPlanChudanThird2
+###HYOUKAPLANCHUDANFOURTH2###   $HyoukaPlanChudanFourth2
+###HYOUKAPLANCHUDANFIFTH2###   $HyoukaPlanChudanFifth2
+###HYOUKAPLANCHUDANSIXTH2###   $HyoukaPlanChudanSixth2
+###TACHOUKIMOKUHYOU3###   $taChoukiMokuhyou3
+###HYOUKAPLANJOUDANFIRST3###   $HyoukaPlanJoudanFirst3
+###HYOUKAPLANJOUDANSECOND3###   $HyoukaPlanJoudanSecond3
+###HYOUKAPLANJOUDANTHIRD3###   $HyoukaPlanJoudanThird3
+###HYOUKAPLANJOUDANFOURTH3###   $HyoukaPlanJoudanFourth3
+###HYOUKAPLANJOUDANFIFTH3###   $HyoukaPlanJoudanFifth3
+###HYOUKAPLANJOUDANSIXTH3###   $HyoukaPlanJoudanSixth3
+###HYOUKAPLANCHUDANFIRST3###   $HyoukaPlanChudanFirst3
+###HYOUKAPLANCHUDANSECOND3###   $HyoukaPlanChudanSecond3
+###HYOUKAPLANCHUDANTHIRD3###   $HyoukaPlanChudanThird3
+###HYOUKAPLANCHUDANFOURTH3###   $HyoukaPlanChudanFourth3
+###HYOUKAPLANCHUDANFIFTH3###   $HyoukaPlanChudanFifth3
+###HYOUKAPLANCHUDANSIXTH3###   $HyoukaPlanChudanSixth3
+###TACHOUKIMOKUHYOU4###   $taChoukiMokuhyou4
+###HYOUKAPLANJOUDANFIRST4###   $HyoukaPlanJoudanFirst4
+###HYOUKAPLANJOUDANSECOND4###   $HyoukaPlanJoudanSecond4
+###HYOUKAPLANJOUDANTHIRD4###   $HyoukaPlanJoudanThird4
+###HYOUKAPLANJOUDANFOURTH4###   $HyoukaPlanJoudanFourth4
+###HYOUKAPLANJOUDANFIFTH4###   $HyoukaPlanJoudanFifth4
+###HYOUKAPLANJOUDANSIXTH4###   $HyoukaPlanJoudanSixth4
+###HYOUKAPLANCHUDANFIRST4###   $HyoukaPlanChudanFirst4
+###HYOUKAPLANCHUDANSECOND4###   $HyoukaPlanChudanSecond4
+###HYOUKAPLANCHUDANTHIRD4###   $HyoukaPlanChudanThird4
+###HYOUKAPLANCHUDANFOURTH4###   $HyoukaPlanChudanFourth4
+###HYOUKAPLANCHUDANFIFTH4###   $HyoukaPlanChudanFifth4
+###HYOUKAPLANCHUDANSIXTH4###   $HyoukaPlanChudanSixth4
+###TACHOUKIMOKUHYOU5###   $taChoukiMokuhyou5
+###HYOUKAPLANJOUDANFIRST5###   $HyoukaPlanJoudanFirst5
+###HYOUKAPLANJOUDANSECOND5###   $HyoukaPlanJoudanSecond5
+###HYOUKAPLANJOUDANTHIRD5###   $HyoukaPlanJoudanThird5
+###HYOUKAPLANJOUDANFOURTH5###   $HyoukaPlanJoudanFourth5
+###HYOUKAPLANJOUDANFIFTH5###   $HyoukaPlanJoudanFifth5
+###HYOUKAPLANJOUDANSIXTH5###   $HyoukaPlanJoudanSixth5
+###HYOUKAPLANCHUDANFIRST5###   $HyoukaPlanChudanFirst5
+###HYOUKAPLANCHUDANSECOND5###   $HyoukaPlanChudanSecond5
+###HYOUKAPLANCHUDANTHIRD5###   $HyoukaPlanChudanThird5
+###HYOUKAPLANCHUDANFOURTH5###   $HyoukaPlanChudanFourth5
+###HYOUKAPLANCHUDANFIFTH5###   $HyoukaPlanChudanFifth5
+###HYOUKAPLANCHUDANSIXTH5###   $HyoukaPlanChudanSixth5
+###TACHOUKIMOKUHYOU6###   $taChoukiMokuhyou6
+###DISPTACHOUKIMOKUHYOU6###   $disptaChoukiMokuhyou6
+###HYOUKAPLANJOUDANFIRST6###   $HyoukaPlanJoudanFirst6
+###HYOUKAPLANJOUDANSECOND6###   $HyoukaPlanJoudanSecond6
+###HYOUKAPLANJOUDANTHIRD6###   $HyoukaPlanJoudanThird6
+###HYOUKAPLANJOUDANFOURTH6###   $HyoukaPlanJoudanFourth6
+###HYOUKAPLANJOUDANFIFTH6###   $HyoukaPlanJoudanFifth6
+###HYOUKAPLANJOUDANSIXTH6###   $HyoukaPlanJoudanSixth6
+###HYOUKAPLANCHUDANFIRST6###   $HyoukaPlanChudanFirst6
+###HYOUKAPLANCHUDANSECOND6###   $HyoukaPlanChudanSecond6
+###HYOUKAPLANCHUDANTHIRD6###   $HyoukaPlanChudanThird6
+###HYOUKAPLANCHUDANFOURTH6###   $HyoukaPlanChudanFourth6
+###HYOUKAPLANCHUDANFIFTH6###   $HyoukaPlanChudanFifth6
+###HYOUKAPLANCHUDANSIXTH6###   $HyoukaPlanChudanSixth6
+###TACHOUKIMOKUHYOU7###   $taChoukiMokuhyou7
+###DISPTACHOUKIMOKUHYOU7###   $disptaChoukiMokuhyou7
+###HYOUKAPLANJOUDANFIRST7###   $HyoukaPlanJoudanFirst7
+###HYOUKAPLANJOUDANSECOND7###   $HyoukaPlanJoudanSecond7
+###HYOUKAPLANJOUDANTHIRD7###   $HyoukaPlanJoudanThird7
+###HYOUKAPLANJOUDANFOURTH7###   $HyoukaPlanJoudanFourth7
+###HYOUKAPLANJOUDANFIFTH7###   $HyoukaPlanJoudanFifth7
+###HYOUKAPLANJOUDANSIXTH7###   $HyoukaPlanJoudanSixth7
+###HYOUKAPLANCHUDANFIRST7###   $HyoukaPlanChudanFirst7
+###HYOUKAPLANCHUDANSECOND7###   $HyoukaPlanChudanSecond7
+###HYOUKAPLANCHUDANTHIRD7###   $HyoukaPlanChudanThird7
+###HYOUKAPLANCHUDANFOURTH7###   $HyoukaPlanChudanFourth7
+###HYOUKAPLANCHUDANFIFTH7###   $HyoukaPlanChudanFifth7
+###HYOUKAPLANCHUDANSIXTH7###   $HyoukaPlanChudanSixth7
+###TACHOUKIMOKUHYOU8###   $taChoukiMokuhyou8
+###DISPTACHOUKIMOKUHYOU8###   $disptaChoukiMokuhyou8
+###HYOUKAPLANJOUDANFIRST8###   $HyoukaPlanJoudanFirst8
+###HYOUKAPLANJOUDANSECOND8###   $HyoukaPlanJoudanSecond8
+###HYOUKAPLANJOUDANTHIRD8###   $HyoukaPlanJoudanThird8
+###HYOUKAPLANJOUDANFOURTH8###   $HyoukaPlanJoudanFourth8
+###HYOUKAPLANJOUDANFIFTH8###   $HyoukaPlanJoudanFifth8
+###HYOUKAPLANJOUDANSIXTH8###   $HyoukaPlanJoudanSixth8
+###HYOUKAPLANCHUDANFIRST8###   $HyoukaPlanChudanFirst8
+###HYOUKAPLANCHUDANSECOND8###   $HyoukaPlanChudanSecond8
+###HYOUKAPLANCHUDANTHIRD8###   $HyoukaPlanChudanThird8
+###HYOUKAPLANCHUDANFOURTH8###   $HyoukaPlanChudanFourth8
+###HYOUKAPLANCHUDANFIFTH8###   $HyoukaPlanChudanFifth8
+###HYOUKAPLANCHUDANSIXTH8###   $HyoukaPlanChudanSixth8
+###TACHOUKIMOKUHYOU9###   $taChoukiMokuhyou9
+###DISPTACHOUKIMOKUHYOU9###   $disptaChoukiMokuhyou9
+###HYOUKAPLANJOUDANFIRST9###   $HyoukaPlanJoudanFirst9
+###HYOUKAPLANJOUDANSECOND9###   $HyoukaPlanJoudanSecond9
+###HYOUKAPLANJOUDANTHIRD9###   $HyoukaPlanJoudanThird9
+###HYOUKAPLANJOUDANFOURTH9###   $HyoukaPlanJoudanFourth9
+###HYOUKAPLANJOUDANFIFTH9###   $HyoukaPlanJoudanFifth9
+###HYOUKAPLANJOUDANSIXTH9###   $HyoukaPlanJoudanSixth9
+###HYOUKAPLANCHUDANFIRST9###   $HyoukaPlanChudanFirst9
+###HYOUKAPLANCHUDANSECOND9###   $HyoukaPlanChudanSecond9
+###HYOUKAPLANCHUDANTHIRD9###   $HyoukaPlanChudanThird9
+###HYOUKAPLANCHUDANFOURTH9###   $HyoukaPlanChudanFourth9
+###HYOUKAPLANCHUDANFIFTH9###   $HyoukaPlanChudanFifth9
+###HYOUKAPLANCHUDANSIXTH9###   $HyoukaPlanChudanSixth9
+###TACHOUKIMOKUHYOU10###   $taChoukiMokuhyou10
+###DISPTACHOUKIMOKUHYOU10###   $disptaChoukiMokuhyou10
+###HYOUKAPLANJOUDANFIRST10###   $HyoukaPlanJoudanFirst10
+###HYOUKAPLANJOUDANSECOND10###   $HyoukaPlanJoudanSecond10
+###HYOUKAPLANJOUDANTHIRD10###   $HyoukaPlanJoudanThird10
+###HYOUKAPLANJOUDANFOURTH10###   $HyoukaPlanJoudanFourth10
+###HYOUKAPLANJOUDANFIFTH10###   $HyoukaPlanJoudanFifth10
+###HYOUKAPLANJOUDANSIXTH10###   $HyoukaPlanJoudanSixth10
+###HYOUKAPLANCHUDANFIRST10###   $HyoukaPlanChudanFirst10
+###HYOUKAPLANCHUDANSECOND10###   $HyoukaPlanChudanSecond10
+###HYOUKAPLANCHUDANTHIRD10###   $HyoukaPlanChudanThird10
+###HYOUKAPLANCHUDANFOURTH10###   $HyoukaPlanChudanFourth10
+###HYOUKAPLANCHUDANFIFTH10###   $HyoukaPlanChudanFifth10
+###HYOUKAPLANCHUDANSIXTH10###   $HyoukaPlanChudanSixth10
+###SHOKENFIRST1###  $ShokenFirst1
+###SHOKENSECOND1###  $ShokenSecond1
+###SHOKENTHIRD1###  $ShokenThird1
+###SHOKENFOURTH1###  $ShokenFourth1
+###SHOKENFIFTH1###  $ShokenFifth1
+###SHOKENSIXTH1###  $ShokenSixth1
+###SHOKENFIRST2###  $ShokenFirst2
+###SHOKENSECOND2###  $ShokenSecond2
+###SHOKENTHIRD2###  $ShokenThird2
+###SHOKENFOURTH2###  $ShokenFourth2
+###SHOKENFIFTH2###  $ShokenFifth2
+###SHOKENSIXTH2###  $ShokenSixth2
+###SHOKENFIRST3###  $ShokenFirst3
+###SHOKENSECOND3###  $ShokenSecond3
+###SHOKENTHIRD3###  $ShokenThird3
+###SHOKENFOURTH3###  $ShokenFourth3
+###SHOKENFIFTH3###  $ShokenFifth3
+###SHOKENSIXTH3###  $ShokenSixth3
+###SHOKENFIRST4###  $ShokenFirst4
+###SHOKENSECOND4###  $ShokenSecond4
+###SHOKENTHIRD4###  $ShokenThird4
+###SHOKENFOURTH4###  $ShokenFourth4
+###SHOKENFIFTH4###  $ShokenFifth4
+###SHOKENSIXTH4###  $ShokenSixth4
+###SHOKENFIRST5###  $ShokenFirst5
+###SHOKENSECOND5###  $ShokenSecond5
+###SHOKENTHIRD5###  $ShokenThird5
+###SHOKENFOURTH5###  $ShokenFourth5
+###SHOKENFIFTH5###  $ShokenFifth5
+###SHOKENSIXTH5###  $ShokenSixth5
+###SHOKENFIRST6###  $ShokenFirst6
+###SHOKENSECOND6###  $ShokenSecond6
+###SHOKENTHIRD6###  $ShokenThird6
+###SHOKENFOURTH6###  $ShokenFourth6
+###SHOKENFIFTH6###  $ShokenFifth6
+###SHOKENSIXTH6###  $ShokenSixth6
+###KINYUMEI1###  $KinyuMei1
+###KINYUMEI2###  $KinyuMei2
+###KINYUMEI3###  $KinyuMei3
+###KINYUMEI4###  $KinyuMei4
+###KINYUMEI5###  $KinyuMei5
+###KINYUMEI6###  $KinyuMei6
+###TAMONITORINGNAIYO1###   $taMonitoringNaiyo1
+###TAMONITORINGNAIYO2###   $taMonitoringNaiyo2
+###TAMONITORINGNAIYO3###   $taMonitoringNaiyo3
+###TAMONITORINGNAIYO4###   $taMonitoringNaiyo4
+###TAMONITORINGNAIYO5###   $taMonitoringNaiyo5
+###TAMONITORINGNAIYO6###   $taMonitoringNaiyo6
+###MONITORINGYEAR###   $MonitoringYear
+###SLINSUI1###   $slInsui1
+###SLINSUI2###   $slInsui2
+###SLINSUI3###   $slInsui3
+###SLINSUI4###   $slInsui4
+###SLINSUI5###   $slInsui5
+###SLINSUI6###   $slInsui6
+###SLSHOKUJISESSHU1###   $slShokujiSesshu1
+###SLSHOKUJISESSHU2###   $slShokujiSesshu2
+###SLSHOKUJISESSHU3###   $slShokujiSesshu3
+###SLSHOKUJISESSHU4###   $slShokujiSesshu4
+###SLSHOKUJISESSHU5###   $slShokujiSesshu5
+###SLSHOKUJISESSHU6###   $slShokujiSesshu6
+###SLSHOKUJIKEITAI1###   $slShokujiKeitai1
+###SLSHOKUJIKEITAI2###   $slShokujiKeitai2
+###SLSHOKUJIKEITAI3###   $slShokujiKeitai3
+###SLSHOKUJIKEITAI4###   $slShokujiKeitai4
+###SLSHOKUJIKEITAI5###   $slShokujiKeitai5
+###SLSHOKUJIKEITAI6###   $slShokujiKeitai6
+###SLHAINYOU1###   $slHainyou1
+###SLHAINYOU2###   $slHainyou2
+###SLHAINYOU3###   $slHainyou3
+###SLHAINYOU4###   $slHainyou4
+###SLHAINYOU5###   $slHainyou5
+###SLHAINYOU6###   $slHainyou6
+###SLHAIBEN1###   $slHaiben1
+###SLHAIBEN2###   $slHaiben2
+###SLHAIBEN3###   $slHaiben3
+###SLHAIBEN4###   $slHaiben4
+###SLHAIBEN5###   $slHaiben5
+###SLHAIBEN6###   $slHaiben6
+###SLSHIKKIN1###   $slShikkin1
+###SLSHIKKIN2###   $slShikkin2
+###SLSHIKKIN3###   $slShikkin3
+###SLSHIKKIN4###   $slShikkin4
+###SLSHIKKIN5###   $slShikkin5
+###SLSHIKKIN6###   $slShikkin6
+###SLHAISETSUNICCHU1###   $slHaisetsuNicchu1
+###SLHAISETSUNICCHU2###   $slHaisetsuNicchu2
+###SLHAISETSUNICCHU3###   $slHaisetsuNicchu3
+###SLHAISETSUNICCHU4###   $slHaisetsuNicchu4
+###SLHAISETSUNICCHU5###   $slHaisetsuNicchu5
+###SLHAISETSUNICCHU6###   $slHaisetsuNicchu6
+###SLHAISETSUYAKAN1###   $slHaisetsuYakan1
+###SLHAISETSUYAKAN2###   $slHaisetsuYakan2
+###SLHAISETSUYAKAN3###   $slHaisetsuYakan3
+###SLHAISETSUYAKAN4###   $slHaisetsuYakan4
+###SLHAISETSUYAKAN5###   $slHaisetsuYakan5
+###SLHAISETSUYAKAN6###   $slHaisetsuYakan6
+###SLSENSHIN1###   $slSenshin1
+###SLSENSHIN2###   $slSenshin2
+###SLSENSHIN3###   $slSenshin3
+###SLSENSHIN4###   $slSenshin4
+###SLSENSHIN5###   $slSenshin5
+###SLSENSHIN6###   $slSenshin6
+###SLNYUYOKUHOUHOU1###   $slNyuyokuHouhou1
+###SLNYUYOKUHOUHOU2###   $slNyuyokuHouhou2
+###SLNYUYOKUHOUHOU3###   $slNyuyokuHouhou3
+###SLNYUYOKUHOUHOU4###   $slNyuyokuHouhou4
+###SLNYUYOKUHOUHOU5###   $slNyuyokuHouhou5
+###SLNYUYOKUHOUHOU6###   $slNyuyokuHouhou6
+###SLCHAKUDATSUUWAGI1###   $slChakudatsuUwagi1
+###SLCHAKUDATSUUWAGI2###   $slChakudatsuUwagi2
+###SLCHAKUDATSUUWAGI3###   $slChakudatsuUwagi3
+###SLCHAKUDATSUUWAGI4###   $slChakudatsuUwagi4
+###SLCHAKUDATSUUWAGI5###   $slChakudatsuUwagi5
+###SLCHAKUDATSUUWAGI6###   $slChakudatsuUwagi6
+###SLCHAKUDATSUPANTS1###   $slChakudatsuPants1
+###SLCHAKUDATSUPANTS2###   $slChakudatsuPants2
+###SLCHAKUDATSUPANTS3###   $slChakudatsuPants3
+###SLCHAKUDATSUPANTS4###   $slChakudatsuPants4
+###SLCHAKUDATSUPANTS5###   $slChakudatsuPants5
+###SLCHAKUDATSUPANTS6###   $slChakudatsuPants6
+###SLKOUKU1###   $slKouku1
+###SLKOUKU2###   $slKouku2
+###SLKOUKU3###   $slKouku3
+###SLKOUKU4###   $slKouku4
+###SLKOUKU5###   $slKouku5
+###SLKOUKU6###   $slKouku6
+###SLSENGAN1###   $slSengan1
+###SLSENGAN2###   $slSengan2
+###SLSENGAN3###   $slSengan3
+###SLSENGAN4###   $slSengan4
+###SLSENGAN5###   $slSengan5
+###SLSENGAN6###   $slSengan6
+###SLOKIAGARI1###   $slOkiagari1
+###SLOKIAGARI2###   $slOkiagari2
+###SLOKIAGARI3###   $slOkiagari3
+###SLOKIAGARI4###   $slOkiagari4
+###SLOKIAGARI5###   $slOkiagari5
+###SLOKIAGARI6###   $slOkiagari6
+###SLZAI1###   $slZai1
+###SLZAI2###   $slZai2
+###SLZAI3###   $slZai3
+###SLZAI4###   $slZai4
+###SLZAI5###   $slZai5
+###SLZAI6###   $slZai6
+###SLTACHIAGARI1###   $slTachiagari1
+###SLTACHIAGARI2###   $slTachiagari2
+###SLTACHIAGARI3###   $slTachiagari3
+###SLTACHIAGARI4###   $slTachiagari4
+###SLTACHIAGARI5###   $slTachiagari5
+###SLTACHIAGARI6###   $slTachiagari6
+###SLHOKOU1###   $slHokou1
+###SLHOKOU2###   $slHokou2
+###SLHOKOU3###   $slHokou3
+###SLHOKOU4###   $slHokou4
+###SLHOKOU5###   $slHokou5
+###SLHOKOU6###   $slHokou6
+###SLIJOU1###   $slIjou1
+###SLIJOU2###   $slIjou2
+###SLIJOU3###   $slIjou3
+###SLIJOU4###   $slIjou4
+###SLIJOU5###   $slIjou5
+###SLIJOU6###   $slIjou6
+###SLIDOUNICCHU1###   $slIdouNicchu1
+###SLIDOUNICCHU2###   $slIdouNicchu2
+###SLIDOUNICCHU3###   $slIdouNicchu3
+###SLIDOUNICCHU4###   $slIdouNicchu4
+###SLIDOUNICCHU5###   $slIdouNicchu5
+###SLIDOUNICCHU6###   $slIdouNicchu6
+###SLIDOUYAKAN1###   $slIdouYakan1
+###SLIDOUYAKAN2###   $slIdouYakan2
+###SLIDOUYAKAN3###   $slIdouYakan3
+###SLIDOUYAKAN4###   $slIdouYakan4
+###SLIDOUYAKAN5###   $slIdouYakan5
+###SLIDOUYAKAN6###   $slIdouYakan6
+###SLISHIDENTATSU1###   $slIshiDentatsu1
+###SLISHIDENTATSU2###   $slIshiDentatsu2
+###SLISHIDENTATSU3###   $slIshiDentatsu3
+###SLISHIDENTATSU4###   $slIshiDentatsu4
+###SLISHIDENTATSU5###   $slIshiDentatsu5
+###SLISHIDENTATSU6###   $slIshiDentatsu6
+###SLISHIKETTEI1###   $slIshiKettei1
+###SLISHIKETTEI2###   $slIshiKettei2
+###SLISHIKETTEI3###   $slIshiKettei3
+###SLISHIKETTEI4###   $slIshiKettei4
+###SLISHIKETTEI5###   $slIshiKettei5
+###SLISHIKETTEI6###   $slIshiKettei6
+###SLSHIJIHANNO1###   $slShijiHanno1
+###SLSHIJIHANNO2###   $slShijiHanno2
+###SLSHIJIHANNO3###   $slShijiHanno3
+###SLSHIJIHANNO4###   $slShijiHanno4
+###SLSHIJIHANNO5###   $slShijiHanno5
+###SLSHIJIHANNO6###   $slShijiHanno6
+###SLDENWA1###   $slDenwa1
+###SLDENWA2###   $slDenwa2
+###SLDENWA3###   $slDenwa3
+###SLDENWA4###   $slDenwa4
+###SLDENWA5###   $slDenwa5
+###SLDENWA6###   $slDenwa6
+###SLKUSURI1###   $slKusuri1
+###SLKUSURI2###   $slKusuri2
+###SLKUSURI3###   $slKusuri3
+###SLKUSURI4###   $slKusuri4
+###SLKUSURI5###   $slKusuri5
+###SLKUSURI6###   $slKusuri6
+###SLKINSEN1###   $slKinsen1
+###SLKINSEN2###   $slKinsen2
+###SLKINSEN3###   $slKinsen3
+###SLKINSEN4###   $slKinsen4
+###SLKINSEN5###   $slKinsen5
+###SLKINSEN6###   $slKinsen6
+###SLHIGAIMOUSOU1###   $slHigaiMousou1
+###SLHIGAIMOUSOU2###   $slHigaiMousou2
+###SLHIGAIMOUSOU3###   $slHigaiMousou3
+###SLHIGAIMOUSOU4###   $slHigaiMousou4
+###SLHIGAIMOUSOU5###   $slHigaiMousou5
+###SLHIGAIMOUSOU6###   $slHigaiMousou6
+###SLGENKAKU1###   $slGenkaku1
+###SLGENKAKU2###   $slGenkaku2
+###SLGENKAKU3###   $slGenkaku3
+###SLGENKAKU4###   $slGenkaku4
+###SLGENKAKU5###   $slGenkaku5
+###SLGENKAKU6###   $slGenkaku6
+###SLKANJOU1###   $slKanjou1
+###SLKANJOU2###   $slKanjou2
+###SLKANJOU3###   $slKanjou3
+###SLKANJOU4###   $slKanjou4
+###SLKANJOU5###   $slKanjou5
+###SLKANJOU6###   $slKanjou6
+###SLCHUYA1###   $slChuya1
+###SLCHUYA2###   $slChuya2
+###SLCHUYA3###   $slChuya3
+###SLCHUYA4###   $slChuya4
+###SLCHUYA5###   $slChuya5
+###SLCHUYA6###   $slChuya6
+###SLBOUGEN1###   $slBougen1
+###SLBOUGEN2###   $slBougen2
+###SLBOUGEN3###   $slBougen3
+###SLBOUGEN4###   $slBougen4
+###SLBOUGEN5###   $slBougen5
+###SLBOUGEN6###   $slBougen6
+###SLOOGOE1###   $slOogoe1
+###SLOOGOE2###   $slOogoe2
+###SLOOGOE3###   $slOogoe3
+###SLOOGOE4###   $slOogoe4
+###SLOOGOE5###   $slOogoe5
+###SLOOGOE6###   $slOogoe6
+###SLKAIGOTEIKO1###   $slKaigoTeiko1
+###SLKAIGOTEIKO2###   $slKaigoTeiko2
+###SLKAIGOTEIKO3###   $slKaigoTeiko3
+###SLKAIGOTEIKO4###   $slKaigoTeiko4
+###SLKAIGOTEIKO5###   $slKaigoTeiko5
+###SLKAIGOTEIKO6###   $slKaigoTeiko6
+###SLHAIKAI1###   $slHaikai1
+###SLHAIKAI2###   $slHaikai2
+###SLHAIKAI3###   $slHaikai3
+###SLHAIKAI4###   $slHaikai4
+###SLHAIKAI5###   $slHaikai5
+###SLHAIKAI6###   $slHaikai6
+###SLKITAKUGANBOU1###   $slKitakuGanbou1
+###SLKITAKUGANBOU2###   $slKitakuGanbou2
+###SLKITAKUGANBOU3###   $slKitakuGanbou3
+###SLKITAKUGANBOU4###   $slKitakuGanbou4
+###SLKITAKUGANBOU5###   $slKitakuGanbou5
+###SLKITAKUGANBOU6###   $slKitakuGanbou6
+###KIROKUMEI1###   $KirokuMei1
+###KIROKUMEI2###   $KirokuMei2
+###KIROKUMEI3###   $KirokuMei3
+###KIROKUMEI4###   $KirokuMei4
+###KIROKUMEI5###   $KirokuMei5
+###KIROKUMEI6###   $KirokuMei6
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+
+#cp -p $tmp-calsed $work_dir/calsed_monitoring
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g' >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_MONITORING_YOBO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+sed 's/###KAIGYO###/<br>/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-monitoring_kaigo_base_pdf.html
+#--------------------------------------------------------------
+cp $tmp-monitoring_kaigo_base_pdf.html $work_dir/monitoring_kaigo_base_pdf_yobo.html
+
+case "${MODE}" in
+  #一括印刷
+  allprint )
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-bottom 1 --margin-left 3 --margin-right 3 --margin-top 2 --orientation Landscape $tmp-monitoring_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/IKKATSU/$USER_ID/${Riyoushaid}_E_MONITORING_YOBO.pdf
+  ;;
+
+  # 個別印刷
+  * )
+  mkdir -p ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}
+
+  # 過去のPDFを一旦消す
+  rm ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/MONITORING_YOBO.pdf
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-bottom 1 --margin-left 3 --margin-right 3 --margin-top 2 --orientation Landscape $tmp-monitoring_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/MONITORING_YOBO.pdf
+
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${Riyoushaid}/MONITORING_YOBO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+  cat ${tmp}-html.html
+;;
+esac
+
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,249 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_FUSOKU 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# ファイル初期化
+: > ${tmp}-seikyu_kako_taisyou
+: > ${tmp}-if_result
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+
+### a.先取りの請求が始まった項目を遡って、請求できていないものを請求するレコードを作製する
+# ${tmp}-getsugaku_riyouryou_kihon_kari |
+# 1:入居者ID    2:契約ID   3:利用料種別ID 4:契約枝番    5:利用料名
+# 6:税区分      7:支払区分 8:費用算出方法 9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID  13:値引額      14:値引後金額 15:特販期間FROM
+# 16:特販期間TO
+
+# 起算開始日の年月＞処理月ならなにもしない
+# 起算開始日の年月＜＝処理月なら不足している請求金額データを作成する
+# (起算開始日＞請求確定月しか月額利用料が入力できないかつ請求対象なら毎月必ず処理するため漏れがでないはず)
+
+#------------------------------------------
+# 遡って請求する対象に絞り込む
+
+# 処理開始
+cat ${tmp}-getsugaku_riyouryou_kihon_kari |
+awk '{print $0,substr($9,1,6),substr($10,1,6),"'${seikyu_syori_month}'"}' |
+# 1:入居者ID    2:契約ID        3:利用料種別ID  4:契約枝番    5:利用料名
+# 6:税区分      7:支払区分      8:費用算出方法  9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID       13:値引額       14:値引後金額 15:特販期間FROM
+# 16:特販期間TO 17:起算開始年月 18:起算終了年月 19:処理月
+#awk '$17<=$19'                     |
+# 遡って請求するリストの起算開始年月から請求していない月(支払区分による)までぶんを作成
+#   1:先取り(翌月)=開始月から処理月+1まで(通常処理で処理月＋2を作成しているため)
+#   2:先取り(今月)=開始月から処理月まで(通常処理で処理月+1を作成しているため)
+#   3:後払い=過去に遡らない
+self 1/4 7 17/19                   |
+# 1:入居者ID     2:契約ID       3:利用料種別ID 4:契約枝番 5:支払区分
+# 6:起算開始年月 7:起算終了年月 8:処理月
+
+# 支払区分3の後払い以外に絞込み
+awk '$5!="3"'                      |
+while read nyukyo_id keiyaku_id riyou_id edaban kubun shiharai_from shiharai_to s_month ; do
+  #------------------------------------------
+  case "${kubun}" in
+    # ---------------
+    # 先取り(翌月)
+    1 )
+      # 起算開始年月から処理月+1までの月を出す
+      echo "${nyukyo_id} ${keiyaku_id} ${riyou_id} ${edaban} ${kubun} ${shiharai_from} ${seikyu_syori_next_month}"
+      # 1:入居者ID     2:契約ID   3:利用料種別ID 4:契約枝番 5:支払区分
+      # 6:起算開始年月 7:処理月+1
+    ;;
+    # ---------------
+    # ---------------
+    # 先取り(今月)
+    2 )
+      # 起算開始年月から処理月までの月をだす
+      echo "${nyukyo_id} ${keiyaku_id} ${riyou_id} ${edaban} ${kubun} ${shiharai_from} ${s_month}"
+      # 1:入居者ID     2:契約ID   3:利用料種別ID 4:契約枝番 5:支払区分
+      # 6:起算開始年月 7:処理月
+    ;;
+    # ---------------
+  esac |
+  #------------------------------------------
+
+  #------------------------------------------
+  # 起算開始年月と処理月(遡り用)の差を計算
+  mdate 6m 7m                     |
+  # 1:入居者ID     2:契約ID   3:利用料種別ID 4:契約枝番 5:支払区分
+  # 6:起算開始年月 7:年月の差 8:処理月(遡り用)
+
+  # 差分の年月を出力
+  mdate -e 8m +7                  |
+  # 1:入居者ID     2:契約ID   3:利用料種別ID                             4:契約枝番       5:支払区分
+  # 6:起算開始年月 7:年月の差 8～:起算開始日から処理月(遡り用)までの年月 n:処理月(遡り用)
+
+  # 必要なフィールドに絞る
+  self 1/4 8/NF                   |
+  # 1:入居者ID       2:契約ID 3:利用料種別ID 4:契約枝番 5:起算開始日・・・
+  # n:処理月(遡り用)
+  
+  # 起算開始日から処理月＋1までの年月でたてに展開
+  tarr num=4                      |
+  # 1:入居者ID 2:契約ID 3:利用料種別ID 4:契約枝番 5:請求月
+  LANG=C sort                     |
+  # 起算終了が過ぎているものは除く
+  awk '$5<="'${shiharai_to}'"'    |
+  # 過去2ヶ月だけ遡るので絞り込む
+  #awk '$5>="'${seikyu_syori_two_last_month}'"' >> ${tmp}-seikyu_kako_taisyou
+  awk '$5>="'${seikyu_syori_month}'"' >> ${tmp}-seikyu_kako_taisyou
+  #------------------------------------------
+
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+# 過去に遡って請求するリスト
+# ${tmp}-seikyu_kako_taisyou
+# 1:入居者ID 2:契約ID 3:利用料種別ID 4:契約枝番 5:請求月
+
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(KAKO_1)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# リストがない場合ここで処理終了
+[ ! -s  ${tmp}-seikyu_kako_taisyou ] && exit 0
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 処理月から二ヶ月ぶんを展開し、キー項目に当てはまるレコードがあるか確認(あてはまる＝請求完了)
+# -
+# 処理対象${tmp}-memberごとにファイル展開してキーとあてる
+for member_id in $(cat ${tmp}-member) ; do
+  #------------------------------------------
+  for kako_month in ${seikyu_syori_last_month} ${seikyu_syori_two_last_month} ; do
+    # ヘッダを取得し、ヘッダから明細ファイル名を取得する
+    file_name="$(cjoin0 key=1/2 <(echo "${kako_month} ${member_id}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+                 LANG=C sort -k1,2 -k25,25 |
+                 getlast 1 2 |
+                 self 10)"
+    # 1:明細ファイル名
+    if [ -s ${seikyu_dir}/${shisetsu}/MEISAI/${kako_month}/${file_name} ] ; then
+      cat ${seikyu_dir}/${shisetsu}/MEISAI/${kako_month}/${file_name}
+    fi
+  done                            > ${tmp}-kako_file
+  #------------------------------------------
+
+  #------------------------------------------
+  # ファイル無かったらこの処理の人はリストにある過去分を全て請求、そうでなければ足りないものの絞込みを行う
+  if [ ! -s ${tmp}-kako_file ] ; then
+    join0 key=1 <(echo "${member_id}") ${tmp}-seikyu_kako_taisyou |
+    # 請求できてないリスト一行ごとに繰り返し処理して
+    # ${tmp}-getsugaku_riyouryou_kihon_kariを請求できてないキー+月ぶん用意する
+    LANG=C sort -k1,4                                             |
+    join1 key=1/4 ${tmp}-getsugaku_riyouryou_kihon_kari -         |
+    # 1:入居者ID   2:契約ID   3:利用料種別ID 4:契約枝番    5:利用料名
+    # 6:税区分     7:支払区分 8:費用算出方法 9:起算開始日  10:起算終了日
+    # 11:金額      12:特販ID  13:値引額      14:値引後金額 15:特販期間FROM
+    # 16:特販期間TO 17:請求月
+    
+    # 並びを整える
+    self 1/4 NF 5/NF-1                                           >> ${tmp}-if_result
+    # 1:入居者ID      2:契約ID      3:利用料種別ID 4:契約枝番     5:請求月
+    # 6:利用料名      7:税区分      8:支払区分     9:費用算出方法 10:起算開始日
+    # 11:起算終了日   12:金額       13:特販ID      14:値引額      15:値引後金額
+    # 16:特販期間FROM 17:特販期間TO
+
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+    [ -e ${tmp}-err ] && break;
+  else
+    # ファイルを展開してキーとあてる
+    self 2 4/7 1/NF ${tmp}-kako_file                                  |
+    # 1:入居者ID  2:契約ID                    3:項目ID            4:契約枝番    5:レコードが発生した年月日
+    # 6:請求年月  7:入居者ID                  8:行分類フラグ      9:契約ID      10:項目ID
+    # 11:契約枝番 12:レコードが発生した年月日 13:非課税フラグ     14:金額税抜き 15:金額税込み
+    # 16:税額     17:内訳１内訳２             18:特別処理済フラグ 19:予備1      20:予備
+    # 21:予備     22:予備                     23:予備             24:予備       25:予備
+    # 26:予備     27:予備                     28:予備             29:削除フラグ 30:更新時時間
+    # 31:更新者
+
+    # レコードが発生した年月日を年月に変換
+    awk '{$5=substr($5,1,6); print}'                                  |
+    LANG=C sort                                                       |
+    # 請求過去対象リストで絞る
+    join0 key=1/5 ${tmp}-seikyu_kako_taisyou -                        |
+    self 1/5                                                          |
+    # 1:入居者ID 2:契約ID 3:項目ID 4:契約枝番 5:レコードが発生した年月
+    # (ここまで請求できている項目)
+
+    # 請求をさかのぼるリストと再度あてて、請求できていない項目を抽出
+    join0 +ng key=1/5 - <(awk '$1=="'${member_id}'"' ${tmp}-seikyu_kako_taisyou) - 2>&1 1> /dev/null  |
+    # 1:入居者ID 2:契約ID 3:利用料種別ID 4:契約枝番 5:請求月
+    
+    # ${tmp}-getsugaku_riyouryou_kihon_kariを請求できてないキー+月ぶん用意する
+    join1 key=1/4 ${tmp}-getsugaku_riyouryou_kihon_kari -             |
+    self 1/4 NF 5/NF-1                                                >> ${tmp}-if_result
+    # 1:入居者ID      2:契約ID      3:利用料種別ID 4:契約枝番     5:請求月
+    # 6:利用料名      7:税区分      8:支払区分     9:費用算出方法 10:起算開始日
+    # 11:起算終了日   12:金額       13:特販ID      14:値引額      15:値引後金額
+    # 16:特販期間FROM 17:特販期間TO
+
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+    [ -e ${tmp}-err ] && break;
+  fi
+  #------------------------------------------
+done
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(KAKO_1)"
+
+if [ -s ${tmp}-if_result ] ; then
+  # ならびかえ
+  self 1 5 2/4 6/NF ${tmp}-if_result  |
+  # 1:入居者ID      2:請求月      3:契約ID   4:利用料種別ID 5:契約枝番
+  # 6:利用料名      7:税区分      8:支払区分 9:費用算出方法 10:起算開始日
+  # 11:起算終了日   12:金額       13:特販ID  14:値引額      15:値引後金額
+  # 16:特販期間FROM 17:特販期間TO
+  LANG=C sort                         > ${tmp}-getsugaku_riyouryou_kako_kihon
+  #後ほど日割り判定して特販判定して税計算する
+
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KAKO_1)"
+
+  # ----------------------
+  # 列チェック
+  [ "$(retu ${tmp}-getsugaku_riyouryou_kako_kihon)" != "17" ] && error_exit "処理中にエラーが発生しました(KAKO_1)"
+  [ "$(retu ${tmp}-getsugaku_riyouryou_kako_kihon | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(KAKO_1)"
+  [ "$(awk 'NF!="17"' ${tmp}-getsugaku_riyouryou_kako_kihon | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(KAKO_1)"
+  # ----------------------
+else
+  # 一応念のためからファイル作成
+  : > ${tmp}-getsugaku_riyouryou_kako_kihon
+fi
+#------------------------------------------
+
+### aここまで
+#---------------------------------------------------------------
+
+exit 0
+

@@ -1,0 +1,118 @@
+#!/bin/bash
+#
+# KIZUKI_ICHIRAN.SEARCH
+# 気づき一覧検索
+#
+# Written by K.Aoyama  : 2014/08/20
+
+#--------------------------------------------------------------
+# ログ
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+data_dir="/DATA/E-LIFE"
+tbl_dir="${home_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+  Shisetsu=$(nameread      "Shisetsu"       $namedata)
+
+#-------------------------------------------------------------=
+cat ${namefile} |
+## formhame 前に、キーワードが "_" のみの場合、消去
+awk '{if($1~/Keyword*/){if($2~/^_$/){$2=""};}print}' |
+# formhame 前に、キーワード検索ボックスの空白を、"_"から" "に戻す
+awk '{if($1~/Keyword*/){gsub(/_/," ",$2)};print}'    > $tmp-namefile
+#--------------------------------------------------------------
+#-------------------------------------------------------------
+# 検索対象の絞込み
+#------------------------
+
+# 準備
+cat ${pompa_dir}/KIZUKI/KIZUKI_DATA |
+# 1:固有ID                2:施設ID      3:発生日            4:発生時刻      5:報告者
+# 6:記入日                7:記入時間    8:情報源            9:情報源手入力  10:対象
+# 11:対象手入力           12:気づき内容 13:気づき内容手入力 14:気づき詳細   15:対応日
+# 16:対応時間             17:対応状況   18:今後の対応       19:サンクス相手 20:サンクス内容
+# 21:管理者フィードバック 22:予備項目１ 23:予備項目２       24:予備項目３   25:予備項目４
+# 26:予備項目５           27:予備項目６ 28:有効フラグ       29:更新日       30:更新者
+awk '$(NF-2)!="9"{print $0}'  |
+self 1 12 6 10 5 2 3 8        |
+LANG=C sort -k6,6             |
+# 施設も表示するようにする（2014/12/18）
+join2 +"@" key=6 <(cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | self 1 2 | LANG=C sort -k1,1) |
+#join2 +"@" key=6 <(self 1 2 ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON) |
+self 1/6 8/NF 7               |
+#> $tmp-data_before
+# 1:固有ID 2:気づき内容 3:記入日 4:対象   5:報告者
+# 6:施設ID 7:発生日     8:情報源 9:施設名
+
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# --------------------------
+# 種別
+if [ ! -z "${Shubetsu}" -a "${Shubetsu}" != "_" -a "${Shubetsu}" != "0" ] ; then
+  awk '$2=="'${Shubetsu}'"'
+else
+  cat -
+fi |
+# --------------------------
+# --------------------------
+# 施設
+if [ -z "${Shisetsu}" -o "${Shisetsu}" = "_" -o "${Shisetsu}" = "0000" ] ; then
+  cat - 
+else
+  awk '$6=="'${Shisetsu}'"'
+fi |
+# --------------------------
+# 発生日(FROM)
+if [ -z "${HasseibiFrom}" -o "${HasseibiFrom}" = "_" ] ; then
+  cat -
+else
+  awk '$7>="'${HasseibiFrom}'"||$7=="_"'
+fi |
+# --------------------------
+# 発生日日(TO)
+if [ -z "${HasseibiTo}" -o "${HasseibiTo}" = "_" ] ; then
+  cat -                                           
+else
+  awk '$7<="'${HasseibiTo}'"||$7=="_"'
+fi  |
+LANG=C sort -k7r,7r > $tmp-data
+# 1:固有ID 2:気づき内容 3:記入日 4:対象 5:報告者
+# 6:施設ID 7:発生日     8:情報源
+
+# --------------------------
+#tee /home/hands/work/okuda/NANNIN |
+# --------------------------
+cat $tmp-data
+
+
+## 終了
+rm -f $tmp-*
+exit 0

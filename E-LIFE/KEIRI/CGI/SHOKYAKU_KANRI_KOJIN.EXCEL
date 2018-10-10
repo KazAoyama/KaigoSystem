@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI_KOJIN.EXCEL : 償却一覧個人一覧EXCEL出力
+#
+# Usage : SHOKYAKU_KANRI_KOJIN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 施設名
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# 種別
+cat ${hometbl_dir}/RIYOURYOU_MASTER/KEIYAKUKIN_MASTER   |
+# 1:施設ID 2:契約金種別ID 3:契約金種別名 4:有効フラグ
+awk '$4!=9'                                             |
+self 2 3                                                |
+awk '$1=="'${shubetsu_select}'"{print $2}'              |
+tail -n1                                                > $tmp-shubetsu
+
+# searchfile
+cat ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2                          > $tmp-riyosha_kihon
+
+if [ -e "${searchfile}" ];then
+  cat ${searchfile}
+else
+  :
+fi                               > ${tmp}-search_data
+
+# 対象者
+echo ${Riyoushamei}              > $tmp-riyoshamei
+
+TEMPLA=${temp_dir}/SHOKYAKU_KANRI_KOJIN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-user_shisetsu            \
+                    1 b5 $tmp-riyoshamei                 \
+                    1 b6 $tmp-shubetsu                   \
+                    1 a10 ${tmp}-search_data             > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

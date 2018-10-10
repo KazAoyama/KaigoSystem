@@ -1,0 +1,307 @@
+#!/bin/bash
+#
+# FB_SAKUSEI.PRINT :
+#
+# Usage : FB_SAKUSEI.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 請求年月
+NENGETSU=$(mdate ${year}${month}m/+1 | awk '{print substr($1,1,4)"年"substr($1,5,2)"月'${hikiotoshi_date}'日振替分"}')
+
+# 結果アップロードのファイルがあったら結果を、なければダウンロードしたファイルを使う
+if [ -e ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.UPLOAD.${year}${month}.${itakushaNo} ];then
+  KEKKA="結果"
+  cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.UPLOAD.${year}${month}.${itakushaNo}
+else
+  KEKKA="データ送信前"
+  cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo}
+fi                 > $tmp-file
+# 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+# 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+# 16:振替結果コード
+
+# 金融機関名のマスタ
+awk '$5!="9"' $hometbl_dir/KINYUU_MASTER/KINYUUKIKAN_NAME |
+self 1 3                                                  |
+LANG=C sort                                               > ${tmp}-KINYUUKIKAN_NAME
+
+# 支店のマスタ
+# 支店
+awk '$5!="9"' $hometbl_dir/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME |
+self 1/2 4                                                       |
+LANG=C sort                                                      > ${tmp}-KINYUUKIKAN_SHITEN_NAME
+
+# 施設名マスタ
+cat <<- FIN > $tmp-RYAKUGO
+0001 AO2
+0002 UT
+0003 CM
+0004 AZ
+0005 AO
+0006 SD
+1004 YK
+1005 BJ
+FIN
+
+  # 引落結果のマスタ
+cat <<- FIN > $tmp-KEKKA
+0 振替済
+1 資金不足
+2 預金取引なし
+3 預金者の都合による振替停止
+4 預金口座振替依頼書なし
+8 委託者の都合による振替停止
+9 その他
+A 未
+FIN
+
+# 建屋の区別
+awk '$(NF-2)!=9' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS  |
+self 1 5 2 | LANG=C sort -u                              > $tmp-shisetsu_room_tateya
+# 1:施設 2:居室番号 3:建屋
+cp $tmp-shisetsu_room_tateya ${work}/shisetsu_room_tateya
+
+# 居宅事業所の判別をPOMPAのFBデータから行う
+# 横浜と馬事公苑
+toshituki=$(mdate ${year}${month}m/+1)
+# ケース横浜
+cat /home/hands/E-LIFE/KEIRI/POMPA/MEISAI/1004/${toshituki}/FOR_FB |
+# 1:利用者ID 2:年月 3:金額 4:ステータス 5:更新日時
+self 1 | LANG=C sort -u |
+awk '{print "kyotaku",$1,"YK"}' > $tmp-yokohama_riyosha
+# 1:居宅目印 2:利用者id 3:横浜目印
+
+# ケース馬事
+cat /home/hands/E-LIFE/KEIRI/POMPA/MEISAI/1005/${toshituki}/FOR_FB |
+# 1:利用者ID 2:年月 3:金額 4:ステータス 5:更新日時
+self 1 | LANG=C sort -u |
+awk '{print "kyotaku",$1,"BJ"}' > $tmp-baji_riyosha
+# 1:居宅目印 2:利用者id 3:馬事目印
+
+# 横浜・馬事合体
+cat $tmp-yokohama_riyosha $tmp-baji_riyosha |
+LANG=C sort -k1,2                           > $tmp-gattai_riyosha
+# 1:居宅目印 2:利用者id 3:事業所目印
+cp $tmp-gattai_riyosha ${work}/gattai
+
+LANG=C sort -k3,3 $tmp-file                              |
+# 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+# 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+# 16:振替結果コード
+tee ${work}/ryakugo_join_mae |
+cjoin2 key=3/4 $tmp-shisetsu_room_tateya                 |
+# 1::利用者ID   2:利用者名        3:施設コード    4:居室      5:建屋
+# 6:居宅フラグ  7:顧客番号        8:銀行コード    9:銀行名ｶﾅ  10:支店コード
+# 11:口座種別   12:口座番号       13:口座名義カナ 14:引落金額 15:新規コード
+# 16:委託者番号 17:振替結果コード
+cjoin2 +"施設外" key=3 $tmp-RYAKUGO                       |
+# 1::利用者ID   2:利用者名    3:施設コード      4:施設名        5:居室
+# 6:建屋        7:居宅フラグ  8:顧客番号        9:銀行コード    10:銀行名ｶﾅ
+# 11:支店コード 12:口座種別   13:口座番号       14:口座名義カナ 15:引落金額
+# 16:新規コード 17:委託者番号 18:振替結果コード
+awk '{if($6=="02"){$4=$4"C"};print}'                     |
+self 9 11 1/5 7 8 10 12/NF                                    |
+# 1:銀行コード  2:支店コード      3:利用者ID      4:利用者名  5:施設コード
+# 6:施設名      7:居室            8:居宅フラグ    9:顧客番号  10:銀行名ｶﾅ
+# 11:口座種別   12:口座番号       13:口座名義カナ 14:引落金額 15:新規コード
+# 16:委託者番号 17:振替結果コード
+awk '{$2=substr($2,1,3);print}'                           |
+LANG=C sort -k1,2                                         |
+join2 +"マスタなし" key=1/2 $tmp-KINYUUKIKAN_SHITEN_NAME  |
+# 1:銀行コード  2:支店コード  3:支店名          4:利用者ID      5:利用者名
+# 6:施設コード  7:施設名      8:居室            9:居宅フラグ    10:顧客番号
+# 11:銀行名ｶﾅ   12:口座種別   13:口座番号       14:口座名義カナ 15:引落金額
+# 16:新規コード 17:委託者番号 18:振替結果コード
+join2 +"マスタなし" key=1 $tmp-KINYUUKIKAN_NAME           |
+# 1:銀行コード 2:銀行名      3:支店コード  4:支店名          5:利用者ID
+# 6:利用者名   7:施設コード  8:施設名      9:居室            10:居宅フラグ
+# 11:顧客番号  12:銀行名ｶﾅ   13:口座種別   14:口座番号       15:口座名義カナ
+# 16:引落金額  17:新規コード 18:委託者番号 19:振替結果コード
+LANG=C sort -k19,19                                        |
+join2 key=19 $tmp-KEKKA                                    |
+# 1:銀行コード 2:銀行名      3:支店コード  4:支店名          5:利用者ID
+# 6:利用者名   7:施設コード  8:施設名      9:居室            10:居宅フラグ
+# 11:顧客番号  12:銀行名ｶﾅ   13:口座種別   14:口座番号       15:口座名義カナ
+# 16:引落金額  17:新規コード 18:委託者番号 19:振替結果コード 20:振替結果
+self 10 5 1/4 6/9 11/NF                                    |
+# 1:居宅フラグ 2:利用者ID    3:銀行コード  4:銀行名          5:支店コード
+# 6:支店名     7:利用者名    8:施設コード  9:施設名          10:居室
+# 11:顧客番号  12:銀行名ｶﾅ   13:口座種別   14:口座番号       15:口座名義カナ
+# 16:引落金額  17:新規コード 18:委託者番号 19:振替結果コード 20:振替結果
+LANG=C sort -k1,2                                          |
+join2 +"_" key=1/2 $tmp-gattai_riyosha                             |
+# 1:居宅フラグ    2:利用者ID  3:事業所目印  4:銀行コード  5:銀行名
+# 6:支店コード    7:支店名    8:利用者名    9:施設コード  10:施設名
+# 11:居室         12:顧客番号 13:銀行名ｶﾅ   14:口座種別   15:口座番号
+# 16:口座名義カナ 17:引落金額 18:新規コード 19:委託者番号 20:振替結果コード
+# 21:振替結果
+self 1 10 11 8 12 17 5 7 14 15 16 20 21 3                  |
+# 1:居宅フラグ    2:施設名          3:居室      4:利用者名 5:顧客番号
+# 6:引落金額      7:銀行名          8:支店名    9:口座種別 10:口座番号
+# 11:口座名義カナ 12:振替結果コード 13:振替結果 14:事業所目印
+LANG=C sort -k12,12nr -k1,1 -k2,3 -k11,11                  |
+awk '{if($1=="kyotaku"){$1=$14}else{$1="-"};print}'        |
+awk '{if($9=="1"){$9="普通"}else if($9=="2"){$9="当座"}else{$9="@"};$13=$12":"$13;print}' |
+self 2/3 1 4/11 13                                         |
+if [ $MODE = "pdf_output" ];then
+  cat -
+else
+  if [ "${output_shisetsu}" = "施設外" ];then
+    awk '$1=="施設外"&&$3=="-"'
+  elif [ "${output_shisetsu}" = "YK" -o "${output_shisetsu}" = "BJ" ];then
+    awk '$3=="'${output_shisetsu}'"'
+  elif [ "${output_shisetsu}" = "AOⅡ" ];then
+    awk '$1~/AO2/'
+  else
+    awk '$1=="'${output_shisetsu}'"&&$3=="-"'
+  fi
+fi                                                         > $tmp-search
+# 1:施設名        2:居室      3:居宅フラグ 4:利用者名 5:顧客番号
+# 6:引落金額      7:銀行名    8:支店名     9:口座種別 10:口座番号
+# 11:口座名義カナ 12:振替結果
+cp $tmp-search ${work}/super
+
+if [ "$(gyo $tmp-search)" -ne 0 ];then
+  cat $tmp-search
+else
+  : 
+fi                               | juni > $tmp-search_data
+
+
+# 合計行追加
+cat $tmp-search                  |
+sm2 0 0 6 6                      |
+awk '{print "@","@","@","合計","@",$1,"@","@","@","@","@","@","@"}' > $tmp-sougoukei
+awk '$12=="0:振替済"' $tmp-search |
+sm2 0 0 6 6                       |
+awk '{print "@","@","@","振替済み合計","@",$1,"@","@","@","@","@","@","@"}' > $tmp-furikae_goukei
+awk '$12!="0:振替済"' $tmp-search |
+sm2 0 0 6 6                       |
+awk '{print "@","@","@","振替エラー合計","@",$1,"@","@","@","@","@","@","@"}' > $tmp-error_goukei
+cat $tmp-sougoukei $tmp-furikae_goukei $tmp-error_goukei |
+comma 6                          > ${tmp}-goukei_data
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###ITAKUSHA### ${itakushaNo}
+###NENGETSU### $NENGETSU
+###KEKKA### $KEKKA
+FIN
+
+
+# ページ分け 26行で分ける
+ALL=$(gyo $tmp-search_data)
+PAGE=$(echo "$ALL 26" | lcalc '$1/$2' | marume +age 1.0)
+
+cat ${html_dir}/FB_MEISAI.html               > $tmp-base.html
+
+# ヘッダー部分
+awk '/\<header_kokokara\>/,/\<header_kokomade\>/' $tmp-base.html  > $tmp-header.html
+
+# フッター部分
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-last.html
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+<div style="page-break-after:always;"></div>
+FIN
+
+for page in $(seq ${PAGE} | yarr);do
+  # 最初の行と最後の行
+  START=$(echo ${page} | lcalc '$1*26-25')
+  END=$(echo ${page} | lcalc '$1*26')
+
+  awk 'NR>='${START}'&&NR<='${END}'' $tmp-search_data |
+  comma 7                                             > $tmp-meisai_data
+  echo "${page} ${PAGE}" > $tmp-page_number
+  
+  # html作成
+  # 最終ページかどうか
+  if [ "${page}" = "${PAGE}" ];then
+    awk '/\<kiritori_kokokara\>/,/\<last_kokomade\>/' $tmp-base.html |
+    mojihame -l###SEARCH_KEKKA### - ${tmp}-meisai_data                 |
+    mojihame -l###GOUKEI_KEKKA### - ${tmp}-goukei_data                 |
+    mojihame -l###PAGE_NUMBER### - ${tmp}-page_number                  |
+    calsed -f ${tmp}-calsed -
+  else
+    awk '/\<kiritori_kokokara\>/,/\<kiritori_kokomade\>/' $tmp-base.html |
+    cat - $tmp-last.html                                                 |
+    mojihame -l###SEARCH_KEKKA### - ${tmp}-meisai_data                   |
+    mojihame -l###PAGE_NUMBER### - ${tmp}-page_number                  |
+    calsed -f ${tmp}-calsed -
+  fi                                                                   
+done                                                                   |
+cat $tmp-header.html -                                                 > $tmp-base_pdf.html
+cp $tmp-base_pdf.html ${work}/base.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --header-right [date]/[time] $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.SHOKYAKU_KANRI.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.SHOKYAKU_KANRI.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0
+

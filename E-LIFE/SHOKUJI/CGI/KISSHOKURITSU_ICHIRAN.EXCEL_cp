@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# SHOKUJI_SHUUKEI.EXCEL
+# 食事集計表示 食事別集計　エクセル出力用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+if [ $(echo "${SHISETSUID}" | awk '$1~/^1/{print substr($1,1,1)}') = "1" ] ; then
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+else
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+fi
+#---------------------------------
+ if [ "$(gyo ${data})" != "0" ] ; then
+  # ${data}
+  # 1:日付 2:施設ID 3:食事（朝昼夜）4:入居者数 5:対象者人数 6:食事数量 7:喫食率 8:色
+
+  # マップする
+     cat ${data}      |
+#     # 色はエクセルではいらないので消す
+#tee $tmp-mmmmmmm      |
+#     delf NF          |
+     # 喫食率は空に
+     awk '$(NF-1)="@"'    |
+#     awk '$3=="1"'    |
+     LANG=C sort      |
+     # 選択している施設を手前にする
+     if [ ! -z "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+       awk '{if($2=="'${Shisetsu}'"){print $0,"0"$2}
+             else{print $0,"1"$2}
+            }'        |
+       self 1 3 NF 4/NF-1 |
+       LANG=C sort -k1,3
+     else
+       cat -
+     fi               |
+# 1:日付     2:食事（朝昼夜） 3:施設ID 4:入居者数 5:対象者人数
+# 6:食事数量 7:喫食率         8:色
+     map +arr num=2   |
+     awk '$1!="*"'    |
+     awk '{gsub("1","朝食",$2);print $0}' |
+     awk '{gsub("2","昼食",$2);print $0}' |
+     awk '{gsub("3","夕食",$2);print $0}' > $tmp-listdata
+# 1:日付          2:食事（朝昼夜） 3:施設1：入居者数 4::施設1：対象者人数 5:施設1：食事数量
+# 6:施設1：喫食率 7:施設1：色　･･･
+  else
+    :
+  fi
+
+# ヘッダー施設名
+self 2 ${data}     |
+LANG=C sort -u     |
+cjoin1 key=1 - /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON  |
+self 1 2           > $tmp-shisetsu_all
+
+if [ ! -z ${Shisetsu} -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $2}' $tmp-shisetsu_all > $tmp-select_shisetsu
+  awk '$1!="'${Shisetsu}'"' $tmp-shisetsu_all           |
+  LANG=C sort                                           |
+  self 2                                                > $tmp-not_select_shisetsu
+  cat $tmp-select_shisetsu $tmp-not_select_shisetsu     |
+  tateyoko                                              |
+  sed 's/ / @ @ @ @ /g'                                   > $tmp-header_shisetsu
+else
+  self 2 $tmp-shisetsu_all                              |
+  tateyoko                                              |
+  sed 's/ / @ @ @ @ /g'                                   > $tmp-header_shisetsu
+fi
+
+# ヘッダー項目名
+self 2 ${data}  |
+LANG=C sort -u  |
+awk '$1="入居者数　対象者数　食数　喫食率　@"{print $1}' |
+tateyoko        |
+sed 's/　/ /g'  > $tmp-header_koumoku
+
+#--------------------------------------------------------------
+# データ
+#------------------------------------------------------------------------------------
+#検索項目それぞれ
+#建屋名
+if [ ${Tateya} != "_" ] ;then
+  cat ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME |
+  join0 key=1 <(echo ${Tateya})             |
+  self  2                                    > ${tmp}-tateya
+else
+  : > ${tmp}-tateya 
+fi
+
+# 表示期間
+echo "${TaishouYear}年${TaishouMonth}月"    > ${tmp}-taishoukikan
+
+TAISHOUMONTH=$(echo "${TaishouMonth}" | maezero 1.2)
+# 目標数値
+cat /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU  |
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"' |
+awk '$5<="'${TaishouYear}'""'${TAISHOUMONTH}'""01"&&$6>="'${TaishouYear}'""'${TAISHOUMONTH}'""01"' |
+LANG=C sort -k3,3 |
+self 4            |
+lcalc '$1 / 100'  > $tmp-mokuhyou
+#---------------------------------------------------------------------------------------
+# 入力データのチェック
+
+# Excel出力
+download_dir=$home_dir/SHOKUJI/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${download_dir}/kisshokuritsu_*_download.xls
+
+TEMPLA=${home_dir}/SHOKUJI/TEMPLATE/KISSHOKURITSU_TMP.xls
+Ehexcel < ${TEMPLA} 1 b4 $tmp-tateya             \
+                    1 b5 $tmp-taishoukikan       \
+                    1 d3 $tmp-mokuhyou           \
+                    1 c7 $tmp-header_shisetsu    \
+                    1 c8 $tmp-header_koumoku     \
+                    1 a9 ${tmp}-listdata   > ${download_dir}/kisshokuritsu_$$_download.xls
+# > ${download_dir}/kisshokuritsu_$$_download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/kisshokuritsu_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+#cp $tmp-* /home/hands/work/okuda
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

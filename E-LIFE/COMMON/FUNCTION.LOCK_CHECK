@@ -1,0 +1,128 @@
+#!/bin/bash -xv
+#
+# FUNCTION.LOCK_CHECK
+# lockfileチェックCGI
+#
+# $1:table_list
+#
+# Written by Y.kashiyama 2014/03/17
+
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%S.%N) ; set -xv
+#-------------------------------------------------------------
+# パラメーターの取得
+[ -z "$1" ] && exit 1
+table_list="$1"
+[ ! -s "$table_list" ] && exit 1
+#-------------------------------------------------------------
+
+
+#20150921add 
+_filelock_func_locked_log=${log_dir}/$(date +%Y%m%d)/LOG.FILELOCK_INFO.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%H%M%S.%N)_$$
+
+
+#-------------------------------------------------------------
+# 対象テーブルのlockfileが全てない状態をまって、lockfileを作成
+repeat_cnt=0
+:> $tmp-locked_table
+while true ;do
+
+   # テーブルリストにあるテーブルのlockfileが全てないかチェック
+  if [ "$(ls $(cat $table_list | awk '{print "'$tmplock_dir/'"$2".lock"}' | LANG=C sort -u | tr "\n" " ") | wc -l)" == "0" ]; then
+    cat $table_list |
+    while read table base key ;do
+
+      # もしlockfile作成に失敗したらエラーフラグを立てる
+      lockfile -1 -r 1 $tmplock_dir/$base.lock
+      [ $? -ne 0 ] && :> $tmp-err
+      [ -e $tmp-err ] && break;
+
+      # エラー時に本シェルが作成したlockfileのみを削除できるようにテーブル名を出力
+      echo "$tmplock_dir/$base.lock" >> $tmp-locked_table
+    : ;done
+
+    # lockfileを作り終えたら終了
+    break;
+
+  #20150921add ↓
+  else
+
+  #すでにロックファイルが存在する場合
+ 
+     #経過秒数判定用ファイル作成
+      touch  -t $(date +"%Y%m%d%H%M.%S" -d "10 seconds ago") $tmp-filelock_func_chktime
+
+      cat $table_list |
+      while read table base dir_kbn ;do
+
+        #テーブル名(ロックファイルパス)
+        lock_file_path=$tmplock_dir/$base.lock
+
+        #経過秒数判定ファイルより古かったら既存のロックファイル削除
+        if [ -f "$lock_file_path" -a "$lock_file_path" -ot  "$tmp-filelock_func_chktime" ] ; then
+
+          #ロックファイル強制削除のログ
+          echo "$(date +'%Y/%m/%d %H:%M:%S.%N') ロック情報(PID:$$ - $repeat_cnt )：時間超過ロックファイルを削除。：$lock_file_path $(stat $lock_file_path  | tail -n 1)"  >> $_filelock_func_locked_log
+
+          #該当のロックファイルを削除
+          rm -f $lock_file_path
+
+          #削除実施済判定ファイル作成(パイプがあるとループの外に変数の値を引き継げないのでファイルをフラグとして代替)
+          touch $tmp-filelock_func_del_file
+
+        elif [ -f "$lock_file_path" ] ; then
+
+          #ロックファイル競合発生
+          echo "$(date +'%Y/%m/%d %H:%M:%S.%N') ロック情報(PID:$$ - $repeat_cnt)：ロック競合発生：$lock_file_path  $(stat $lock_file_path  | tail -n 1)"  >> $_filelock_func_locked_log
+
+        fi
+
+      : ;done
+  #20150921add ↑
+
+  fi
+  # リピート上限を超えたらエラーフラグを立てる
+  repeat_cnt="$(plus $repeat_cnt 1)"
+  [ "$repeat_cnt" -gt 1 ] && :> $tmp-err
+
+  # エラーフラグが立っていたら終了
+  [ -e $tmp-err ] && break;
+
+  #20150921add ↓
+  #削除実施済判定ファイルが存在したら
+  if [ -f $tmp-filelock_func_del_file ] ; then
+      #ループ間隔を５秒に強制変更
+      roop_interval=5
+
+      #削除実施済判定ファイル削除
+      rm -f $tmp-filelock_func_del_file
+  else
+      roop_interval=3
+
+  fi
+  #20150921add ↑
+#  sleep 3
+  
+  sleep $roop_interval
+: ;done
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# エラー処理
+if [ -e $tmp-err ]; then
+
+  # 作成したlockfileは削除
+  cat $tmp-locked_table |
+  while read locked ;do
+    rm -f "$locked"
+  : ;done
+
+  rm -f $tmp-*
+  exit 1
+fi
+#-------------------------------------------------------------
+
+# 終了
+rm -f $tmp-*
+exit 0

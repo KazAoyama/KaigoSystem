@@ -1,0 +1,102 @@
+#!/bin/bash
+#
+# SERVICE_JISSHI_TEJUN.SEARCH
+# 個別援助計画書　検索用CGI
+#
+# Written by K.Aoyama :20131212
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+DataID
+hdKoushinDate
+KoushinDate
+Kyoshitsu
+Riyousha
+hdShokaiSakuseiDate
+ShokaiSakuseiDate
+Sakuseisha
+ServiceNaiyou
+TeikyoKubun
+TeikyouYoubi
+TeikyouJikanStart
+TeikyouJikanEnd
+txtareaTokki
+txtareaKoumoku
+txtareaTejun
+txtareaBiko
+txtareaShoyouJikan
+slShisetsu
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_TEJUN |
+awk '$(NF-2)!="9"'          |
+#--------------------------------------------------------------
+# データID
+if [ -z "${DataID}" -o "${DataID}" = "_" ] ; then
+cat - 
+else
+awk '$1=="'${DataID}'"'
+fi |
+getlast 2 2                 |
+#--------------------------------------------------------------
+# 検索
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                |
+delf 2                      |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print $0}'        > ${tmp}-tejun
+
+# 手順書データを表示
+cat ${tmp}-tejun
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,132 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI_KOJIN.SEARCH : 償却管理個人一覧.SEARCH
+#
+# Usage : SHOKYAKU_KANRI_KOJIN.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 利用者の取得
+echo ${Riyoushaid} > $tmp-riyosha
+
+# 償却開始日と償却終了日を取得
+cat ${riyosha_dir}/RIYOUSHA_KEIYAKUKIN                             |
+# 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+# 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+# 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+# 16:特販期間TO 17:17～予備  18:削除フラグ
+join0 key=1 $tmp-riyosha                                           |
+# 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+# 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+# 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+# 16:特販期間TO 17:17～予備  18:削除フラグ
+awk '$4=="'${shubetsu_select}'" && $18!=9'                         |
+self 6 7                                                           |
+head -n1                                                           > $tmp-kikan
+
+start=$(cat $tmp-kikan | self 1)
+endday=$(cat $tmp-kikan | self 2)                                   
+
+# 絞込みがあるかないか
+if [ -n "${kikan_from_year}" ];then
+  KIKAN_FROM=$(echo ${kikan_from_year} ${kikan_from_month} | awk '{print $1$2}')
+else
+  KIKAN_FROM="000000"
+fi
+if [ -n "${kikan_to_year}" ];then
+  KIKAN_TO=$(echo ${kikan_to_year} ${kikan_to_month} | awk '{print $1$2}')
+else
+  KIKAN_TO="999999"
+fi
+
+# マスタ準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                        |
+# 1:施設ID   2:建屋   3:フロア 4:ユニット 5:居室
+# 6:入居者ID 7:入居日 8:退去日
+LANG=C sort -k6,6n                                                 |
+join0 key=6 $tmp-riyosha                                           |
+awk '$9==1'                                                        |
+awk '$1=="'${shisetsu}'"'              |
+#awk '$7<="'${endday}'" && $8>="'${start}'"'                         |
+LANG=C sort -k7,7                                                  |
+tail -n1                                                           |
+self 6 5                                                           > $tmp-riyousha_room
+# 1:入居者ID 2:居室
+
+# データを検索
+cat ${pompa_dir}/SHOKYAKU_KANRI/${shisetsu}/${Riyoushaid}.SHOKYAKU |
+# 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却合計回数
+# 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+# 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+# 16:登録時間 17:userid
+
+awk '$14=="'${shubetsu_select}'"'                                  |
+awk '$15!="9"'                                                     |
+join1 key=2 $tmp-riyousha_room                                     |
+# 1:年月          2:利用者ID  3:居室            4:起算月        5:経過月数
+# 6:償却合計回数  7::元金額   8:非返却金額      9:償却対象金額  10:前月償却額累計
+# 11:前月償却残高 12:償却月額 13:当月償却額累計 14:当月償却残高 15:契約金ID
+# 16:有効フラグ   17:登録時間 18:userid
+self 1 3/14                                                        |
+# 1:年月 2:部屋番号 3:起算月 4:経過月数 5:残り月数
+# 6:一時金額 7:非返還金 8:償却金額 9:前月償却額累計 10:前月償却残高
+# 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+
+# 期間の絞込みがあった場合
+if [ "${KIKAN_FROM}" = "000000"];then
+  cat -
+else
+  awk '$1>="'${KIKAN_FROM}'"'
+fi                                                                 |
+if [ "${KIKAN_TO}" = "999999"];then
+  cat -
+else
+  awk '$1<="'${KIKAN_TO}'"'
+fi
+
+rm -f ${tmp}-*
+exit 0
+

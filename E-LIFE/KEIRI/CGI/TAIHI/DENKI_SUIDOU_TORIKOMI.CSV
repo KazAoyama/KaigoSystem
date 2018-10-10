@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.CSV : 電気水道料金CSV出力
+#
+# Usage : DENKI_SUIDOU_TORIKOMI.CSV namefile datafile
+#
+# Written by J.MIKAMI(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/DENKI_SUIDOU"
+input_dir="${app_dir}/INPUT/DENKI_SUIDOU"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+#namefile=${1}
+#searchfile=${2}
+
+#------------------------------------------------------------
+## パラメーターの取得
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  Shisetsu_select
+  Tateya_select
+  Floor_select
+  Unit_select
+  kikan_month_select
+  syubetsu_select
+FIN
+
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+
+
+# eval
+eval $(name-source $tmp-name)
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${kikan_month_select} >${tmp}-select_month
+echo ${syubetsu_select} > ${tmp}-syubetsu_select
+
+select_month="$(cat ${tmp}-select_month)"
+
+
+if [ ${syubetsu_select} = "1"  ]; then
+# 電気の出力
+# データの抽出
+cat << FIN > $tmp-header
+居室番号
+入居者名
+契約アンペア
+前月指示数
+当月指示数
+使用量
+①基本料金 
+②従量料金
+①+②ご請求額
+FIN
+tateyoko    $tmp-header                                |
+tr " " ","                                             >$tmp-header2
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month} |
+delf 2                                            |
+tr " " ","                                                                           >${tmp}-search
+cat $tmp-header2 ${tmp}-search     |
+nkf -sxLw                                                                        >${download_dir}/${userid}_$$.download.csv                              
+# 指定ファイルへリダイレクトする
+echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.csv","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+else
+# 水道の出力
+# データの抽出
+cat << FIN > $tmp-header
+居室番号
+入居者名
+前回指示数
+今回指示数
+使用量
+①上水道料金
+②下水道料金
+①+②ご請求額
+FIN
+tateyoko    $tmp-header                                |
+tr " " ","                                             >$tmp-header2
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month} |
+delf 2                                            |
+tr " " ","                                                                           >${tmp}-search
+cat $tmp-header2 ${tmp}-search     |
+nkf -sxLw                                                                        >${download_dir}/${userid}_$$.download.csv
+# 指定ファイルへリダイレクトする
+echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.csv","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+fi
+ rm -f ${tmp}-*
+exit 0
+

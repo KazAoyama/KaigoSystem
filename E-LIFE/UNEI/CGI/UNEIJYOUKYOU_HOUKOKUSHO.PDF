@@ -1,0 +1,418 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_ASSECEMENT.PDF
+# 個人情報詳細　アセスメント　PDF印刷用CGI
+#
+# Written by E.Okuda　2013/12/11
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+check=$2
+data=$3
+result=$4
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別 5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:年齢 10:現住所
+# 11:携帯電話番号
+  awk '$1=="kihon"{print $0}' ${data} |
+  delf 1 > $tmp-kihon_data
+
+
+# 1:利用者(入居者)ID        2:アセスメントID     3:施設               4:生活習慣起床            5:生活習慣朝食
+# 6:生活習慣昼食            7:生活習慣夕食       8:生活習慣就寝       9:生活習慣入浴            10:生活習慣過ごし方(午前)
+# 11:生活習慣過ごし方(午後) 12:生活習慣その他    13:イベント参加      14:趣味                   15:特技
+# 16:性格                   17:好きな作家        18:好きな本          19:好きな俳優・女優       20:好きな映画
+# 21:好きな歌手             22:好きな歌          23:好きなTV・ラジオ  24:よく行った街土地       25:好きな食べ物
+# 26:嫌いな食べ物           27:好きな飲み物      28:嫌いな飲み物      29:アルコール飲む飲まない 30:アルコール種類
+# 31:タバコ本数             32:タバコ詳細        33:嫌うこと          34:定期契約購買項目1      35:定期契約購買詳細1
+# 36:定期契約購買項目2      37:定期契約購買詳細2 38:定期契約購買項目3 39:定期契約購買詳細3      40:定期契約購買項目4
+# 41:定期契約購買詳細4      42:定期契約購買項目5 43:定期契約購買詳細5 44:定期契約購買項目6      45:定期契約購買詳細6
+# 46:定期契約購買項目7      47:定期契約購買詳細7 48:生活暦            49:家族                   50:入居のきっかけ
+  awk '$1=="assessment"{print $0}' ${data} |
+  delf 1 > $tmp-assessment_data
+
+if [ -s $tmp-kihon_data ] ; then
+  RIYOUSHANAME="$(awk '{print $2}' $tmp-kihon_data)"
+  RIYOUSHNAMEKANA="$(awk '{print $3}' $tmp-kihon_data)"
+  RIYOUSHASEIBETSU="$(awk '{if($4=="2"){print "女"}else{print "男"}}' $tmp-kihon_data)"
+  RIYOUSHABIRTHGENGOU="$(awk '{print $5}' $tmp-kihon_data | cjoin1 key=1 - ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU | self 2)"
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+  RIYOUSHABIRTHYEAER="$(awk '{print $6}' $tmp-kihon_data)"
+  RIYOUSHABIRTHMONTH="$(awk '{print $7}' $tmp-kihon_data)"
+  RIYOUSHABIRTHDAY="$(awk '{print $8}' $tmp-kihon_data)"
+  RIYOUSHANENREI="$(awk '{print $9}' $tmp-kihon_data)"
+else
+  RIYOUSHANAME="　"
+  RIYOUSHNAMEKANA="　"
+  RIYOUSHASEIBETSU="　"
+  RIYOUSHABIRTHGENGOU="　"
+  RIYOUSHABIRTHYEAER="　"
+  RIYOUSHABIRTHMONTH="　"
+  RIYOUSHABIRTHDAY="　"
+  RIYOUSHANENREI="　"
+fi
+
+if [ -s $tmp-assessment_data ] ; then
+  KOUSHINBI="$(awk '{print substr($52,1,4)"/"substr($52,5,2)"/"substr($52,7,2)}' $tmp-assessment_data)"
+  KOUSHINSHAID="$(awk '{print $NF}' $tmp-assessment_data)"
+  if [ ! -z "${KOUSHINSHAID}" -a "${KOUSHINSHAID}" != "_" ] ;then
+    KOUSHINSHA="$(echo "${KOUSHINSHAID}" | cjoin1 key=1 - ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | self 2)"
+  else
+    KOUSHINSHA="_"
+  fi
+  SeikatsuKishou="$(awk '{print $4}' $tmp-assessment_data)"
+  SeikatsuAsa="$(awk '{print $5}' $tmp-assessment_data)"
+  SeikatsuHiru="$(awk '{print $6}' $tmp-assessment_data)"
+  SeikatsuYoru="$(awk '{print $7}' $tmp-assessment_data)"
+  SeikatsuShuushin="$(awk '{print $8}' $tmp-assessment_data)"
+  SeikatsuNyuuyoku="$(awk '{print $9}' $tmp-assessment_data)"
+  SeikatsuGozen="$(awk '{print $10}' $tmp-assessment_data)"
+  SeikatsuGogo="$(awk '{print $11}' $tmp-assessment_data)"
+  SeikatsuSonota="$(awk '{print $12}' $tmp-assessment_data)"
+  Event="$(awk '{print $13}' $tmp-assessment_data)"
+  Shumi="$(awk '{print $14}' $tmp-assessment_data)"
+  Tokugi="$(awk '{print $15}' $tmp-assessment_data)"
+  Seikaku="$(awk '{print $16}' $tmp-assessment_data)"
+  Novelist="$(awk '{print $17}' $tmp-assessment_data)"
+  Book="$(awk '{print $18}' $tmp-assessment_data)"
+  Actor="$(awk '{print $19}' $tmp-assessment_data)"
+  Movie="$(awk '{print $20}' $tmp-assessment_data)"
+  Singer="$(awk '{print $21}' $tmp-assessment_data)"
+  Song="$(awk '{print $22}' $tmp-assessment_data)"
+  TvRadio="$(awk '{print $23}' $tmp-assessment_data)"
+  MachiTocchi="$(awk '{print $24}' $tmp-assessment_data)"
+  FavoriteFood="$(awk '{print $25}' $tmp-assessment_data)"
+  HateFood="$(awk '{print $26}' $tmp-assessment_data)"
+  FavoriteDrink="$(awk '{print $27}' $tmp-assessment_data)"
+  HateDrink="$(awk '{print $28}' $tmp-assessment_data)"
+  Alcohol="$(awk '{print $29}' $tmp-assessment_data | awk '{if($1=="4"){print "多い"}else if($1=="3"){print "普通"}else if($1=="2"){print "少ない"}else{print "飲まない"}}')"
+  AlcoholShurui="$(awk '{print $30}' $tmp-assessment_data)"
+  TabakoNumber="$(awk '{print $31}' $tmp-assessment_data)"
+  TabakoBikou="$(awk '{print $32}' $tmp-assessment_data)"
+  Kiraukoto="$(awk '{print $33}' $tmp-assessment_data)"
+  TeikiHeader1="$(awk '{print $34}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki1="$(awk '{print $35}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader2="$(awk '{print $36}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki2="$(awk '{print $37}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader3="$(awk '{print $38}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki3="$(awk '{print $39}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader4="$(awk '{print $40}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki4="$(awk '{print $41}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader5="$(awk '{print $42}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki5="$(awk '{print $43}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader6="$(awk '{print $44}' $tmp-assessment_data| sed 's/_/　/g')"
+  Teiki6="$(awk '{print $45}' $tmp-assessment_data | sed 's/_/　/g')"
+  TeikiHeader7="$(awk '{print $46}' $tmp-assessment_data | sed 's/_/　/g')"
+  Teiki7="$(awk '{print $47}' $tmp-assessment_data | sed 's/_/　/g')"
+  Seikatsureki="$(awk '{print $48}' $tmp-assessment_data | sed 's/_/　/g')"
+  Kazoku="$(awk '{print $49}' $tmp-assessment_data | sed 's/_/　/g')"
+  NyuukyonoKikkake="$(awk '{print $50}' $tmp-assessment_data| sed 's/_/　/g')"
+else
+  KOUSHINBI="　"
+  KOUSHINSHA="　"
+  SeikatsuKishou="　"
+  SeikatsuAsa="　"
+  SeikatsuHiru="　"
+  SeikatsuYoru="　"
+  SeikatsuShuushin="　"
+  SeikatsuNyuuyoku="　"
+  SeikatsuGozen="　"
+  SeikatsuGogo="　"
+  SeikatsuSonota="　"
+  Event="　"
+  Shumi="　"
+  Tokugi="　"
+  Seikaku="　"
+  SeikatsuKishou="　"
+  SeikatsuAsa="　"
+  SeikatsuHiru="　"
+  SeikatsuYoru="　"
+  SeikatsuShuushin="　"
+  SeikatsuNyuuyoku="　"
+  SeikatsuGozen="　"
+  SeikatsuGogo="　"
+  SeikatsuSonota="　"
+  Event="　"
+  Shumi="　"
+  Tokugi="　"
+  Seikaku="　"
+  Novelist="　"
+  Book="　"
+  Actor="　"
+  Movie="　"
+  Singer="　"
+  Song="　"
+  TvRadio="　"
+  MachiTocchi="　"
+  FavoriteFood="　"
+  HateFood="　"
+  FavoriteDrink="　"
+  HateDrink="　"
+  Alcohol="　"
+  AlcoholShurui="　"
+  TabakoNumber="　"
+  TabakoBikou="　"
+  Kiraukoto="　"
+  TeikiHeader1="　"
+  Teiki1="　"
+  TeikiHeader2="　"
+  Teiki2="　"
+  TeikiHeader3="　"
+  Teiki3="　"
+  TeikiHeader4="　"
+  Teiki4="　"
+  TeikiHeader5="　"
+  Teiki5="　"
+  TeikiHeader6="　"
+  Teiki6="　"
+  TeikiHeader7="　"
+  Teiki7="　"
+  Seikatsureki="　"
+  Kazoku="　"
+  NyuukyonoKikkake="　"
+fi
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${userid}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${shisetsu}
+###ERROR_MESSAGE### ${error_message}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###RIYOUSHNAMEKANA### ${RIYOUSHNAMEKANA}
+###RIYOUSHASEIBETSU### ${RIYOUSHASEIBETSU}
+###KinkyuujiKyoshitu### ${NYUUKYOKYOSHITSU}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###DROPDOWN_ACTIVE1### active
+###LI_UNEI8### active
+FIN
+
+# calsedファイル2
+cat << FINN > $tmp-calsed_data2
+###KOUSHINBI### ${KOUSHINBI}
+###KOUSHINSHA### ${KOUSHINSHA}
+###RIYOUSHABIRTHGENGOU### ${RIYOUSHABIRTHGENGOU}
+###RIYOUSHABIRTHYEAER### ${RIYOUSHABIRTHYEAER}
+###RIYOUSHABIRTHMONTH### ${RIYOUSHABIRTHMONTH}
+###RIYOUSHABIRTHDAY### ${RIYOUSHABIRTHDAY}
+###RIYOUSHANENREI### ${RIYOUSHANENREI}
+###SeikatsuKishou### ${SeikatsuKishou}
+###SeikatsuAsa### ${SeikatsuAsa}
+###SeikatsuHiru### ${SeikatsuHiru}
+###SeikatsuYoru### ${SeikatsuYoru}
+###SeikatsuShuushin### ${SeikatsuShuushin}
+###SeikatsuNyuuyoku### ${SeikatsuNyuuyoku}
+###SeikatsuGozen### ${SeikatsuGozen}
+###SeikatsuGogo### ${SeikatsuGogo}
+###SeikatsuSonota### ${SeikatsuSonota}
+###Event### ${Event}
+###Shumi### ${Shumi}
+###Tokugi### ${Tokugi}
+###Seikaku### ${Seikaku}
+###SeikatsuKishou### ${SeikatsuKishou}
+###SeikatsuAsa### ${SeikatsuAsa}
+###SeikatsuHiru### ${SeikatsuHiru}
+###SeikatsuYoru### ${NSeikatsuYoru}
+###SeikatsuShuushin### ${SeikatsuShuushin}
+###SeikatsuNyuuyoku### ${SeikatsuNyuuyoku}
+###SeikatsuGozen### ${SeikatsuGozen}
+###SeikatsuGogo### ${SeikatsuGogo}
+###SeikatsuSonota### ${SeikatsuSonota}
+###Event### ${Event}
+###Shumi### ${Shumi}
+###Tokugi### ${Tokugi}
+###Seikaku### ${Seikaku}
+###Novelist### ${Novelist}
+###Book### ${Book}
+###Actor### ${Actor}
+###Movie### ${Movie}
+###Singer### ${Singer}
+###Song### ${Song}
+###TvRadio### ${TvRadio}
+###MachiTocchi### ${MachiTocchi}
+###FavoriteFood### ${FavoriteFood}
+###HateFood### ${HateFood}
+###FavoriteDrink### ${FavoriteDrink}
+###HateDrink### ${HateDrink}
+###Alcohol### ${Alcohol}
+###AlcoholShurui### ${AlcoholShurui}
+###TabakoNumber### ${TabakoNumber}
+###TabakoBikou### ${TabakoBikou}
+###Kiraukoto### ${Kiraukoto}
+###TeikiHeader1### ${TeikiHeader1}
+###Teiki1### ${Teiki1}
+###TeikiHeader2### ${TeikiHeader2}
+###Teiki2### ${Teiki2}
+###TeikiHeader3### ${TeikiHeader3}
+###Teiki3### ${Teiki3}
+###TeikiHeader4### ${TeikiHeader4}
+###Teiki4### ${Teiki4}
+###TeikiHeader5### ${TeikiHeader5}
+###Teiki5### ${Teiki5}
+###TeikiHeader6### ${TeikiHeader6}
+###Teiki6### ${Teiki6}
+###TeikiHeader7### ${TeikiHeader7}
+###Teiki7### ${Teiki7}
+###Seikatsureki### ${Seikatsureki}
+###Kazoku### ${Kazoku}
+###NyuukyonoKikkake### ${NyuukyonoKikkake}
+FINN
+
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+#-------------------------------------------------------------
+# プルダウンの準備
+
+#--------------------------------------------------------------
+###############ここ美しが丘等の住所がわかったら直すこと#####################################
+#最下段の施設住所など取得
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+#head -1                                            >  $tmp-shozoku_shisetsu
+awk '$1=="'${Shisetsu}'"'                 >  $tmp-shozoku_shisetsu
+
+SHISETSUNAME="$(awk '{print $2}' $tmp-shozoku_shisetsu)"
+#############入居者の所属に寄って上から選択すること！########################################
+#--------------------------------------------------------------
+
+if [ "$MODE" = "touroku" ] ; then
+
+touroku_result="$(cat ${result} | head -1 | self 2)"
+
+ if [ ${touroku_result} = "touroku_ok" ] ; then
+    message="登録が完了しました。"
+ else
+    message=$(awk '$1=="message"{print $2}' ${result})
+ fi
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" ] ; then
+	cat <<- FINN > $tmp-html2
+          <script type="text/javascript" language="javascript">
+           sonota_pop = window.open("","sonota_pop");
+           sonota_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+cat $tmp-calsed_data2                |
+sed 's/###KARA###/　/g' -            |
+sed 's/_/###SPACE###/g' -            |
+cat $tmp-calsed_data -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1="　"
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_ASSESSMENT_PDF.html             |
+calsed -f $tmp-calsed_data_result -                              |
+mojihame -lkinkyuuji_seibetsu_select - $tmp-seibetsu             |
+mojihame -lkinkyuuji_seinegappi_gengou - $tmp-gengou             |
+mojihame -lkinkyuuji_allergy_select - $tmp-allergy               |
+mojihame -lkinkyuuji_kansenshou_select - $tmp-kansenshou         |
+mojihame -lkinkyuuji_shinshou_select - $tmp-shinshou             |
+mojihame -lkinkyuuji_ketsueki_rh_select - $tmp-rh                |
+mojihame -lkinkyuuji_haien_wakuchin_select - $tmp-wakuchin       |
+mojihame -lshozoku_shisetsu - $tmp-shozoku_shisetsu              |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/<br>/g'                                        |
+sed 's/###KAIGYO###/<br>/g'                                > ${tmp}-tougou_data
+#--------------------------------------------------------------
+filehame -l"meisai_table_filehame" ${html_dir}/ASSESSEMENT_INSATSU.html ${tmp}-tougou_data  > ${tmp}-html_kansei.html
+
+#過去のPDFは消す
+if [ -s ${app_dir}/DOWNLOAD/*.ASSESSEMENT.pdf ] ; then
+  rm ${app_dir}/DOWNLOAD/*.ASSESSEMENT.pdf
+else 
+  :
+fi
+#PDF作成
+${home_dir}/TOOL/wkhtmltopdf-amd64 --margin-bottom 2 --margin-left 5 --margin-right 5 --margin-top 2 ${tmp}-html_kansei.html ${app_dir}/DOWNLOAD/${cur_time}.ASSESSEMENT.pdf
+
+#--------------------------------------------------------------
+# 出力
+cat << FIN > ${tmp}-html.html
+  <html>
+    <head>
+      <script type="text/javascript" language="Javascript">
+        window.open("/E-LIFE/UNEI/DOWNLOAD/${cur_time}.ASSESSEMENT.pdf","pdfprint");
+      </script>
+    </head>
+  </html>
+FIN
+
+#cp $tmp-* /home/hands/work/okuda
+
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-html.html
+#if [ -e $tmp-html2 ] ; then
+#  cat - $tmp-html2
+#else
+#  cat -
+#fi |
+#cat -
+#--------------------------------------------------------------
+## 終了
+rm -f $tmp-*
+exit 0

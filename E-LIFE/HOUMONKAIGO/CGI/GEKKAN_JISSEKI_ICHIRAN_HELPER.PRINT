@@ -1,0 +1,147 @@
+#!/bin/bash
+#
+# GEKKAN_RIYOU_JISSEKI_MEISAI_ICHIRAN.PRINT : ヘルパー活動記録印刷
+#
+# Usage : GEKKAN_RIYOU_JISSEKI_MEISAI_ICHIRAN.PRINT namefile datafile
+#
+# Written by K.Aoyama(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+function error_exit {
+  message="$1"
+cat << FIN > $tmp-html
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+# ファイル名をはく
+  cat $tmp-html
+  rm -f $tmp-*
+  exit 0
+}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#///////////////////////////////////////////////////////////////////
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#//////////////////////////////////////////////////////////////////
+
+#  サーチで取得したデータをリストにセット
+if [ "$(gyo ${searchfile})" != 0 ] ; then
+   cat ${searchfile} > $tmp-listdata
+else
+# 空のリストデータを作成する
+   : > $tmp-listdata
+fi
+
+[ "$(gyo $tmp-listdata)" = "0" ] && error_exit "データが見つかりません"
+
+#総合計データ作成
+#1:ヘルパーコード 2:担当ヘルパー名 3:日付  4:曜日   5:サービス提供時間
+#6:利用者ID       7:利用者名       8サービスコード   9:同行ヘルパー名 10:請求無し
+#11:請求無し     12「予防」是非(備考)  13:全回数     14:介護対象回数  15:請求対象外回数
+#16:サービス時間合計 17:サービス提供時間量(個)　
+if [ -s $tmp-listdata ] ;then
+  cat $tmp-listdata    |
+  self 1 13 16 16      |
+  tee $work_dir/self_ato |
+  LANG=C sort -u       |
+  tee $work_dir/sort_ato |
+  #1:ヘルパーコード　2:合計回数  3:サービス時間  4:トータル時間
+  #また時間を分数に直す
+  awk  '{print $1,$2,substr($3,1,2)*60+substr($3,4,2),substr($4,1,2)*60+substr($4,4,2)}' |
+  tee $work_dir/awk_ato |
+  #合計
+  sm2 0 0 2 4         |
+  tee $work_dir/sm_ato |
+  #分を時間にに直す
+  awk '{$2=(sprintf("%02d",$2/60)":"sprintf("%02d",$2%60)); $3=(sprintf("%02d",$3/60)":"sprintf("%02d",$3%60)); print}'  > $tmp-goukei_data
+  # 1:合計回数 2:サービス時間 3:トータル時間
+else
+ : > $tmp-goukei_data
+fi 
+# 対象年月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' > $tmp-disp_nengetsu
+
+dispTaishouNengetsu=$(cat $tmp-disp_nengetsu)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###TAISHOUNENGETSU### $dispTaishouNengetsu
+###TODAY### ${today}
+###DOMAIN### $domain
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_GEKKAN_JISSEKI_ICHIRAN_HELPER_2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -h###GEKKANRIYOUJISSEKIMEISAIICHIRAN### - $tmp-listdata |
+mojihame -h###GOUKEI_DATA### - $tmp-goukei_data |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-gekkan_jisseki_ichiran_helper_pdf.html
+#--------------------------------------------------------------
+cp $tmp-gekkan_jisseki_ichiran_helper_pdf.html $work_dir/gekkan_jisseki_ichiran_helper_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_JISSEKI_ICHIRAN_HELPER.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-gekkan_jisseki_ichiran_helper_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_JISSEKI_ICHIRAN_HELPER.pdf
+
+  # HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_JISSEKI_ICHIRAN_HELPER.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0
+

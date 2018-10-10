@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.PRINT : 居宅介護請求印刷
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+domain="http://e-life.hands-lab.com"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+case ${MODE} in
+  shisenseikyusho_shokai )
+    # データを呼び出す
+    for month in $(cat ${pompa_dir}/KOKUHO/${shisetsu}/${taisho_nengetsu}/NENGETSU_LIST);do
+      cat ${pompa_dir}/KOKUHO/${shisetsu}/${taisho_nengetsu}/${month}.KYOTAKU_SEIKYUJOHO_7111 > $tmp-7111_base
+      # 対象年月
+      cat $tmp-7111_base                                                                |
+      getlast 1 1                                                                       |
+      self 2                                                                            > $tmp-taisho_nengetsu
+      target_month=$(cat $tmp-taisho_nengetsu)
+      last_day=$(mdate ${target_month}m | tarr | tail -n1)
+      # 和暦に
+      cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+      awk '$5!="9"'                                      |
+      awk '$3<="'$last_day'"&&"'$last_day'"<=$4'         |
+      awk '{print $2,"'$last_day'",substr($3,1,4)-1}'    |
+      awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2))}' |
+      awk '{print $1,$2,$3}'                             |
+      maezero 2.2 3.2                                    |
+      awk '{print $1,substr($2,1,1),substr($2,2,1),substr($3,1,1),substr($3,2,1)}' > $tmp-wareki_nengetsu
+
+      # 事業所番号
+      cat $tmp-7111_base                                                                |
+      getlast 1 1                                                                       |
+      self 3                                                                            > $tmp-jigyosho_bangou
+      cat $tmp-jigyosho_bangou                                                          |
+      awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1),substr($1,7,1),substr($1,8,1),substr($1,9,1)}'              > $tmp-jigyosho_number
+
+      # 事業所情報
+      cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER                       |
+      join1 key=1 <(echo ${shisetsu})                                                  |
+      self 2 4 2                                                                       > $tmp-jigyosho_joho
+      # 1:事業所名 2:住所 3:電話番号
+
+      # 請求額
+      cat $tmp-7111_base                                                               |
+      self 7 8 9 10                                                                    |
+      comma 1 2 3 4                                                                    > $tmp-seikyugaku
+      
+      # 出力日
+      cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+      awk '$5!="9"'                                      |
+      awk '$3<="'$today'"&&"'$today'"<=$4'         |
+      awk '{print $2,"'$today'",substr($3,1,4)-1}'    |
+      awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2))i,int(substr($2,7,2))}' |
+      awk '{print $1$2,$3,$4}'                             > $tmp-today
+    done
+  ;;
+  kyufukanrihyo_shokai )
+    # データを呼び出す
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${taisho_nengetsu}/${month}.KYUFUKANRI          > $tmp-kyufukanri
+    cat $tmp-kyufukanri | self 1 | LANG=C sort -u -k1,1n > $tmp-taishosha
+    for member in $(cat $tmp-taishosha);do
+
+    done
+    
+  ;;
+esac
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DOMAIN### ${domain}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/KAIGOKYUFUHI_SEIKYUSHO.html  |
+mojihame -l###TAISHO_NENGETSU### - ${tmp}-wareki_nengetsu |
+mojihame -l###TODAY### - ${tmp}-today |
+mojihame -l###JIGYOSHO_NUMBER### - ${tmp}-jigyosho_number |
+mojihame -l###JIGYOSHO_JOHO### - ${tmp}-jigyosho_joho |
+mojihame -l###SEIKYUGAKU### - ${tmp}-seikyugaku |
+mojihame -l###SEIKYUGOUKEI### - ${tmp}-seikyugaku |
+calsed -f ${tmp}-calsed -                            > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.KYUFUSEIKYUSHO.pdf
+
+# HTMLの作成
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.KYUFUSEIKYUSHO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+
+rm -f ${tmp}-*
+exit 0
+

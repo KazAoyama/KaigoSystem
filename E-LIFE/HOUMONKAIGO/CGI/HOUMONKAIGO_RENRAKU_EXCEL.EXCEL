@@ -1,0 +1,149 @@
+#!/bin/bash
+#
+# HOUMONKAIGO_RENRAKU_EXCEL.EXCEL
+# 訪問介護連絡ノート一覧　出力用CGI
+#
+# Written by K.Aoyama :2010114
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ユーザIDが不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+# ユーザマスタ
+self 1 2 ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  > $tmp-user_mst
+
+# 利用者マスター
+echo "99999999" "職員連絡" > $tmp-shokuin_renraku
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+tee $tmp-riyousha_master |
+self 1 2                 |
+cat - $tmp-shokuin_renraku |
+if [ -z "$relStaff" -o "$relStaff" = "_" ] ; then
+  cat -
+else
+  awk '$1=="'$relStaff'"'
+fi > $tmp-houmonkaigo_renraku_riyousha
+
+[ -z "$renrakuStartDate" -o "$renrakuStartDate" = "_" ] && renrakuStartDate="00000000"
+[ -z "$renrakuEndDate" -o "$renrakuEndDate" = "_" ] && renrakuEndDate="99999999"
+
+# 訪問介護連絡事項
+cat ${pompa_dir}/HOUMONKAIGO_RENRAKU/$shisetsu/HOUMONKAIGO_RENRAKU_JIKOU |
+awk '$(NF-2)!="9"'    |
+#awk '$1=="'${shisetsu}'"&&$(NF-2)!="9"'    |
+awk '"'$renrakuStartDate'"<=$3&&$3<="'$renrakuEndDate'"'               |
+LANG=C sort -k21,21                        |
+join1 key=21 $tmp-user_mst                 |
+LANG=C sort -k5,5 |
+join1 key=5 $tmp-houmonkaigo_renraku_riyousha |
+delf 5           |
+# 連絡事項データ
+# 1:施設            2:ID            3:登録日付 4:登録時間           5:対象者
+# 6:施設ID          7:連絡事項詳細  8:確認者   9:申し送り反映フラグ 10:申し送りID
+# 11:介護支援経過ID 12:連絡先事業所 13:相手先  14:予備１            15:予備２
+# 16:予備３         17:予備４       18:予備５  19:有効フラグ        20:処理時間
+# 21:ユーザID 22:ユーザ名
+LANG=C sort -k4,4r  |
+awk '{$3=substr($3,1,4)"/"substr($3,5,2)"/"substr($3,7,2);print $0}'   |
+sed 's/\\n/　/g' |
+# 1:登録時間 2:連絡事項詳細 3:ユーザ名 4:対象者       5:確認者
+# 6:ID       7:登録日付     8:処理時間 9:連絡先事業所 10:相手先
+self 4 7 22 5 8 2 3 20 12 13 |
+# 1:日付   2:時刻   3:内容 4:相手先 5:対象者
+# 6:記入者 7:更新日
+self 7 1 2 10 4 3 8  |
+awk '{$8=substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2);print $0}'  |
+self 1/6 8 |
+LANG=C sort -k1,2 -k7,7 > $tmp-renrakulist
+
+if [ "$renrakuStartDate" = "00000000" ] ; then
+   dispRenrakuStartDate=""
+else
+   dispRenrakuStartDate=$(echo "$renrakuStartDate" | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+fi
+if [ "$renrakuEndDate" = "99999999" ] ; then
+   dispRenrakuEndDate=""
+else
+   dispRenrakuEndDate=$(echo "$renrakuEndDate" | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+fi
+echo "$dispRenrakuStartDate" "～" "$dispRenrakuEndDate" |
+awk '{print $1$2$3}' > $tmp-taishou_hiduke
+
+if [ -z "$relStaff" -o "$relStaff" = "_" ] ; then
+  :> $tmp-taishousha
+else
+  self 2 $tmp-houmonkaigo_renraku_riyousha > $tmp-taishousha
+fi
+
+
+# Excel出力
+download_dir=$home_dir/HOUMONKAIGO/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${userid}_renraku_*_download.xls
+
+TEMPLA=${home_dir}/HOUMONKAIGO/TEMPLATE/HOUMONKAIGO_RENRAKU_ICHIRAN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-taishou_hiduke               \
+                    1 b5 $tmp-taishousha          \
+                    1 a9 ${tmp}-renrakulist       > ${download_dir}/${userid}_renraku_$$_download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${userid}_renraku_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

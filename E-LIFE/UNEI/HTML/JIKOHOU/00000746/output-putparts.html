@@ -1,0 +1,799 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+                      "http://www/w3.org/TR/html4/loose.dtd">
+<html>
+	<head>
+		<meta http-equiv="Content-type" content="text/html; charset=UTF-8" />
+		<meta http-equiv="Content-Script-type" content="text/javascript" />
+		<meta http-equiv="Content-Style-type" content="text/css" />
+		<title>部品を乗せる</title>
+		<script>
+			
+			var dataNo = 123;							// データ番号（とりあえず固定）
+
+			var selectedStyleObj = null;	// 選択したスタイル(のアイコン)
+			var textInputObj = null;			// テキスト入力欄
+			var buttonObj = null;					// テキスト配置ボタン
+			var partsObj = null;					// 配置するパーツ
+			var arrowObj = null;					// 配置する矢印
+			var textObj = null;						// 配置するテキスト
+			var toolObj = null;						// ツールエリア
+			var picScreenObj = null;			// クリックを検知するスクリーン(画像と同じ位置・大きさ)
+			var toolScreenObj = null;			// クリックを検知するスクリーン(ツールエリアと同じ位置・大きさ)
+			var cursorX;									// カーソル位置
+			var cursorY;
+			var maxPartsNo = 10;					// 配置できるパーツの最大数
+			var maxArrowPartsNo = 10;			// 配置できる矢印パーツの最大数
+			var maxTextPartsNo = 10;			// 配置できるテキストパーツの最大数
+
+			var mode;											// PICK or DEL
+
+			var tateyoko;								// 横書き or 縦書き
+
+			// 初期化
+			function init(){
+				// マウス位置取得する関数をコールバック関数として設定する
+				document.onmousemove=function(e){
+					if(document.all && !window.opera){
+						cursorX = window.event.clientX;
+						cursorY = window.event.clinetY;
+					}else{
+						cursorX = e.pageX;
+						cursorY = e.pageY;
+					}
+				}
+				// 各オブジェクトを取得する。
+				textInputObj  = document.getElementById("TEXTINPUT");
+				buttonObj     = document.getElementById("TEXTPUT_BUTTON");
+				toolObj       = document.getElementById("TOOL");
+				picScreenObj  = document.getElementById("PIC_SCREEN");
+				toolScreenObj = document.getElementById("TOOL_SCREEN");
+
+				hideScreen();
+
+				// モードを取得(PICK)モードとする
+				mode = "PICK";
+
+				// 横書き縦書きを取得する
+				if(document.getElementById("TY_TATE").checked){
+					tateyoko = "TATE";
+				}else{
+					tateyoko = "YOKO";
+				}
+				
+			}
+			
+			// 配置データの初期化
+			function initData(){
+				initSelect();
+				for (var i=0; i<maxPartsNo; i++){
+					var obj = document.getElementById("PARTS" + i);
+					obj.style.display = "none";
+					obj.style.backgroundImage = "";
+				}
+				for (var i=0; i<maxArrowPartsNo; i++){
+					var obj = document.getElementById("ARROWPARTS" + i);
+					obj.style.display = "none";
+					obj.style.backgroundImage = "";
+				}
+				for (var i=0; i<maxTextPartsNo; i++){
+					var obj = document.getElementById("TEXTPARTS" + i);
+					obj.style.display = "none";
+					obj.innerHTML = "";
+				}
+			}
+
+			// パーツ・テキストを配置するためにスクリーンをオンにする
+			function showScreen(){
+				picScreenObj.style.zIndex = 100;
+				toolScreenObj.style.zIndex = 101;
+				toolObj.style.zIndex = 0;
+			}
+
+			// パーツ・テキストを拾えるようにスクリーンをオフにする
+			function hideScreen(){
+				picScreenObj.style.zIndex = 0;
+				toolScreenObj.style.zIndex = 1;
+				toolObj.style.zIndex = 2;
+			}
+
+			// パーツ・テキストの選択を初期化する
+			function initSelect(){
+				document.getElementById("CIRCLE_L").style.border  = "2px solid white"
+				document.getElementById("CIRCLE_M").style.border  = "2px solid white"
+				document.getElementById("CIRCLE_S").style.border  = "2px solid white"
+				document.getElementById("DELETE").style.border    = "2px solid white"
+				document.getElementById("ARROW").style.border     = "2px solid white"
+				document.getElementById("TEXT").style.border      = "2px solid white"
+
+				document.getElementById("ARROW_LU").style.border  = "2px solid white"
+				document.getElementById("ARROW_RU").style.border  = "2px solid white"
+				document.getElementById("ARROW_LD").style.border  = "2px solid white"
+				document.getElementById("ARROW_RD").style.border  = "2px solid white"
+
+				document.getElementById("ARROW_L2U").style.border = "2px solid white"
+				document.getElementById("ARROW_R2U").style.border = "2px solid white"
+				document.getElementById("ARROW_L2D").style.border = "2px solid white"
+				document.getElementById("ARROW_R2D").style.border = "2px solid white"
+				
+				document.getElementById("ARROW_2LU").style.border = "2px solid white"
+				document.getElementById("ARROW_2RU").style.border = "2px solid white"
+				document.getElementById("ARROW_2LD").style.border = "2px solid white"
+				document.getElementById("ARROW_2RD").style.border = "2px solid white"
+
+				document.getElementById("TEXT_TOOL").style.display = "none";
+				document.getElementById("BLANK").style.display = "block";
+				document.getElementById("ARROW_TOOL").style.display = "none";
+			}
+
+			// パーツ ============================	
+			// 使用可能なパーツを取得する
+			function getPartsObj(){
+				for (var i=0; i<maxPartsNo; i++){
+					var obj = document.getElementById("PARTS" + i);
+					if(obj.style.display == "none")	return obj;
+				}
+				return null;
+			}
+
+			// パーツを選択する
+			function selectParts(obj){
+				if ((partsObj=getPartsObj()) == null){
+					alert("これ以上円を配置できません");
+					return;
+				}
+
+				// 選択したアイコンを強調
+				initSelect();
+				selectedStyleObj = obj;
+				selectedStyleObj.style.border = "2px solid steelblue";
+
+				// 取得モードに変更しておく
+				mode = "PICK";
+
+				// カーソルに選択したアイコンと同じ図形をセット
+				partsObj.style.backgroundImage = obj.style.backgroundImage;
+				partsObj.style.border = "none";
+				partsObj.style.backgroundColor = "transparent";
+				partsObj.style.left = (cursorX - 16) + 'px';
+				partsObj.style.top  = (cursorY - 16) + 'px';
+				partsObj.style.display = "block";	
+
+				// スクリーンをオンにして配置出来るようにする
+				showScreen();
+			}
+
+			// パーツをマウスに合わせて動かす
+			function moveParts(){
+				if (partsObj == null)	return;
+				partsObj.style.left = (cursorX - 16) + 'px';
+				partsObj.style.top  = (cursorY - 16) + 'px';
+			}
+
+			// 選択したパーツの位置を固定する
+			function putParts(){
+				if (partsObj==null)	return;
+				partsObj.style.left = (cursorX - 16) + 'px';	
+				partsObj.style.top  = (cursorY - 16) + 'px';	
+				partsObj.style.border = "none";	
+				partsObj = null;
+
+				// 選択を解除し、パーツを拾えるようにスクリーンをオフにする
+				initSelect();
+				hideScreen();
+			}
+
+			// パーツを拾う
+			function pickParts(obj){
+				partsObj = obj;
+				if(mode == "PICK"){
+					partsObj.style.border = "none";
+					partsObj.style.left = (cursorX - 16) + 'px';
+					partsObj.style.top  = (cursorY - 16) + 'px';
+					// スクリーンをオンにして配置出来るようにする
+					showScreen();
+				}else if(mode=="DEL"){
+					deleteParts(obj);
+				}
+			}
+
+			// パーツを削除する
+			function deleteParts(obj){
+				obj.style.backgroundImage = "";	
+				obj.style.display = "none";	
+				obj = null;
+
+				// 取得モードに変更しておく
+				initSelect();
+				mode = "PICK";
+			}
+
+			// パーツの選択を解除する
+			function cancelParts(){
+				if (partsObj){
+					partsObj.style.backgroundImage = "";
+					partsObj.style.display = "none";
+					partsObj = null;
+				}else if(textObj){
+					textObj.innerHTML = "";
+					textObj.style.display = "none";
+					textObj = null;
+				}
+
+				initSelect();
+				hideScreen();
+				mode = "PICK";
+			}
+
+			// 削除 ================================
+			// 削除モードにする
+			function selectDelete(){
+				initSelect();
+				// 選択したアイコンを強調
+				document.getElementById("DELETE").style.border = "2px solid firebrick";
+				mode = "DEL";
+			}
+
+			// 矢印 ================================	
+			// 使用可能な矢印パーツを取得する
+			function getArrowPartsObj(){
+				for (var i=0; i<maxArrowPartsNo; i++){
+					var obj = document.getElementById("ARROWPARTS" + i);
+					if(obj.style.display == "none")	return obj;
+				}
+				return null;
+			}
+
+			// 矢印ツールを選択する
+			function selectArrowBox(obj){
+				initSelect();
+
+				// 選択したアイコンを強調する
+				selectedStyleObj = obj;
+				selectedStyleObj.style.border = "2px solid steelblue";
+
+				// 矢印選択ボックスを表示する
+				document.getElementById("BLANK").style.display = "none";
+				document.getElementById("ARROW_TOOL").style.display = "block";
+			}
+
+			// 矢印の選択を解除する
+			function initSelectArrow(){
+				document.getElementById("ARROW_LU").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_RU").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_LD").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_RD").style.border = "2px solid transparent";	
+
+				document.getElementById("ARROW_L2U").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_R2U").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_L2D").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_R2D").style.border = "2px solid transparent";	
+				
+				document.getElementById("ARROW_2LU").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_2RU").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_2LD").style.border = "2px solid transparent";	
+				document.getElementById("ARROW_2RD").style.border = "2px solid transparent";	
+			}
+
+			// 矢印を選択する
+			function selectArrowParts(obj, w, h){
+				if ((arrowObj=getArrowPartsObj()) == null){
+					alert("これ以上矢印を配置できません");
+					return;
+				}
+				// 選択したアイコンを強調
+				initSelectArrow();
+				obj.style.border = "2px solid green"
+
+				// カーソルに選択したアイコンと同じ図形をセット
+				arrowObj.style.backgroundImage = obj.style.backgroundImage;
+				arrowObj.style.border = "none";
+				arrowObj.style.backgroundColor = "transparent";
+				arrowObj.style.left = (cursorX - 16) + 'px';
+				arrowObj.style.top  = (cursorY - 16) + 'px';
+				arrowObj.style.display = "block";	
+				arrowObj.style.width  = w;	
+				arrowObj.style.height = h;	
+				// スクリーンをオンにして配置出来るようにする
+				showScreen();
+			}
+
+			// 矢印をマウスに合わせて動かす
+			function moveArrow(){
+				if (arrowObj == null)	return;
+				arrowObj.style.left = (cursorX - 16) + 'px';
+				arrowObj.style.top  = (cursorY - 16) + 'px';
+			}
+
+			// 選択した矢印の位置を固定する
+			function putArrow(){
+				if (arrowObj==null)	return;
+				arrowObj.style.left = (cursorX - 16) + 'px';	
+				arrowObj.style.top  = (cursorY - 16) + 'px';	
+				arrowObj.style.border = "none";	
+				arrowObj = null;
+
+				// 選択を解除し、パーツを拾えるようにスクリーンをオフにする
+				initSelect();
+				hideScreen();
+			}
+
+			// 矢印を拾う
+			function pickArrow(obj){
+				arrowObj = obj;
+				if(mode == "PICK"){
+					arrowObj.style.border = "none";
+					arrowObj.style.left = (cursorX - 16) + 'px';
+					arrowObj.style.top  = (cursorY - 16) + 'px';
+					// スクリーンをオンにして配置出来るようにする
+					showScreen();
+				}else if(mode=="DEL"){
+					deleteParts(obj);		// 削除はパーツの処理と同じ
+				}
+			}
+
+			// テキスト ============================	
+			// 使用可能なテキストパーツを取得する
+			function getTextObj(){
+				for (var i=0; i<maxTextPartsNo; i++){
+					var obj = document.getElementById("TEXTPARTS" + i);
+					if(obj.innerHTML == "")	return obj;
+				}
+				return null;
+			}
+
+			// テキストを選択する
+			function selectTextBox(obj){
+				if ((textObj=getTextObj()) == null){
+					alert("これ以上テキストを配置できません");
+					return;
+				}
+
+				// 選択したアイコンを強調
+				initSelect();
+				obj.style.border = "2px solid steelblue";
+				
+				// テキストボックスを表示する
+				document.getElementById("BLANK").style.display = "none";
+				document.getElementById("TEXT_TOOL").style.display = "block";
+
+				textInputObj.value= "";
+				textInputObj.disabled = false;
+			}
+
+			// 入力したテキストを動かせるパーツにする
+			function setText(){
+				// 入力した文字列を取り出す
+				var str = textInputObj.value.replace(/\n/g,"<br>");
+
+				// カーソルにテキストパーツをセットする
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+				textObj.style.display = "block";	
+				textObj.innerHTML = str;
+				
+				// 縦書きの指定
+				if (tateyoko == "TATE"){
+					textObj.style.width = "1em";
+					textObj.style.textalign = "center";
+				}else{
+					textObj.style.width = "auto";
+					textObj.style.textalign = "left";
+				}
+
+				// 入力したテキストを初期化する
+				textInputObj.value = "";
+				textInputObj.disabled = false;
+
+				// スクリーンをオンにして配置出来るようにする
+				showScreen();
+			}
+
+			// テキストが1文字以上あれば、配置ボタンを有効化する
+			function enabledTextPutButton(){
+				if(textInputObj.value.length <= 0)	return;
+				buttonObj.disabled = false;
+			}
+			
+			// テキストをマウスに合わせて動かす
+			function moveText(){
+				if (textObj == null)	return;
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+			}
+
+			// テキストの位置を固定する
+			function putText(){
+				if (textObj==null)	return;
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+				textObj.style.border = "none"
+				textObj = null;
+				
+				// テキストボックスの無効化
+				textbox = document.getElementById("TEXTINPUT");
+				textbox.value= "";
+				textbox.disabled = true;
+				
+				// 配置ボタンの無効化
+				buttonObj.disabled = true;
+
+				// 選択を解除し、パーツを拾えるようにスクリーンをオフにする
+				initSelect();
+				hideScreen();
+			}
+
+			// テキストパーツを拾う
+			function pickText(obj){
+				textObj = obj;
+				
+				if (mode == "PICK"){
+					textObj.style.border = "1px solid red";
+					textObj.style.left = (cursorX - 16) + 'px';
+					textObj.style.top  = (cursorY - 16) + 'px';
+					// スクリーンをオンにして配置出来るようにする
+					showScreen();
+				}else{
+					deleteText(obj);
+				}
+			}
+
+			// テキストパーツを削除する
+			function deleteText(obj){
+				obj.innerHTML = "";
+				obj.style.display = "none";	
+				obj = null;
+				
+				// 取得モードに変更しておく
+				initSelect();
+				mode = "PICK";
+			}
+
+			// 横書き縦書きの変更
+			function changeTateyoko(value){
+				tateyoko = value;
+			}
+
+			// 保存 ================================
+			// データを保存する
+			function saveData(){
+				if (!window.confirm("現在の作図を[No." + dataNo + "]データとして保存します。\nよろしいでしょうか？"))
+					return;
+				var parts  = document.getElementsByClassName("fig_parts");
+				var arrows = document.getElementsByClassName("arrow_parts");
+				var texts  = document.getElementsByClassName("text_parts");
+				var sendStr = "";
+
+				// データ番号の保存
+				sendStr = "NO=" + dataNo + "&";
+
+				// 図形パーツの保存
+				var partsStr = new Array();
+				for(var i=0; i<parts.length; i++){
+					if(parts[i].style.display == "none")	continue;
+					partsStr[i] = "PARTS" + i + "=" + parts[i].style.left + "," + parts[i].style.top + "," + parts[i].style.backgroundImage;
+					sendStr += partsStr[i];
+					sendStr += "&";
+				}
+
+				// 矢印の保存
+				var arrowStr = new Array();
+				for(var i=0; i<arrows.length; i++){
+					if(arrows[i].style.display == "none")	continue;
+					arrowStr[i] = "ARROWPARTS" + i + "=" + arrows[i].style.left + "," + arrows[i].style.top + "," 
+					              + arrows[i].style.backgroundImage + "," + arrows[i].style.width + "," + arrows[i].style.height ;
+					sendStr += arrowStr[i];
+					sendStr += "&";
+				}
+
+				// テキストの保存
+				var textStr = new Array();
+				for(var i=0; i<texts.length; i++){
+					var str = texts[i].innerHTML; 
+					if(texts[i].style.display == "none")	continue;
+					// 文字列は、"_"を"\_"に、","を"\,"に、半角空白を"_"に其々置換し、URIエンコードする
+					str = str.replace(/,/g,"\\,");
+					str = str.replace(/_/g,"\\_");
+					str = str.replace(/ /g,"_");
+					str = encodeURIComponent(str);
+
+					textStr[i] = "TEXTPARTS" + i + "=" + texts[i].style.left + "," + texts[i].style.top + "," + str + "," + texts[i].style.width;
+					sendStr += textStr[i];
+					sendStr += "&";
+				}
+				
+				// 保存CGI呼び出し
+				var httpReq = new XMLHttpRequest();
+				httpReq.open("POST", "../CGI/PUTPARTS_SAVE.CGI", false);
+				httpReq.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+				httpReq.send(sendStr);
+
+				// 完了
+				alert("保存しました");
+			}
+
+			// データを読み出す
+			function loadData(){
+				// 読出CGI呼び出し
+				initData();
+                                var responseData="NO 123\nARROWPARTS0 193px 176px url(http://e-life.hands-lab.com/images/ARROW_R2U.png) 32px 64px\nTEXTPARTS0 184px 240px test auto";
+				var partsData = responseData.split("\n");
+				for (var i=0; i<partsData.length; i++){
+					var data = partsData[i].split(" ");	
+					if (data[0].indexOf("PARTS") == 0){
+						// パーツ
+						partsObj = document.getElementById(data[0]);
+						partsObj.style.left = data[1];
+						partsObj.style.top  = data[2];
+						partsObj.style.backgroundImage = data[3].replace(/\\"/g,"\"");
+						partsObj.style.backgroundColor = "transparent";
+						partsObj.style.border = "none";
+						partsObj.style.display = "block"
+						partsObj = null;
+					}else if (data[0].indexOf("ARROWPARTS") == 0){
+						// 矢印パーツ
+						arrowObj = document.getElementById(data[0]);
+						arrowObj.style.left = data[1];
+						arrowObj.style.top  = data[2];
+						arrowObj.style.backgroundImage = data[3].replace(/\\"/g,"\"");
+						arrowObj.style.width = data[4];
+						arrowObj.style.height = data[5];
+						arrowObj.style.backgroundColor = "transparent";
+						arrowObj.style.border = "none";
+						arrowObj.style.display = "block"
+						arrowObj = null;
+					}else if (data[0].indexOf("TEXTPARTS") == 0){
+						// テキスト
+						textObj = document.getElementById(data[0]);
+						textObj.style.left = data[1];
+						textObj.style.top  = data[2];
+						textObj.innerHTML  = data[3];
+                                                if(data[4]=="auto") {
+                                                  val4="100px";
+                                                } else {
+                                                  val4=data[4];
+                                                }
+						textObj.style.width = val4;
+						textObj.style.border = "none";
+						textObj.style.display = "block"
+						textObj = null;
+					}
+				}
+				
+			}
+
+		</script>
+
+		<style>
+			* {
+				padding: 0;
+				margin: 0;
+				font-size: 12px;
+			}
+
+			.main {
+				float: left;
+				width: 350px;
+				height: 350px;
+				padding: 10px 20px;
+				background-color: white;
+			}
+
+			.picture {
+				width:  320px;
+				height: 320px;
+				float: left;
+				margin-right: 20px;
+				background-image: url("/images/JINTAIZU.png");
+			}
+			.pic_screen {
+				width:  320px;
+				height: 320px;
+				position: relative;
+				left: 0;
+				top: 0;
+				background-color: transparent;
+				z-index: 100;
+			}
+
+			.tool_area{
+				width: 160px;
+				height:300px;
+				padding:10px;
+				position: relative;
+				left: 330px;
+				top: -320px;
+				background-color: white;
+				z-index: 1;
+			}
+
+			.tool_screen{
+				width: 160px;
+				height:300px;
+				padding:10px;
+				position: relative;
+				left: 330px;
+				top: -640px;
+				z-index: 0;
+			}
+
+			.parts_icon {
+				width: 32px;
+				height: 32px;
+				margin-bottom:5px;
+				text-align:center;
+				vertical-align:middle;
+				background-color: #eeeeee;
+				background-repeat: no-repeat;
+				border:2px solid white;
+			}
+			
+			.fig_parts {
+				width: 32px;
+				height: 32px;
+				margin-bottom:5px;
+				text-align:center;
+				vertical-align:middle;
+				background-color: #eeeeee;
+				background-repeat: no-repeat;
+				border:2px solid white;
+			}
+			
+			.arrow_parts {
+				width: 32px;
+				height: 32px;
+				margin: 3px 0 0 3px;
+				text-align:center;
+				vertical-align:middle;
+				background-color: #eeeeee;
+				background-repeat: no-repeat;
+				border:2px solid white;
+			}
+			.tool_box {
+				width:160px;
+				height:160px;
+				margin-top:10px;
+				clear: both;
+			}
+
+			#BLANK{
+				background-color:#f0f0f0;
+				display:block;
+			}
+
+			#TEXT_TOOL{
+				background-color:#dcf7db;
+				display:none;
+			}
+
+			#ARROW_TOOL{
+			/*	background-color:#fffff0;*/
+				background-color: lightgreen;
+				display:none;
+			}
+
+
+			.text_parts {
+				border: 1px dotted blue;
+				cursor: default;
+			}
+			
+			.text_button_area {
+				width:160px;
+				margin-top:5px;
+				text-align:right;
+			}
+			.button_area {
+				width:160px;
+				margin-top:5px;
+				text-align:right;
+			}
+			button {
+				background-color: lightblue;
+			}
+
+			#ARROW_R2D,#ARROW_L2D,#ARROW_R2U,#ARROW_L2U{
+				width: 32px;
+				height:64px;
+			}
+
+			#ARROW_2RD,#ARROW_2LD,#ARROW_2RU,#ARROW_2LU{
+				width: 64px;
+				height:32px;
+			}
+
+		</style>
+	</head>
+
+	<body style="width:350px;height:350px" onload="loadData();">
+		<div class="main" onmousemove="moveParts();moveArrow();moveText()">
+			<div id="PICTURE" class="picture">
+			</div>
+
+			<div id="PIC_SCREEN" class="pic_screen" onclick="putParts();putArrow();putText()" onmousemove="moveParts();moveText()">
+			</div>
+
+			<div id="TOOL" class="tool_area" style="display:none"> 
+				<div id="CIRCLE_L" class="parts_icon" style="background-image:url('/images/CIRCLE_L.png');float:left" onclick="selectParts(this)"></div>
+				<div id="CIRCLE_M" class="parts_icon" style="background-image:url('/images/CIRCLE_M.png');float:left" onclick="selectParts(this)"></div>
+				<div id="CIRCLE_S" class="parts_icon" style="background-image:url('/images/CIRCLE_S.png');float:left" onclick="selectParts(this)"></div>
+				<div id="DELETE"   class="parts_icon" style="background-image:url('/images/DEL_ICON.png');float:left" onclick="selectDelete()"></div>
+				<div id="ARROW"    class="parts_icon" style="background-image:url('/images/ARROW_ICON.png');float:left" onclick="selectArrowBox(this)"></div>
+				<div id="TEXT"     class="parts_icon" style="background-image:url('/images/TEXT_ICON.png');float:left" onclick="selectTextBox(this)"></div>
+				<div id="BLANK" class="tool_box">
+				</div>
+				<div id="ARROW_TOOL" class="tool_box">
+					<div style="width:160px;height:160px;overflow:scroll">
+						<div style="margin-top:4px;margin-left:2px">
+							<div id="ARROW_LU" class="parts_icon" style="background-image:url('/images/ARROW_LU.png');float:left" onclick="selectArrowParts(this,'32px','32px')"></div>
+							<div id="ARROW_RU" class="parts_icon" style="background-image:url('/images/ARROW_RU.png');float:left" onclick="selectArrowParts(this,'32px','32px')"></div>
+							<div id="ARROW_LD" class="parts_icon" style="background-image:url('/images/ARROW_LD.png');float:left" onclick="selectArrowParts(this,'32px','32px')"></div>
+							<div id="ARROW_RD" class="parts_icon" style="background-image:url('/images/ARROW_RD.png');float:left" onclick="selectArrowParts(this,'32px','32px')"></div>
+						</div>
+						<div style="clear:both;margin-left:2px">
+							<div id="ARROW_L2U" class="parts_icon" style="background-image:url('/images/ARROW_L2U.png');float:left" onclick="selectArrowParts(this,'32px','64px')"></div>
+							<div id="ARROW_R2U" class="parts_icon" style="background-image:url('/images/ARROW_R2U.png');float:left" onclick="selectArrowParts(this,'32px','64px')"></div>
+							<div id="ARROW_L2D" class="parts_icon" style="background-image:url('/images/ARROW_L2D.png');float:left" onclick="selectArrowParts(this,'32px','64px')"></div>
+							<div id="ARROW_R2D" class="parts_icon" style="background-image:url('/images/ARROW_R2D.png');float:left" onclick="selectArrowParts(this,'32px','64px')"></div>
+						</div>
+						<div style="clear:both;margin-left:2px">
+							<div id="ARROW_2LU" class="parts_icon" style="background-image:url('/images/ARROW_2LU.png');margin-bottom:0" onclick="selectArrowParts(this,'64px','32px')"></div>
+							<div id="ARROW_2RU" class="parts_icon" style="background-image:url('/images/ARROW_2RU.png');margin-bottom:0" onclick="selectArrowParts(this,'64px','32px')"></div>
+							<div id="ARROW_2LD" class="parts_icon" style="background-image:url('/images/ARROW_2LD.png');margin-bottom:0" onclick="selectArrowParts(this,'64px','32px')"></div>
+							<div id="ARROW_2RD" class="parts_icon" style="background-image:url('/images/ARROW_2RD.png')" onclick="selectArrowParts(this,'64px','32px')"></div>
+						</div>
+					</div>
+				</div>
+				<div id="TEXT_TOOL" class="tool_box">
+					<div>
+						<textarea id="TEXTINPUT" style="width:150px;height:60px;margin:5px" onkeyup="enabledTextPutButton()" disabled></textarea>
+					</div>
+					<div style="padding:3px">
+						<input id="TY_YOKO" name="TATEYOKO" type="radio" value="YOKO" onchange="changeTateyoko(this.value)" checked>横書き</input>
+						<input id="TY_TATE" name="TATEYOKO" type="radio" value="TATE" onchange="changeTateyoko(this.value)">縦書き</input>
+					</div>
+					<div class="text_button_area" >
+						<button id="TEXTPUT_BUTTON" style="width:50px;height:20px" onclick="setText()" disabled>配置</button>
+					</div>
+				</div>
+				<div class="button_area" >
+					<button id="SAVE_BUTTON" style="width:78px;height:24px;font-size:11px" onclick="saveData()">保存する</button>
+					<button id="LOAD_BUTTON" style="width:78px;height:24px;font-size:11px" onclick="loadData()">読みだす</button>
+					<button id="INIT_BUTTON" style="width:66px;height:24px;margin-top:10px;font-size:10px" onclick="initData()">初期化する</button>
+				</div>
+			</div>
+			<div id="TOOL_SCREEN" class="tool_screen" style="display:none" onclick="cancelParts()">
+			</div>
+
+			<div id="PARTS0" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS1" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS2" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS3" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS4" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS5" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS6" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS7" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS8" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<div id="PARTS9" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			<p id="TEXTPARTS0" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS1" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS2" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS3" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS4" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS5" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS6" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS7" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS8" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="TEXTPARTS9" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			<p id="ARROWPARTS0" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS1" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS2" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS3" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS4" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS5" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS6" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS7" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS8" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+			<p id="ARROWPARTS9" class="arrow_parts" style="position:absolute;display:none" onmousedown="pickArrow(this)"></p>
+		</div>
+	</body>
+</html>

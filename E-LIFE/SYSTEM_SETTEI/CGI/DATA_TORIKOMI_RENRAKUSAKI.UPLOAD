@@ -1,0 +1,259 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_KOUZA.UPLOAD
+#
+# データ取込：口座情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE4" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE4/'       |
+sed 's/^.*filename4="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+cat ${excel} |
+e2t2 1 a2 q-  > $tmp-data
+# 1:ContactID        2:ContactName       3:ContactKana          4:ContactSexType       5:ContactBirthDay
+# 6:ContactPostNo    7:ContactTelNo      8:ContactCellularTelNo 9:ContactWorkTelNo     10:ContactFaxNo
+# 11:ContactEMailAdr 12:ContactPhotoPath 13:ContactWork         14:ContactWorkPosition 15:ContactAdr
+# 16:ContactComment  17:DeleteFlg
+
+cat ${excel} |
+e2t2 2 a2 p-  > $tmp-data2
+# 1:UserID        2:ContactID     3:ContactNo      4:ContactRelation        5:RoomerFlg
+# 6:ContactFlg    7:MeetFlg       8:ContactType1   9:ContactType2           10:ContactType3
+# 11:ContactType4 12:ContactType5 13:PriorityTelNo 14:PriorityCellularTelNo 15:PriorityWorkTelNo
+
+[ -s "$tmp-data" ] || error_exit
+[ -s "$tmp-data2" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#------------------------------
+# 連絡先データの整備
+#------------------------------
+cat $tmp-data                      |
+self 1/4 7/9 11 6 15 13 14 16 17   |
+# 1:ContactID 2:連絡先氏名 3:氏名カナ 4:性別       5:電話
+# 6:携帯電話  7:職場電話   8:Email    9:郵便番号   10:住所
+# 11:仕事     12:仕事役職  13:備考    14:DeleteFlg
+zen 3                |
+sed 's/＿/　/g'      |
+awk '{print $0,$12!="@"?$11"###SPACE###"$12:$11,$NF=="0"?"1":"9"}' |
+self 1/10 NF-1 13 NF          |
+# 1:ContactID 2:連絡先氏名 3:氏名カナ    4:性別     5:電話
+# 6:携帯電話  7:職場電話   8:Email       9:郵便番号 10:住所
+# 11:仕事役職 12:備考      13:削除フラグ
+LANG=C sort          > $tmp-renrakusaki_shousai_before
+
+[ -s $tmp-renrakusaki_shousai_before ] || error_exit
+#---------------------------------------
+# 連絡先データと利用者を結びつける準備
+#---------------------------------------
+# 続柄準備
+cat /home/hands/E-LIFE/TBL/CONFIG/ZOKUGARA_MASTER |
+self 2 1      |
+LANG=C sort   > $tmp-zokugara
+
+cat $tmp-data2                     |
+self 2 1 3 4 8/11                  |
+# 1:ContactID      2:UserID    3:優先順位            4:続柄  5:ContactType1(請求書送付先)
+# 6:ContactType2(身元引取り人) 7:ContactType3(返還金受取人)  8:ContactType4(代理人)
+awk '{print $0,$5!="0"?"1":"0",$6!="0"?"1":"0",$7!="0"?"1":"0",$8!="0"?"1":"0"}' |
+self 1/4 NF-3/NF                   |
+# 続柄
+cjoin1 +ng key=4 $tmp-zokugara -   > $tmp-zokugara_ok 2>$tmp-zokugara_ng
+
+if [ -s $tmp-zokugara_ok ] ; then
+  cat $tmp-zokugara_ok   |
+  awk '{print $0,"_"}'   |
+# 1:ContactID    2:UserID       3:優先順位     4:続柄名 5:続柄ID
+# 6:請求書送付先 7:身元引取り人 8:返還金受取人 9:代理人 10:続柄備考
+  self 1/3 5 NF 6/NF-1 > $tmp-renrakusaki_1
+else
+error_exit  :
+fi
+
+if [ -s $tmp-zokugara_ng ] ; then
+  cat $tmp-zokugara_ng   |
+  awk '{print $0,$4!="@"?"999":"_"}' |
+  self 1/3 NF 4/NF-1     > $tmp-renrakusaki_2
+else
+ :
+fi
+
+if [ -s $tmp-renrakusaki_1 -a $tmp-renrakusaki_2 ] ; then
+  cat $tmp-renrakusaki_1 $tmp-renrakusaki_2 > $tmp-renrakusaki_user_relation
+elif [ -s $tmp-renrakusaki_1 ] ; then
+  cat $tmp-renrakusaki_1 > $tmp-renrakusaki_user_relation
+elif [ -s $tmp-renrakusaki_2 ] ; then
+  cat $tmp-renrakusaki_2 > $tmp-renrakusaki_user_relation
+else
+  error_exit 
+fi
+
+[ -s $tmp-renrakusaki_user_relation ] || error_exit
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 利用者IDをくっつける
+[ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu}" ] || error_exit "新利用者IDをひも付けるテーブルがありません"
+
+cat $tmp-renrakusaki_user_relation  |
+# 1:ContactID    2:UserID       3:優先順位     4:続柄ID 5:続柄備考
+# 6:請求書送付先 7:身元引取り人 8:返還金受取人 9:代理人
+LANG=C sort -k2,2                   |
+cjoin1 +ng key=2 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-renrakusaki_riyousha_ok 2>$tmp-renrakusaki_riyousha_ng
+
+[ -s $tmp-renrakusaki_riyousha_ok ] || error_exit
+
+#-----------------------------------------------
+# 連絡先詳細と連絡先紐付けデータをくっつける
+#-----------------------------------------------
+
+# 施設名の準備
+ShisetsuName=$(awk '$1=="'${Shisetsu}'"{print $2}' /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON)
+
+cat $tmp-renrakusaki_riyousha_ok  |
+delf 2                            |
+LANG=C sort                       |
+# 1:ContactID    2:利用者ID     3:優先順位     4:続柄ID 5:続柄備考
+# 6:請求書送付先 7:身元引取り人 8:返還金受取人 9:代理人
+cjoin1 key=1 $tmp-renrakusaki_shousai_before - |
+# 1:ContactID 2:連絡先氏名 3:氏名カナ      4:性別          5:電話
+# 6:携帯電話  7:職場電話   8:Email         9:郵便番号      10:住所
+# 11:仕事役職 12:備考      13:削除フラグ   14:利用者ID     15:優先順位
+# 16:続柄ID   17:続柄備考  18:請求書送付先 19:身元引取り人 20:返還金受取人
+# 21:代理人
+self 14 2/4 16 17 15 5/11 18/NF 12 13 |
+# 1:利用者ID      2:連絡先氏名    3:氏名カナ 4:性別      5:続柄ID
+# 6:続柄備考      7:優先順位      8:電話     9:携帯電話  10:職場電話
+# 11:Email        12:郵便番号     13:住所    14:仕事役職 15:請求書送付先
+# 16:身元引取り人 17:返還金受取人 18:代理人  19:備考     20:削除フラグ
+LANG=C sort |
+rank ref=1  |
+# 1:番号          2:利用者ID      3:連絡先氏名    4:氏名カナ 5:性別
+# 6:続柄ID        7:続柄備考      8:優先順位      9:電話     10:携帯電話
+# 11:職場電話     12:Email        13:郵便番号     14:住所    15:仕事役職
+# 16:請求書送付先 17:身元引取り人 18:返還金受取人 19:代理人  20:備考
+# 21:削除フラグ
+awk '{print $0,$1+("'${Shisetsu}'"*100),$11!="@"?$15"###SPACE###TEL:"$11:$15,"_","_","_",$21,"2014070100000000","00078"}'         |
+sed 's/@###SPACE###://g' |
+self 2 NF-7 3/10 12/14 NF-6 16/20 1 NF-5/NF |
+#> $tmp-riyousha_renrakusaki_${Shisetsu}
+# 1:利用者ID      2:連絡先ID      3:連絡先氏名 4:氏名カナ       5:性別
+# 6:続柄ID        7:続柄備考      8:優先順位   9:電話           10:携帯電話
+# 11:Email        12:郵便番号     13:住所      14:仕事(役職TEL) 15:請求書送付先
+# 16:身元引取り人 17:返還金受取人 18:代理人    19:備考          20:緊急個人データ反映
+# 21:予備1        22:予備2        23:予備3     24:削除フラグ    25:更新日時
+# 26:更新者
+
+# 施設移行の件を備考に入れる
+awk '{print $0,$19=="@"?"システム移行データ(""'${ShisetsuName}'"")":"システム移行データ(""'${ShisetsuName}'"")###KAIGYO###"$19}' |
+self 1/18 NF 20/NF-1     > $tmp-riyousha_renrakusaki_${Shisetsu}
+
+
+[ -s $tmp-riyousha_renrakusaki_${Shisetsu} -a "$(retu $tmp-riyousha_renrakusaki_${Shisetsu})" = "26" ] || error_exit
+#cp $tmp-* /home/hands/work/okuda 
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+#-----------------------
+# 全施設の連絡先情報
+#-----------------------
+# 
+#cat /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RENRAKUSAKI $tmp-riyousha_renrakusaki_${Shisetsu} |
+cat /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_RENRAKUSAKI $tmp-riyousha_renrakusaki_${Shisetsu} |
+LANG=C sort -u > $tmp-riyousha_renrakusaki_result
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+#------------------------
+# 所定の場所へこぴー
+cp -p $tmp-riyousha_renrakusaki_${Shisetsu} /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_RENRAKUSAKI_${Shisetsu}
+cp -p $tmp-riyousha_renrakusaki_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_RENRAKUSAKI
+
+cp $tmp-*ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}
+
+
+# -------------------------
+# データ更新
+
+  # 利用者連絡先
+  cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RENRAKUSAKI /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_RENRAKUSAKI_${cur_time}
+#
+#  cp -p $tmp-riyousha_renrakusaki_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RENRAKUSAKI
+#  cp -p $tmp-riyousha_renrakusaki_result /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_RENRAKUSAKI
+#
+
+#cp $tmp-* /home/hands/work/okuda
+#-------------------------------------------------------------
+
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

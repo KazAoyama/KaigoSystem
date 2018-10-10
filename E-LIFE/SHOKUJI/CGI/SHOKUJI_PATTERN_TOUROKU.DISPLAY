@@ -1,0 +1,868 @@
+#!/bin/bash
+#
+# SHOKUJI_PATTERN_TOUROKU.DISPLAY
+# 欠食表ディスプレイCGI
+#
+# Written by E.Okuda :2014/01/08
+
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+data_dir="/DATA/E-LIFE"
+riyousha_dir="${data_dir}/UNEI/RIYOUSHA"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+cgi_name="SHOKUJI_PATTERN_TOUROKU.CGI"
+tbl_dir="${home_dir}/TBL"
+#-------------------------------------------------------------
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+result_data="$4"
+this_month=$(date +%Y%m)
+gessho=$(echo ${this_month}01)
+getsumatsu=$(mdate ${this_month}m | tarr | tail -n1)
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID=$(nameread  "userid"  $namedata)
+USERNAME="$(awk '$1=="'${userid}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID=$(nameread  "shisetsu"  $namedata)
+SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+Shisetsu=$(nameread  "shisetsu"  $namedata)
+
+EtsuranHenkouShinki=$(nameread  "EtsuranHenkouShinki"  $namedata)
+KikanFrom=$(nameread  "KikanFrom"  $namedata)
+SHOKUJIPATTERNID=$(nameread  "KikanFrom"  $namedata)
+ShinkiKikanFrom=$(nameread  "ShinkiKikanFrom"  $namedata | sed 's/\///g')
+[ -z "${ShinkiKikanFrom}" -o "${ShinkiKikanFrom}" = "_" ] && ShinkiKikanFrom=$(date +%Y%m%d)
+ShinkiKikanfrom_disp=$(echo "${ShinkiKikanFrom}" | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+ShinkiKikanTo=$(nameread  "ShinkiKikanTo"  $namedata | sed 's/\///g')
+[ -z "${ShinkiKikanTo}" -o "${ShinkiKikanTo}" = "_" ] && ShinkiKikanTo="99999999"
+ShinkiKikanto_disp=$(echo "${ShinkiKikanTo}" | awk '{if($1!="99999999"){print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}else{print "@"}}')
+  Shokuji=$(nameread      "SELECTShokuji"   $namedata)
+  Shokushu=$(nameread     "SELECTShokushu"   $namedata)
+  Taishousha=$(nameread   "SELECTTaishousha"   $namedata)
+  Menu=$(nameread     "SELECTMenu"   $namedata)
+#-------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 新規登録の場合
+  shinki)
+
+    result=$(awk '$1=="result"{print $2}' ${data})
+
+    # 結果がNG
+    if [ "${result}" = "ng" ] ; then
+     message=$(awk '$1=="message"{print $2}' ${data})
+     MODE="init"
+   
+    # 結果がOK
+     else
+     message="この期間の食事パターンを登録してください。"
+     SHOKUJIPATTERNID="$(awk '$1=="message"{print $3}' ${data})"
+     SHOKUJIPATTERNSHINKIFLG="ok"
+    fi
+  ;;
+
+  dayhenkou)
+
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+
+    # 結果がNG
+    if [ "${result}" = "ng" ] ; then
+     message=$(awk '$1=="message"{print $2}' ${result_data})
+    # 結果がOK
+     else
+     message="期間を変更しました。"
+     
+    fi
+    
+   ;;
+# awk '$1=="'${Nyuukyosha}'"&&$2=="'${SHOKUJIPATTERNID}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-pattern_header
+#  # 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+#  # 6:期間From 7:期間To 
+#
+#   KikanFrom=$(nameread  "ShinkiKikanFrom"  $namedata)
+#   KikanTo=$(nameread  "ShinkiKikanTo"  $namedata)
+#   [ -z "${KikanFrom}" -o "${KikanFrom}" = "_" ] && KikanTo=$(nameread  "HenkoubiTo"  $namedata)
+#   [ -z "${KikanFrom}" -o "${KikanFrom}" = "_" ] && KikanFrom=$(nameread  "HenkoubiFrom"  $namedata)
+#
+
+  sakujyo)
+
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+
+    # 結果がNG
+    if [ "${result}" = "ng" ] ; then
+     message=$(awk '$1=="message"{print $2}' ${result_data})
+    # 結果がOK
+     else
+     message="削除を完了しました。"
+     SHOKUJIPATTERNID=""
+    fi
+
+   MODE="init"
+   EtsuranHenkouShinki=""
+  ;;
+
+  clear)
+   SHOKUJIPATTERNID=""
+   MODE="init"
+   ShinkiKikanFrom=$(date +%Y%m%d)
+   ShinkiKikanfrom_disp=$(echo "${ShinkiKikanFrom}" | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}') 
+   ShinkiKikanTo=""
+   ShinkiKikanto_disp=""
+   EtsuranHenkouShinki=""
+  
+  ;;
+
+ tsuika | henkou)
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+    if [ "${result}" = "ng" ] ; then
+       message=$(awk '$1=="message"{print $2}' ${result_data})
+
+      # 新規の場合、新規の初期画面へ
+      if [ "${EtsuranHenkouShinki}" = "2" ] ; then
+        MODE="init"
+      fi
+
+
+    else
+     message="登録を完了しました。"
+    fi
+#    Shokuji=""
+
+ ;;
+
+esac
+
+  if [ "${MODE}" = "init" ] ; then
+   SHOKUJIPATTERNID=""
+   Tateya=""
+   Floor=""
+   Unit=""
+   Kyoshitsu=""
+  else
+   SHOKUJIPATTERNID=$(awk '$1=="HEADER"{print $2}' ${data})
+  fi
+
+  if [ "${MODE}" = "shinki" -a "${result}" = "ok" ] ; then
+    SHOKUJIPATTERNSHINKIFLG="ok"
+  else
+    SHOKUJIPATTERNSHINKIFLG="@"
+  fi
+#-------------------------------------------------------------
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければ 従業員マスタから
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1) # 従業員マスタに指定がなければ>施設建屋フロアマスタの上にある方(シニアがあればシニア)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+[ -z "${EtsuranHenkouShinki}" -o "${EtsuranHenkouShinki}" = "_" ] && EtsuranHenkouShinki="0"
+#-------------------------------------------------------------
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+  # 検索結果表示
+   if [ "$(gyo ${data})" != "0" ] ; then
+     cat ${data}   |
+     awk '$1=="HEADER"{print $0}' |
+     delf 1 > $tmp-header
+# 1:食事パターンID 2:期間From 3:期間To 4:施設ID 5:建屋
+# 6:居室
+
+  SHOKUJIPATTERNID=$(awk '{print $1}' $tmp-header)
+  HaneiShisetsu=$(awk '{print $4}' $tmp-header)
+  HaneiTateya=$(awk '{print $5}' $tmp-header)
+  HaneiKyoshitsu=$(awk '{print $6}' $tmp-header)
+  HaneiShisetsuName="$(awk '$1=="'${HaneiShisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  HaneiTateyaName="$(awk '$1=="'${HaneiTateya}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME | head -1)"
+#  KikanFrom=$(awk '{print $2}' $tmp-header)
+#  KikanTo=$(awk '{print $3}' $tmp-header)
+
+     cat ${data}   |
+     awk '$1=="PATTERN"{print $0}' |
+     delf 1 > $tmp-pattern
+# 1:利用者ID       2:食事パターンID   3:曜日       4:食事（朝昼夜おやつ他） 5:食事ID
+# 6:食事メニューID 7:食事メニュー名称 8:食事種類ID 9:単価(税抜き)           10:数量
+# 11:色ID          12:予備項目1       13:予備項目2 14:予備項目3             15:予備項目4
+
+  else
+
+   : > $tmp-header
+
+  fi
+
+  if [ -s $tmp-pattern ] ; then
+
+     cat $tmp-pattern |
+     delf 1/2         |
+     LANG=C sort      |
+     keycut -d $tmp-youbi%1
+# 1:食事（朝昼夜おやつ他） 2:食事ID     3:食事メニューID 4:食事メニュー名称 5:食事種類ID
+# 6:単価(税抜き)           7:数量       8:色ID           9:予備項目1        10:予備項目2
+# 11:予備項目3             12:予備項目4
+
+
+# 1:食事（朝昼夜おやつ他） 2:メニューID 3:食事メニュー 4:メニュー名称 5:色
+# 6:単価(税抜き)           7:数量
+    fi     
+
+    cat ${tbl_dir}/CONFIG/SHOKUJI_MASTER |
+    self 1               > $tmp-shokuji_jyunbi
+# 1:食事
+
+    #一週間分のデータを作成
+    for i in 1 2 3 4 5 6 7 ; do
+    # 曜日データがあったら
+     if  [ -s $tmp-youbi${i} ] ; then
+      cat $tmp-youbi${i} |
+      loopj -d"@" num=1 - $tmp-shokuji_jyunbi  |
+      rank ref=1 -       |
+# 1:番号       2:食事（朝昼夜おやつ他） 3:食事ID     4:食事メニューID 5:食事メニュー名称
+# 6:食事種類ID 7:単価(税抜き)           8:数量       9:色ID           10:予備項目1
+# 11:予備項目2 12:予備項目3             13:予備項目4
+
+# 1:番号  3:食事（朝昼夜おやつ他） 4:食事メニュー 5:メニュー名称
+# 6:色   7:単価(税抜き) 8:数量                   9:|
+      awk '{print $1,$3,$2,$4,$5!="@"?$5"："$7"円("$8")":"@",$9,$7"_1"}' |
+      keycut -d $tmp-youbi${i}shokuji%3
+# 1:食事ID 2:食事（朝昼夜おやつ他） 3:食事メニューid 4:食事メニュー 5:色
+# 6:value
+      
+     # 曜日でーたがなかったら
+     else
+      cat $tmp-shokuji_jyunbi      |
+      awk '{print $0,"@","@","@","black","@","@"}' |
+      rank ref=1 -                 |
+      awk '{print $1,$2,$3,$4,$5!="@"?$5"："$7"円("$8")":"@",$6,$7}' |
+      keycut -d $tmp-youbi${i}shokuji%2     
+     fi
+   done
+# 1:番号 2:食事ID 3:食事メニューID 4:メニュー名称 5:色
+# 6:価格
+
+### モードによる表示の分岐
+#case "${MODE}" in
+# tsuika | henkou)
+#    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    if [ "${result}" = "ng" ] ; then
+#     message=$(awk '$1=="message"{print $2}' ${result_data})
+#    else
+#     message="登録を完了しました。"
+#    fi
+#    Shokuji=""
+#    
+# ;;
+#esac
+
+#----------------------------------------------------------
+# プルダウンの用意
+#----------------------
+# 食事
+echo "9 削除" |
+cat ${tbl_dir}/CONFIG/SHOKUJI_MASTER -  |
+awk '{if($1=="'${Shokuji}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }'   > $tmp-shokuji
+
+# 食事種類
+cat ${tbl_dir}/CONFIG/SHOKUJI_SHURUI |
+awk '{if($1=="'${Shokushu}'"){print $0,"selected"}
+      else{print $0,"@"}
+      }'   > $tmp-shokuji_shurui
+# 1:食事種類ID　2:食事種類
+
+[ -z "${Shokuji}" -o "${Shokuji}" = "_" ] && Shokuji="$(self 1 $tmp-shokuji | head -1)"
+[ -z "${Shokushu}" -o "${Shokushu}" = "_" ] && Shokushu="$(self 1 $tmp-shokuji_shurui | head -1)"
+
+if [ -z "${KikanFromDisp}" -o "${KikanFromDisp}" = "_" ] ; then
+  KikanFrom="$(date +%Y%m%d)"
+  KikanTo="99999999"
+else
+  KikanFrom=$(echo "${KikanFromDisp}")
+  KikanTo=$(echo "${KikanToDisp}")
+fi
+
+# メニュー
+cat ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU |
+awk '$4=="'${Shisetsu}'"&&$5=="'${Tateya}'"{print $0}' |
+# 1:メニューid 2:メニュー名 3:食事種類        4:施設ID        5:建屋ID
+# 6:入居者価格 7:ゲスト価格 8:スタッフ価格    9:朝食          10:昼食
+# 11:夕食      12:おやつ    13:期間From(西暦) 14:期間To(和暦) 15:色
+if [ "${Shokuji}" = "1" ] ; then
+  awk '$10=="1"&&$14<="'${KikanTo}'"&&$15>="'${KikanFrom}'"&&$(NF-2)!="9"{print $0}'
+elif  [ "${Shokuji}" = "2" ] ; then
+  awk '$11=="1"&&$14<="'${KikanTo}'"&&$15>="'${KikanFrom}'"&&$(NF-2)!="9"{print $0}'
+elif  [ "${Shokuji}" = "3" ] ; then
+  awk '$12=="1"&&$14<="'${KikanTo}'"&&$15>="'${KikanFrom}'"&&$(NF-2)!="9"{print $0}'
+elif  [ "${Shokuji}" = "4" ] ; then
+  awk '$13=="1"&&$14<="'${KikanTo}'"&&$15>="'${KikanFrom}'"&&$(NF-2)!="9"{print $0}'
+else
+  awk '$14<="'${KikanTo}'"&&$15>="'${KikanFrom}'"&&$(NF-2)!="9"{print $0}'
+fi |
+
+if [ -z "${Shokushu}" -o "${Shokushu}" = "_" ] ; then
+  cat -
+else
+  awk '$3=="'${Shokushu}'"{print $0}'
+fi |
+# 表示順に並べる
+awk '{print $0,$17=="_"?"999999":$17}' |
+self 1/16 NF |
+LANG=C sort -k17,17n |
+awk '{if($1=="'${Menu}'"){print $1,$2,"selected"}
+      else{print $1,$2,"@"}
+     }'  > $tmp-shokuji_menu
+# 価格
+Select_MENU="$(awk '$3=="selected"{print $1}' $tmp-shokuji_menu | head -1)"
+[ -s $tmp-shokuji_menu -a -z "${Select_MENU}" ] && Select_MENU="$(self 1 $tmp-shokuji_menu | head -1)"
+#[ -z "${Menu}" -o "${Menu}" = "_" ] && Menu="$(self 1 $tmp-shokuji_menu | head -1)"
+
+# 消費税率を取得
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU  |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+awk '$3<="'${today}'"&&$4>="'${today}'"{print $0}'   |
+self 2                                               > ${tmp}-zeiritsu
+zeiritsu=$(cat ${tmp}-zeiritsu | awk '{print $1+"1"}')
+
+  NyuukyoshaKakakuZeinuki=$(awk '$1=="'${Select_MENU}'"{print $6}' ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU)
+
+  NyuukyoshaKakaku="$(echo "${NyuukyoshaKakakuZeinuki}" | lcalc '$1 * '${zeiritsu}'' | marume -sage 1.0)"
+
+
+#NyuukyoshaKakaku="$(awk '$1=="'${Select_MENU}'"{print $6}' ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU)"
+
+# 対象者
+cat << FINN > $tmp-taishousha
+1 入居者 ${NyuukyoshaKakaku}円
+FINN
+
+# 数量
+Suuryou=$(nameread  "Suuryou"  $namedata)
+[ -z "${Suuryou}" -o "${Suuryou}" = "_" ] && Suuryou="1" # デフォルト数
+
+# 施設選択されていない(初期状態)はログイン施設をセット
+#----------------------
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="${SHISETSUID}"
+
+# 入居者が選択されているけれど居室が選ばれていない場合は居室を取得
+#[ -z "${Kyoshitsu}" ] && Kyoshitsu="_"
+[ -z "${Nyuukyosha}" ] && Nyuukyosha="_"
+if [ "${Nyuukyosha}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$6=="'${Nyuukyosha}'"&&$(NF-2)!="9"{print $0}' ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS |
+#  awk '$7<="'${getsumatsu}'" && $8>="'${gessho}'"{print $5}'    > $tmp-kyoshitsu          
+  awk '$8>="'${gessho}'"{print $5}'    > $tmp-kyoshitsu          
+#  awk '$8>="'${TaishouYear}'""'${TaishouMonth}'""01"{print $5}' > $tmp-kyoshitsu
+  Kyoshitsu=$(cat $tmp-kyoshitsu | head -1)
+fi
+
+#----------------------
+## 建屋取得 
+#--
+# 従業員所属テーブルに建屋があればデフォルト
+
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR  |
+# 1:施設ID 2:建屋ID 3:フロア
+awk '$1=="'${Shisetsu}'"{print $2}'                   |
+LANG=C sort |
+uniq |
+join1 key=1 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME -           |
+self 1 3                                                > $tmp-tateya_kari
+# 1:建屋ID 2:建屋名
+#-
+
+cat $tmp-tateya_kari |
+# 建屋が選択されていたらselected
+awk '{if($1=="'${Tateya}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'    > $tmp-tateya_name
+
+# 建屋が選択されていたらselected
+if [ -z "${Tateya}"  -o "${Tateya}" = "_" ] ;then
+  cat $tmp-tateya_kari
+else
+  cat $tmp-tateya_kari |
+  awk '{if($1=="'${Tateya}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'
+fi    > $tmp-tateya_name
+
+  ## フロア取得
+  #--
+  # 建屋が選ばれていない、かつ建屋の選択肢が一つの場合はその建屋をセット
+  [ -z "${Tateya}" -a "$(gyo $tmp-tateya_name)" -ge "1" ] && Tateya="$(awk '{print $1}' $tmp-tateya_name | head -1)"
+
+  if [ -n "${Tateya}" -a "${Tateya}" != "_" ] ; then
+    cat ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS |
+#    awk '$7<="'${getsumatsu}'" && $8>="'${gessho}'"'                   |
+    awk '$8>="'${gessho}'"'                   |
+    awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $3,$3}'  |
+    sort  |
+    uniq  |
+    awk '{if($1=="'${Floor}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'  >$tmp-floor_kari
+# 1:フロア 2:フロア
+
+    # フロアが2つ以上の場合のみ全てという選択をつける
+    if [ "$(gyo $tmp-floor_kari)" -gt "1"  ]; then
+      cat $tmp-floor_kari |
+      awk 'BEGIN{print "@ 全て"}{print $0}'
+    else
+      cat $tmp-floor_kari
+    fi  > $tmp-floor
+  # 建屋が複数から未選択の場合
+  else
+    echo "@" "全て"
+  fi     > $tmp-floor
+# 1:フロア番号 2:フロア番号
+
+  #--
+  ## ユニット取得
+  #--
+  # フロア選択肢が全て以外で一個になる場合そのフロアを選択していると判断
+  [ -z "${Floor}" -a "$(gyo $tmp-floor)" -ge "1" -a "$(self 1 $tmp-floor | head -1)" != "@" ] && Floor="$(awk '{print $1}' $tmp-floor | head -1)"
+
+  # 建屋がケアの場合
+  if [ "${Tateya}" = "02" ] ; then
+ # フロアの指定がある場合
+    if [ -n "${Floor}" -a "${Floor}" != "_" ] ; then
+      cat ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS  |
+#      awk '$7<="'${getsumatsu}'" && $8>="'${gessho}'"'                   |
+      awk '$8>="'${gessho}'"'                   |
+      awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="'${Floor}'"&&$(NF-2)!="9"{print $4}'  |
+      LANG=C sort  |
+      uniq         |
+      join1 key=1 ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME -  |
+      self 1 2     > $tmp-unit_kari
+
+      if [ "$(gyo $tmp-unit_kari)" -gt "1"  ]; then
+        cat $tmp-unit_kari  |
+        awk '{BEGIN{print "@ 全て"}{print $0}' |
+        awk '{if($1=="'${Unit}'"){print $0,"selected"}
+            else{print $0,"@"}
+           }'      > $tmp-unit_name
+      else
+       cat $tmp-unit_kari > $tmp-unit_name
+      fi
+
+    else
+       echo "@" "全て" > $tmp-unit_name
+    fi
+
+  # 建屋がシニアの場合はユニットなし
+  else
+    echo "@" "@" > $tmp-unit_name
+  fi
+
+
+# ケアでユニットがなかったらユニットリストの一番上をセット
+[ -z "${Unit}" -a "${Tateya}" = "02" ] && Unit="$(head -1 $tmp-unit_name | self 1)"
+#--
+## 居室取得・入居者氏名取得
+#--
+TaishouYear="$(date +%Y)"
+TaishouMonth="$(date +%m)"
+
+# 施設の選択があれば施設内の、そうでなければ全入居者の居室を取得
+cat ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS  |
+#awk '$7<="'${getsumatsu}'" && $8>="'${gessho}'"'                   |
+awk '$8>="'${gessho}'"&&$(NF-2)!="9"'         |
+
+if [ -n "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $0}'
+# 1:施設ＩＤ 2:建屋ＩＤ 3:フロア 4:ユニットＩＤ 5:居室Ｎｏ
+else
+  cat -
+fi |
+
+# 建屋の選択があった場合
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ] ; then
+  awk '$2=="'${Tateya}'"{print $0}'
+else
+  cat -
+fi |
+# 1:施設ＩＤ 2:建屋ＩＤ 3:フロア 4:ユニットＩＤ 5:居室Ｎｏ
+#-
+# フロアの選択があった場合
+if [ -n "${Floor}" -a "${Floor}" != "_" ] ; then
+  awk '$3=="'${Floor}'"{print $0}'
+else
+  cat -
+fi |
+#-
+
+# ユニットの選択があった場合
+if [ -n "${Unit}" -a "${Unit}" != "_" -a "${Unit}" != "@" ] ; then
+  awk '$4=="'${Unit}'"{print $0}'
+else
+  cat -
+fi |
+
+LANG=C sort       |
+uniq              |
+awk '$7<="'${TaishouYear}'""'${TaishouMonth}'""31"&&$8>="'${TaishouYear}'""'${TaishouMonth}'""01"{print $5,$6}'     |
+#self 5 6          |
+#awk '$8>"'${today}'"{print $5,$6}' |
+# 1:居室Ｎｏ 2:入居者Ｎｏ
+#-
+
+LANG=C sort -k2,2 |
+join1 key=2 ${riyousha_dir}/RIYOUSHA_MASTER -        |
+sort -k1,1                                              > $tmp-kyoshitsu_kari
+
+# 2人以上の場合のみ全てという選択をつける
+if [ "$(gyo $tmp-kyoshitsu_kari)" -gt "1" ]; then
+  cat $tmp-kyoshitsu_kari  |
+  awk 'BEGIN{print "@ 全て"}{print $1,$1}' |
+  uniq |
+    awk '{if($1=="'${Kyoshitsu}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'                  > $tmp-kyoshitsu
+else
+  cat $tmp-kyoshitsu_kari |
+  awk '{print $1,$0}'     |
+  uniq                    |
+  awk '{if($1=="'${Kyoshitsu}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'                  > $tmp-kyoshitsu
+fi
+
+  cat $tmp-kyoshitsu_kari |
+  if [ -n "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ] ; then
+    awk '$1=="'${Kyoshitsu}'"{print $0}'
+  else
+    cat -
+  fi |
+  LANG=C sort -k2,2 |
+  getfirst 2 2      |
+  LANG=C sort       |
+  self 2 3          |
+#  cat $tmp-kyoshitsu_kari |
+#  awk '{print $2,$3}'     |
+#  LANG=C sort |
+#  uniq |
+  awk '{if($1=="'${Nyuukyosha}'"){print $0,"selected"}
+        else{print $0,"@"}}'  > $tmp-nyuukyosha
+# 1:入居者ID  2:入居者名
+
+  NyuukyoshaName="$(cat $tmp-nyuukyosha | awk '$1=="'${Nyuukyosha}'"{print $2}')"
+  ShisetsuName="$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  TateyaName="$(awk '$1=="'${Tateya}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME | head -1)"
+
+
+# 変更対象日付
+kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+cat ${pompa_dir}/${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER |
+# 1:利用者ID    2:食事パターンID 3:施設ID    4:建屋      5:居室
+# 6:期間From    7:期間To         8:予備項目1 9:予備項目2 10:予備項目3
+# 11:削除フラグ 12:更新日時      13:更新者
+LANG=C sort -k6,7nr |
+#awk '$1=="'${Nyuukyosha}'"&&$(NF-2)!="9"{print $2,$6,substr($7,1,6),$7!="99999999"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"@"}' |
+#awk '$3>"'${kakutei_nengetsu}'"{print $1,substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2),$4}' |
+awk '$1=="'${Nyuukyosha}'"&&$(NF-2)!="9"{print $2,substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2),$7!="99999999"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"@"}' |
+awk '{if($1=="'${SHOKUJIPATTERNID}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }' > $tmp-henkou_nengetsu_select_jyunbi
+# 1:食事パターンID 2:期間From 3:期間To 4:selected
+
+if [ -z "${SHOKUJIPATTERNID}" -o "${SHOKUJIPATTERNID}" = "_" ] ; then
+  KikanToDisp=$(head -1 $tmp-henkou_nengetsu_select_jyunbi| self 3)
+  SHOKUJIPATTERNID=$(head -1 $tmp-henkou_nengetsu_select_jyunbi| self 1)
+else
+  KikanToDisp=$(awk '$NF=="selected"{print $3}' $tmp-henkou_nengetsu_select_jyunbi)
+fi
+  
+cat $tmp-henkou_nengetsu_select_jyunbi |
+delf 3  > $tmp-henkou_nengetsu_select
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat <<- FIN > $tmp-html1
+          <script type="text/javascript" language="javascript">
+            alert('${message}');
+          </script>
+FIN
+fi
+
+#cp $tmp-* /home/hands/work/okuda
+#-------------------------------------------------------------
+# 嵌め込みデータの作成
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERNAME### ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###DROPDOWN_ACTIVE2### active
+###LI_SHOKUJI5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SUURYOU### ${Suuryou}
+###NYUUKYOSHAKAKAKU### ${NyuukyoshaKakaku}
+###SELECT_SHISETSU### $select_shisetsu
+###ShinkiKikanFrom### ${ShinkiKikanfrom_disp}
+###ShinkiKikanTo### ${ShinkiKikanto_disp}
+###KikanFrom### ${KikanFromDisp}
+###KikanTo### ${KikanToDisp}
+###SHOKUJIPATTERNID### ${SHOKUJIPATTERNID}
+###ShinkiKikanDisabled### ${ShinkiKikanDisabled}
+###KikanToDisabled### ${KikanToDisabled}
+###SHOKUJIPATTERNSHINKIFLG### ${SHOKUJIPATTERNSHINKIFLG}
+FIN
+
+# init以外のときは現在保持している入居者を表示
+#if [ "${MODE}" != "init" ] ; then
+#  echo "###HaneiShisetsu###" "${HaneiShisetsu}"  >> $tmp-calsed
+#  echo "###HaneiTateya###" "${HaneiTateya}" >> $tmp-calsed
+#  echo "###HaneiKyoshitsu###" "${HaneiKyoshitsu}" >> $tmp-calsed
+#  echo "###HaneiShisetsuName###" "${HaneiShisetsuName}" >> $tmp-calsed
+#  echo "###HaneiTateyaName###" "${HaneiTateyaName}" >> $tmp-calsed
+#else
+#  echo "###HaneiShisetsu###" "${HaneiShisetsu}"  >> $tmp-calsed
+#  echo "###HaneiTateya###" "${HaneiTateya}" >> $tmp-calsed
+#  echo "###HaneiKyoshitsu###" "${HaneiKyoshitsu}" >> $tmp-calsed
+#  echo "###HaneiShisetsuName###" "${HaneiShisetsuName}" >> $tmp-calsed
+#  echo "###HaneiTateyaName###" "${HaneiTateyaName}" >> $tmp-calsed
+#fi
+
+echo "###KEKKA_TAISHOUSHA###" "${NyuukyoshaName}様" >> $tmp-calsed
+echo "###SelectTaishousha###" "${Nyuukyosha}"  >> $tmp-calsed
+echo "###SelectShisetsu###" "${Shisetsu}" >> $tmp-calsed
+echo "###SelectTateya###" "${Tateya}" >> $tmp-calsed
+echo "###SelectKyoshitsu###" "${Kyoshitsu}" >> $tmp-calsed
+echo "###SelectShisetsuName###" "${ShisetsuName}" >> $tmp-calsed
+echo "###SelectTateyaName###" "${TateyaName}" >> $tmp-calsed
+
+
+if [ "${MODE}" != "search" -a "${MODE}" != "init" ] ; then
+   echo "###NYUURYOKUDISP###" "@" >> ${tmp}-calsed 
+   echo "###ETSURANTOUROKUDISP###" "@" >> ${tmp}-calsed 
+   echo "###ETSURANDISP###" "none" >> ${tmp}-calsed 
+fi
+# 閲覧変更新規チェック
+# 閲覧
+  if [ "${EtsuranHenkouShinki}" = "0" ] ; then
+    echo "###ETSURANCHECKED###" "checked"  >> ${tmp}-calsed
+    echo "###HENKOUCHECKED###" "@" >> ${tmp}-calsed
+    echo "###SHINKICHECKED###" "@" >> ${tmp}-calsed
+    echo "###HENKOUDISP###" "none"  >> ${tmp}-calsed
+    echo "###ETSURANDISP###" "@"  >> ${tmp}-calsed
+    echo "###SHINKIDISP###" "none"  >> ${tmp}-calsed
+    echo "###ETSURANHENKOUDISP###" "@"  >> ${tmp}-calsed
+    echo "###ETSURANTOUROKUDISP###" "@" >> ${tmp}-calsed 
+    echo "###NYUURYOKUDISP###" "none" >> ${tmp}-calsed
+  # 変更削除
+  elif [ "${EtsuranHenkouShinki}" = "1" ] ; then
+    echo "###ETSURANCHECKED###" "@" >> ${tmp}-calsed
+    echo "###HENKOUCHECKED###" "checked"  >> ${tmp}-calsed
+    echo "###SHINKICHECKED###" "@" >> ${tmp}-calsed
+    echo "###HENKOUDISP###" "@"  >> ${tmp}-calsed
+    echo "###ETSURANDISP###" "none"  >> ${tmp}-calsed
+    echo "###SHINKIDISP###" "none"  >> ${tmp}-calsed
+    echo "###ETSURANHENKOUDISP###" "@"  >> ${tmp}-calsed
+    echo "###ETSURANTOUROKUDISP###" "@" >> ${tmp}-calsed 
+    echo "###NYUURYOKUDISP###" "@" >> ${tmp}-calsed
+  # 新規
+  else
+    echo "###ETSURANCHECKED###" "@" >> ${tmp}-calsed
+    echo "###HENKOUCHECKED###" "@"  >> ${tmp}-calsed
+    echo "###SHINKICHECKED###" "checked" >> ${tmp}-calsed
+    echo "###HENKOUDISP###" "none"  >> ${tmp}-calsed
+    echo "###ETSURANDISP###" "none"  >> ${tmp}-calsed
+    echo "###SHINKIDISP###" "@"  >> ${tmp}-calsed
+    echo "###ETSURANHENKOUDISP###" "none"  >> ${tmp}-calsed
+    echo "###ETSURANTOUROKUDISP###" "none" >> ${tmp}-calsed 
+    echo "###NYUURYOKUDISP###" "none" >> ${tmp}-calsed
+  fi
+
+if [ ${Shokuji} = "9" ] ; then
+  echo "###SAKUJYO### disabled" >> ${tmp}-calsed
+else
+  echo "###SAKUJYO### @" >> ${tmp}-calsed
+fi
+
+#-------------------------------------------------
+#-------------------------------------------------
+# 登録可否、閲覧可否
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$7=="SHOKUJI_SHOUSAI_TOUROKU.CGI"{print $2,$9}' |
+LANG=C sort > $tmp-dispkengen_all
+# 1:施設ID 2:STATUS
+
+cat $tmp-dispkengen_all |
+if [ -s $tmp-dispkengen_all -a $(self 1 $tmp-dispkengen_all |head -1) = "0000" ] ; then
+  awk '{print $2}' |
+  head -1
+else
+  awk '$1=="'${shisetsu}'"{print $0}' |
+  LANG=C sort |
+  getlast 1 1 |
+  self 2
+fi > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+# 3:印刷可能
+if [ "$(cat $tmp-dispkengen)" = "3" ] ;then
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+# 2:編集可能
+elif [ "$(cat $tmp-dispkengen)" = "2" ] ;then
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+# 0:権限なし1:閲覧可能の場合
+else
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+#--------------------------------------------------
+
+
+cat ${tmp}-calsed ${checkfile} > ${tmp}-calsed_result
+
+#echo "1 @" > $tmp-list
+
+# htmlの作成
+cat ${html_dir}/SHOKUJI_PATTERN_TOUROKU1.html  |
+cat -\
+    ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+    ${html_dir}/SHOKUJI_PATTERN_TOUROKU2.html  |
+
+#データの嵌め込み
+mojihame -l###USER__NAME### - ${tmp}-usermei   |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou         |
+mojihame -letsuran_nengetsu_select - $tmp-etsuran_nengetsu_select   |
+mojihame -lhenkou_nengetsu_select - $tmp-henkou_nengetsu_select     |
+
+mojihame -lshisetsu_select - $tmp-shisetsu_name   |
+mojihame -ltateya_select - $tmp-tateya_name       |
+mojihame -lfloor_select - $tmp-floor              |
+mojihame -lunit_select - $tmp-unit_name           |
+mojihame -lkyoshitsu_select - $tmp-kyoshitsu      |
+mojihame -lnyuukyosha_select - $tmp-nyuukyosha    |
+
+mojihame -lmenu_select - $tmp-shokuji_menu        |
+mojihame -lshokushu_select - $tmp-shokuji_shurui  |
+mojihame -ltaishou_select - $tmp-taishousha       |
+mojihame -lshokuji_select - $tmp-shokuji          |
+
+mojihame -lmon_list_asa -    $tmp-youbi1shokuji1     |
+mojihame -lmon_list_hiru -   $tmp-youbi1shokuji2     |
+mojihame -lmon_list_yoru -   $tmp-youbi1shokuji3     |
+mojihame -lmon_list_oyatsu - $tmp-youbi1shokuji4     |
+
+mojihame -ltue_list_asa -    $tmp-youbi2shokuji1    |
+mojihame -ltue_list_hiru -   $tmp-youbi2shokuji2    |
+mojihame -ltue_list_yoru -   $tmp-youbi2shokuji3    |
+mojihame -ltue_list_oyatsu - $tmp-youbi2shokuji4    |
+
+mojihame -lwed_list_asa -    $tmp-youbi3shokuji1    |
+mojihame -lwed_list_hiru -   $tmp-youbi3shokuji2    |
+mojihame -lwed_list_yoru -   $tmp-youbi3shokuji3    |
+mojihame -lwed_list_oyatsu - $tmp-youbi3shokuji4    |
+
+mojihame -lthu_list_asa -    $tmp-youbi4shokuji1    |
+mojihame -lthu_list_hiru -   $tmp-youbi4shokuji2    |
+mojihame -lthu_list_yoru -   $tmp-youbi4shokuji3    |
+mojihame -lthu_list_oyatsu - $tmp-youbi4shokuji4    |
+
+mojihame -lfri_list_asa -    $tmp-youbi5shokuji1    |
+mojihame -lfri_list_hiru -   $tmp-youbi5shokuji2    |
+mojihame -lfri_list_yoru -   $tmp-youbi5shokuji3    |
+mojihame -lfri_list_oyatsu - $tmp-youbi5shokuji4    |
+
+mojihame -lsat_list_asa -    $tmp-youbi6shokuji1    |
+mojihame -lsat_list_hiru -   $tmp-youbi6shokuji2    |
+mojihame -lsat_list_yoru -   $tmp-youbi6shokuji3    |
+mojihame -lsat_list_oyatsu - $tmp-youbi6shokuji4    |
+
+mojihame -lsun_list_asa -    $tmp-youbi7shokuji1    |
+mojihame -lsun_list_hiru -   $tmp-youbi7shokuji2    |
+mojihame -lsun_list_yoru -   $tmp-youbi7shokuji3    |
+mojihame -lsun_list_oyatsu - $tmp-youbi7shokuji4    |
+
+calsed -f $tmp-calsed_result - |
+#tee /home/hands/work/okuda/Result |
+sed 's/###SPACE###/ /g' |
+if [ -e $tmp-html1 ] ; then
+  cat - $tmp-html1
+else
+  cat -
+fi |
+cat -
+
+# 終了
+rm -f $tmp-*
+exit 0
+

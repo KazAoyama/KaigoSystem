@@ -1,0 +1,102 @@
+#!/bin/bash
+#
+# SERVICE_TOUROKU.DELETE :サービス利用料金削除
+#
+# Usage : SERVICE_TOUROKU.DELETE namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/SERVICE_TOUROKU"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+idkanri_dir="/DATA/E-LIFE/KEIRI/KANRI/ID"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SERVICE_TOUROKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 削除データを呼び出し
+del_month=$(echo ${hd_tatekae_hiduke} | awk '{print substr($1,1,6)}')
+cat ${pompa_dir}/${shisetsu}/${del_month}/${del_month}.SERVICE_TOUROKU   |
+# 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+# 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+LANG=C sort -k14,14n                                                |
+join0 +ng key=14 <(echo ${uwagaki_id})    > ${tmp}-del_data   2> ${tmp}-new_data
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+if [ -e ${tmp}-del_data ];then
+
+  # INPUTデータを保存
+  mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-del_data ${input_dir}/${today}/SERVICE_TOUROKU_DELETE.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+# 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+
+  # POMPA
+  lock_file=${pompa_dir}/SERVICE_TOUROKU.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  cp -p ${tmp}-new_data ${pompa_dir}/${shisetsu}/${del_month}/${del_month}.SERVICE_TOUROKU
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  # 請求データ
+  lock_file=${seikyu_dir}/SERVICE_TOUROKU.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  cp -p ${tmp}-new_data ${seikyu_dir}/${shisetsu}/${del_month}/${del_month}.SERVICE_TOUROKU
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  cat ${tmp}-del_data
+else
+  :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+rm -f ${tmp}-*
+exit 0
+

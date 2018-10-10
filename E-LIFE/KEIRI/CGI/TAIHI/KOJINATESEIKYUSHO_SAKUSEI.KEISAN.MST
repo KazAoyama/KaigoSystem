@@ -1,0 +1,156 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.MST 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+hensu=${2}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# エラーファイル初期化
+rm ${tmp}-err
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 使用するマスタの準備
+
+# ----------------------------------------
+# 月額利用料マスタ
+# -
+# 施設で絞込み
+cjoin0 key=1 <(echo "${shisetsu}") ${hometbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+# 1:施設ID   2:利用料ID     3:利用料名   4:税区分 5:金額
+# 6:支払区分 7:費用算出方法 8:有効フラグ 9:更新日 10:更新者
+# -
+# 有効なものに絞る
+awk '$8!="9"' |
+# 必要なフィールドのみに絞る(金額はデフォルトなので省く)
+self 2/4 6/7  |
+# 1:利用料ID 2:利用料名 3:税区分 4:支払区分 5:費用算出方法
+LANG=C sort   > ${tmp}-RIYOURYOU_MASTER
+
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST)"
+# ----------------------------------------
+
+# ----------------------------------------
+# サービスマスタ
+# -
+# 施設で絞込み
+cjoin0 key=1 <(echo "${shisetsu}") ${hometbl_dir}/SEIKYU/SERVICE_MASTER |
+# 1:施設         2:建屋      3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価      8:表示順     9:課税               10:有効フラグ
+# 11:処理時間    12:ユーザID
+awk '$10!="9"' |
+self 1/9       |
+# 1:施設         2:建屋 3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価 8:表示順     9:課税
+LANG=C sort    > ${tmp}-SERVICE_MASTER
+
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST)"
+# ----------------------------------------
+
+# ----------------------------------------
+# 立替金項目マスタ
+
+# フィールド構成が同じなのでまとめて処理
+cat << FIN | grep -v "^#" | self 1/NF > ${tmp}-tatekaekin_mst
+#出金項目マスタ
+SHUKKIN_KOUMOKU  3 4 1 1
+##入金項目マスタ
+#NYUKIN_KOUMOKU   3 4 1 1
+##立掛対象マスタ
+#TATEKAE_TAISHO  3 4 1 1
+FIN
+# 1:ファイル名 2:有効フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+
+# 繰り返し処理で取得する
+cat ${tmp}-tatekaekin_mst |
+while read Name Flg time_f key_from key_to ; do
+  awk '$"'${Flg}'"!="9"' ${home_dir}/E-LIFE/TATEKAEKIN/TBL/${shisetsu}/${Name} |
+  # 1:項目id 2:項目名 3:削除フラグ 4:更新時間 5:更新者
+  LANG=C sort -k${key_from},${key_to} -k${time_f},${time_f} |
+  # フィールドが全て同じ並びとおもうので同じ処理で絞る
+  self 1/2                                                  > ${tmp}-${Name}
+  # 1:項目id 2:項目名
+
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+  [ -e ${tmp}-err ] && break
+done
+
+# エラー判定
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(MST)"
+# ----------------------------------------
+
+# ----------------------------------------
+# 税率マスタ
+# ありえないと思うけど税率が月内で変わることや、
+# 別の月の請求処理で税率計算しようとすると別の税率を見ることになるのでマスタの履歴を全部だす
+
+awk '$5!="9"' ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU |
+# 1:管理ID   2:税率     3:適用開始日 4:適用終了日 5:削除フラグ
+# 6:更新日時 7:ユーザID
+self 2/4                                                     > ${tmp}-ZEIRITSU
+# 1:税率 2:適用開始日 3:適用終了日
+
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST)"
+# ----------------------------------------
+
+# ----------------------------------------
+# 入居者名マスタ
+join0 key=1 ${tmp}-member ${riyosha_dir}/RIYOUSHA_MASTER |
+# 1:入居者ID 2:入居者氏名 3:入居者カナ 4:入居者外字 5:削除フラグ
+# 6:更新時間 7:更新者
+awk '$6!="9"' - |
+self 1 2        |
+# 1:入居者ID 2:入居者氏名
+LANG=C sort     > ${tmp}-RIYOUSHA_MASTER
+
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST)"
+# ----------------------------------------
+
+# ----------------------------------------
+# 2014/05/08追加
+# 契約種類マスタ
+
+awk '$3!="9"' ${home_tbl_dir}/KEIYAKU_MASTER/KEIYAKU_NAME |
+# 1:契約ID 2:契約名 3:削除フラグ 4:更新時間 5:更新者
+self 1/2                                                  |
+# 1:契約ID 2:契約名
+LANG=C sort                                               > ${tmp}-KEIYAKU_NAME
+# ----------------------------------------
+#---------------------------------------------------------------
+
+exit 0
+

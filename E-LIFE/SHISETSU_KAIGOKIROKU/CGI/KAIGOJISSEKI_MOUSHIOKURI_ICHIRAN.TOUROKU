@@ -1,0 +1,217 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.TOUROKU : 介護実績修正用CGI
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.TOUROKU ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+cgi_path="/RACK_KORITSU/cgi-bin"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo "error ${message}"
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# データチェック
+[ -z "${shusei_time}" -o "${shusei_time}" = "_" ] && error_exit "時間の入力がありません"
+[ -z "${shusei_naiyo}" -o "${shusei_naiyo}" = "_" ] && error_exit "内容の入力がありません"
+
+# 時刻が数値かどうか
+time_check=$(echo ${shusei_time} | awk '/[^0-9_]/ {print $0}')
+if [ -z ${time_check} ];then
+  exit 1
+else
+  :
+fi
+
+# 内容に半角スペースがあったら取る
+shusei_naiyo=$(echo ${shusei_naiyo} | sed 's/_//g' | sed 's/ //g') 
+
+
+
+# データを保存する月を決める
+save_month=$(echo ${hd_date}     |
+              awk '{print substr($1,1,6)}')
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+self 1 2                                                       > $tmp-user_master
+
+# 申し送りの処理
+  echo "${hd_riyosha}" "${hd_date}" "${shusei_shubetsu}" "${shusei_time}" "${shusei_taisho}" "${shusei_koumoku}" "${userid}" "${shusei_naiyo}" "${shusei_color}" "${current_time}" |
+join1 key=7 $tmp-user_master    |
+  awk '{print $1,$2,$3,$4,$5,$6,$7"+++"$8,$9,$10,$11}' |
+  sed 's/\\n/<br>/g'    > ${tmp}-moushiokuri_kari
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時
+  # 日誌・支援経過に同期するかどうか
+  if [ -n "${nisshi_kyoyu}" ];then
+    if [ -n "${houmon_kyoyu}" ];then
+    awk '{print $0,"on","on"}' ${tmp}-moushiokuri_kari  |
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    else
+    awk '{print $0,"on","off"}' ${tmp}-moushiokuri_kari |
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    fi
+  else
+    if [ -n "${houmon_kyoyu}" ];then
+    awk '{print $0,"off","on"}' ${tmp}-moushiokuri_kari |
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    else
+    awk '{print $0,"off","off"}' ${tmp}-moushiokuri_kari |
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    fi
+  fi                               > ${tmp}-moushiokuri
+# 新規登録だったらIDを取得
+if [ "${MODE}" = "new_touroku" ];then
+  if [ -e "${idkanri_dir}/${save_month}/MOUSHIOKURI" ];then
+    new_num_m="$(getno -s 1 ${idkanri_dir}/${save_month}/MOUSHIOKURI)"
+    echo ${new_num_m} > ${tmp}-new_num_m
+    mv ${tmp}-new_num_m ${idkanri_dir}/${save_month}/MOUSHIOKURI
+  else
+    mkdir -p ${idkanri_dir}/${save_month}
+    new_num_m="$(echo "0000001")"
+    echo ${new_num_m} > ${idkanri_dir}/${save_month}/MOUSHIOKURI
+  fi
+  ShuseiId=$(echo ${new_num_m} | awk '{print "M""'${this_month}'"$1}')
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+# INPUTに保存
+# ディレクトリ作成
+mkdir -p ${input_dir}/${shisetsu_select}/${today}
+  cp -p ${tmp}-moushiokuri ${input_dir}/${shisetsu_select}/${today}/KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+# POMPAにデータを保存
+
+mkdir -p ${pompa_dir}/${shisetsu_select}/${save_month}
+
+
+lock_file=${pompa_dir}/${shisetsu_select}/KAIGOJISSEKI_IKKATSU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+# 申送りを保存
+if [ -e ${tmp}-moushiokuri ];then
+
+  # 建屋判定
+  if [ "${tateya}" = "01" ];then
+    if [ -e ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ];then
+      cat  ${tmp}-moushiokuri                                             |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+      awk '{print $0,"'${ShuseiId}'"}'               |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      cat ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR -  |
+      self 1 13 12 2/11                                                                  |
+    # 1:利用者 2:ID 3:登録日時 4:作成日 5:申送り種別 6:時刻 7:対象 8:項目 9:記入者 10:日誌共有
+    # 11:支援経過共有 12:内容 13:色
+      LANG=C sort -k1,1n -k2,2 -k3,3n                                                    |
+      getlast 1 2                                                                        |
+      self 1 4/13 3 2                                                                    |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      LANG=C sort -k1,1n -k12,12n                                             > ${tmp}-moushiokuri_pompa_new
+      mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR
+    else
+      cat ${tmp}-moushiokuri                                              |
+      awk '{print $0,"'${ShuseiId}'"}'                                    > ${tmp}-moushiokuri_pompa_new
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR
+    fi
+  else
+    if [ -e ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ];then
+      cat  ${tmp}-moushiokuri                                             |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+      awk '{print $0,"'${ShuseiId}'"}'               |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      cat ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI -  |
+      self 1 13 12 2/11                                                                  |
+    # 1:利用者 2:ID 3:登録日時 4:作成日 5:申送り種別 6:時刻 7:対象 8:項目 9:記入者 10:日誌共有
+    # 11:支援経過共有 12:内容 13:色
+      LANG=C sort -k1,1n -k2,2 -k3,3n                                                    |
+      getlast 1 2                                                                        |
+      self 1 4/13 3 2                                                                    |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      LANG=C sort -k1,1n -k12,12n                                             > ${tmp}-moushiokuri_pompa_new
+      mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+    else
+      cat ${tmp}-moushiokuri                                              |
+      awk '{print $0,"'${ShuseiId}'"}'                                    > ${tmp}-moushiokuri_pompa_new
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+      mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+    fi
+  fi
+else
+  :
+fi
+if [ -n "${houmon_kyoyu}" ];then
+  awk '{print $0,"'${ShuseiId}'","'${shisetsu_select}'","'${tateya}'"}' $tmp-moushiokuri   > $tmp-houmon_post
+  /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO_RENRAKU_TSUIKA.RENDO $tmp-houmon_post
+  /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN_RENRAKU_TSUIKA.RENDO $tmp-houmon_post
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+cat ${tmp}-moushiokuri
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+# 終了
+rm -f $tmp-*
+
+exit 0

@@ -1,0 +1,94 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_NOTHIWARI 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# この処理で使用するファイルがなければ終了
+[ ! -s ${tmp}-tujyou_hiwari_taisyougai ] && exit 0
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+### 日割りしない処理
+# -
+# ${tmp}-tujyou_hiwari_taisyougai
+# 1:入居者ID      2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO 18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+
+# 特販期間が請求月に引っかかっているかどうかを判定して特販なら特販の値を採用する
+# また、日割りにあわせて特別処理フラグのフィールドを追加する
+self 1/NF 16.1.6 17.1.6 ${tmp}-tujyou_hiwari_taisyougai |
+# 1:入居者ID        2:請求月        3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名        7:税区分        8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日     12:金額         13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM   17:特販期間TO   18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:特販期間FROM月 22:特販期間TO月
+awk '{if($13!="_" && $21<=$2 && $22>=$2)
+        {zeimae_kakutei=$15}
+      else
+        {zeimae_kakutei=$12};
+      print $0,zeimae_kakutei,"0"}'   |
+# 1:入居者ID        2:請求月        3:契約ID            4:利用料種別ID    5:契約枝番
+# 6:利用料名        7:税区分        8:支払区分          9:費用算出方法    10:起算開始日
+# 11:起算終了日     12:金額         13:特販ID           14:値引額         15:値引後金額
+# 16:特販期間FROM   17:特販期間TO   18:起算開始月       19:起算終了月     20:レコードが発生した年月日
+# 21:特販期間FROM月 22:特販期間TO月 23:税計算前確定金額 24:特別処理フラグ
+
+# 日割り処理とフィールドをあわせる
+delf 21/22                            > ${tmp}-tujyou_hiwari_taisyougai_kakutei
+# 1:入居者ID          2:請求月          3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名          7:税区分          8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日       12:金額           13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM     17:特販期間TO     18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:税計算前確定金額 22:特別処理フラグ
+
+#---------------------------------------------------------------
+# パイプでエラーがあったら落とす
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(NORMAL_NOTHIWARI)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 列チェック
+
+[ "$(retu ${tmp}-tujyou_hiwari_taisyougai_kakutei)" != "22" ] && error_exit "処理中にエラーが発生しました(NORMAL_NOTHIWARI)"
+[ "$(retu ${tmp}-tujyou_hiwari_taisyougai_kakutei | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(NORMAL_NOTHIWARI)"
+[ "$(awk 'NF!="22"' ${tmp}-tujyou_hiwari_taisyougai_kakutei | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(NORMAL_NOTHIWARI)"
+#---------------------------------------------------------------
+
+### 日割りしない処理ここまで
+#---------------------------------------------------------------
+
+exit 0
+

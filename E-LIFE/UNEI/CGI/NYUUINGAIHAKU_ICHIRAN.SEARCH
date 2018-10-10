@@ -1,0 +1,343 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_ICHIRAN.SEARCH
+# 基本情報一覧検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source  /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+#--------------------------------------------------------------
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+if [ ! -z "${NYUUINGAIHAKUSHOUSAI}" -a "${NYUUINGAIHAKUSHOUSAI}" != "_" ] ; then
+  Unit="_"
+  Kyoshitsu="_"
+  Nyuukyosha="_"
+  Shubetsu=""
+  NyuuingaihakuKikanFrom="$(date -d "$(date '+%Y-%m-01') 1 months ago" +%Y%m%d)"
+  NyuuingaihakuKikanTo=""
+  Kesshoku=""
+  Hyouji=""
+  Shoujyun=""
+  OneHyouji=""
+  NYUUINGAIHAKUID=""
+else
+  NyuuingaihakuKikanFrom=$(nameread     "NyuuingaihakuKikanFrom"     $namedata | sed 's/\///g')
+  NyuuingaihakuKikanTo=$(nameread       "NyuuingaihakuKikanTo"       $namedata | sed 's/\///g')
+  Hyouji="$(nameread  "Hyouji"  $namedata)"
+  Shoujyun="$(nameread  "Shoujyun"  $namedata)"
+fi
+
+Shisetsu="$(nameread  "Shisetsu"  $namedata)"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread  "shisetsu"  $namedata)"
+[ -z "${Tateya}" ] && Tateya="_"
+  shozokushisetsu=$(awk '$1=="'${userid}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU )
+  shozokutateya=$(awk '$1=="'${userid}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU )
+[ "${Tateya}" = "_" -a "${shozokushisetsu}" -eq "${Shisetsu}" -a "${shozokutateya}" != "_" ] && Tateya="${shozokutateya}"
+
+    cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR    |
+# 1:施設ID 2:建屋ID 3:フロア
+    awk '$1=="'${Shisetsu}'"{print $2}'                     |
+    LANG=C sort -u                                           >  $tmp-tateya_name
+
+# 建屋が選ばれていない、かつ建屋の選択肢が一つの場合はその建屋をセット
+  [ "${Tateya}" = "_" -a "$(awk '$1!="@"' $tmp-tateya_name | gyo)" -ge "1" ] && Tateya="$(awk '{print $1}' $tmp-tateya_name | head -1)"
+
+[ -z "${Hyouji}" -o "${Hyouji}" = "_" ] && Hyouji="1"
+[ -z "${Shoujyun}" -o "${Shoujyun}" = "_" ] && Shoujyun="1"
+#--------------------------------------------------------------
+# 年月日の準備
+# -------------------------------------------------------------
+
+#------------------------------------------------------------
+#------------------------------------------------------------
+# 詳細画面から遷移した場合
+#if [ -z "${NYUUKYOSHISETSUID}" -o "${NYUUKYOSHISETSUID}" != "_" ] ; then
+#  awk '$2=="'${NYUUKYOSHISETSUID}'"{print $0}' ${pompa_dir}/RIYOUSHA_NYUUINGAIHAKU > $tmp-touroku_data  
+#fi
+
+#------------------------------------------------------------
+#------------------------------------------------------------
+# 検索対象者の絞込み
+#------------------------
+cat ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+# 6:入居者ID 7:入居日 8:退去日
+
+if [ ! -z "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $0}'
+else
+  cat -
+fi |
+
+# tateyaの指定有り
+if [ ! -z "${Tateya}" -a "${Tateya}" != "_" ] ; then
+  awk '$2=="'${Tateya}'"{print $0}' 
+else
+  cat -
+fi |
+
+# フロアの指定有り
+if [ ! -z "${Floor}" -a "${Floor}" != "_" ] ; then
+  awk '$3=="'${Floor}'"{print $0}' 
+else
+  cat -
+fi |
+
+# ユニの指定有り
+if [ ! -z "${Unit}" -a "${Unit}" != "_" ] ; then
+  awk '$4=="'${Unit}'"{print $0}' 
+else
+  cat -
+fi |
+
+# kyoshitsuの指定有り
+if [ ! -z "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ] ; then
+  awk '$5=="'${Kyoshitsu}'"{print $0}' 
+else
+  cat - 
+fi |
+
+# nyuukyoshaの指定有り
+if [ ! -z "${Nyuukyosha}" -a "${Nyuukyosha}" != "_" ] ; then
+  awk '$6=="'${Nyuukyosha}'"{print $0}' 
+else
+  cat -
+fi   > $tmp-taishousha
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+# 6:入居者ID 7:入居日 8:退去日
+
+  if [ "${TaikyoshaHyouji}" != "1" ] ; then
+     cat $tmp-taishousha |
+    # 入居期間中のものだけにする場合
+#     awk '$8>"'${today}'"{print $0}'   |
+     self 6   |
+     LANG=C sort -k1,1n 
+# 1:入居者ID
+
+  else
+    cat $tmp-taishousha |
+    self 6              |
+    LANG=C sort -k1,1n  
+# 1:入居者ID
+
+  fi |
+
+join1 key=1 <(cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | LANG=C sort -k1,1) - |
+self 1/3   |
+LANG=C sort -k1,1 >$tmp-taishousha_list
+# 1:入居者ID 2:入居者名 3:入居者名カナ
+#--------------------------------------------------------------
+
+# ファイルの取得
+#RIYOUSHA_NYUUINGAIHAKU
+# 1:利用者(入居者)ID 2:入院外泊ID  3:施設      4:建屋    5:居室
+# 6:種別             7:期間FROM    8:期間TO    9:出発地  10:帰宅先
+# 11:入院外泊先      12:備考       13:欠食登録 14:備考1  15:備考2
+# 16:備考3           17:削除フラグ 18:更新日時 19:UserID
+
+cat ${pompa_dir}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU   |
+awk '$(NF-2)!="9"{print $0}' |
+# 施設の絞込み
+#if [ "${Shisetsu}" != "_" ] ; then
+#  awk '$3=="'${Shisetsu}'"{print $0}'
+#else
+#  cat -
+#fi |
+## 建屋の絞込み
+if [ ! -z "${Tateya}" -a "${Tateya}" != "_" ] ; then
+  awk '$4=="'${Tateya}'"{print $0}'
+else
+  cat -
+fi |
+
+## 建屋の絞込み
+if [ ! -z "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ] ; then
+  awk '$5=="'${Kyoshitsu}'"{print $0}'
+else
+  cat -
+fi |
+LANG=C sort -k1,1 |
+# 利用者情報で絞込み
+join1 key=1 <(cat $tmp-taishousha_list | LANG=C sort -k1,1) -   |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3       19:削除フラグ 20:更新日時
+# 21:UserID
+
+# 不要な有効フラグ、削除フラグ～UseiIDを除外
+delf NF-2 NF-1 NF |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3
+
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# --------------------------
+# 種別
+if [ ! -z "${Shubetsu}" -a "${Shubetsu}" != "_" -a "${Shubetsu}" != "0" ] ; then
+  awk '$8=="'${Shubetsu}'"'
+else
+  cat -
+fi |
+# --------------------------
+# --------------------------
+# 期間(FROM)
+if [ -z "${NyuuingaihakuKikanFrom}" -o "${NyuuingaihakuKikanFrom}" = "_" ] ; then
+  cat - 
+else
+  #Fromの値が入力されていれば入院期間（至）との比較（入院期間（至）がなければそのまま）
+  awk '($10!="_" && $10>="'${NyuuingaihakuKikanFrom}'") || $10=="99999999" '
+fi |
+# --------------------------
+# --------------------------
+# 期間(TO)
+if [ -z "${NyuuingaihakuKikanTo}" -o "${NyuuingaihakuKikanTo}" = "_" ] ; then
+  cat -                                           
+else
+  #Toの値が入力されていれば 期間（自）との比較
+  awk  '$9<="'${NyuuingaihakuKikanTo}'"'
+fi |
+
+# --------------------------
+# --------------------------
+# 欠食登録
+if [ ! -z "${Kesshoku}" -a "${Kesshoku}" != "_" -a "${Kesshoku}" != "0" ] ; then
+  awk '$15=="'${Kesshoku}'"'
+else
+  cat -
+fi |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3
+if [ "${OneHyouji}" = "1" ] ; then
+  awk '{print $1,$9,$0}' |
+  LANG=C sort -k1,2 |
+  getlast 1 1       |
+  delf 1 2
+else
+  cat
+fi |
+
+# --------------------------
+# 表示項目による絞込み
+case "${Hyouji}" in
+"1")
+  case "${Shoujyun}" in
+  "1")
+    LANG=C sort -k7,7
+  ;;
+  "2")
+    LANG=C sort -k7,7 -r
+  ;;
+  esac
+;;
+"2")
+  case "${Shoujyun}" in
+    "1")
+    LANG=C sort -k3,3
+  ;;
+    "2")
+    LANG=C sort -k3,3 -r
+  ;;
+  esac
+;;
+"3")
+  case "${Shoujyun}" in
+  "1")
+    LANG=C sort -k9,9 
+  ;;
+  "2")
+    LANG=C sort -k9,9 -nr
+  ;;
+  esac
+;;
+esac |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3
+# --------------------------
+
+# 欠食登録の表記
+awk '{if($15=="0"){print $0,"未登録"}
+      else if($15=="1"){print $0,"登録済"}
+     }'  |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3       19:欠食登録名
+
+# 種別の表記
+#awk '{if($8=="1"){print $0,"入院"}
+#      else if($8=="2"){print $0,"外泊"}
+#      else if($8=="3"){print $0,"セカンド"}
+#     }'  |
+cjoin1 key=8 ${tbl_dir}/CONFIG/NYUUINGAIHAKU_SHUBETSU |
+self 1/8 10/NF 9                                      |
+# 1:利用者(入居者)ID 2:入居者名 3:入居者名カナ 4:入院外泊ID  5:施設
+# 6:建屋             7:居室     8:種別         9:期間FROM    10:期間TO
+# 11:出発地          12:帰宅先  13:入院外泊先  14:備考       15:欠食登録
+# 16:備考1           17:備考2   18:備考3       19:欠食登録名 20:種別名
+
+# 在籍状態を記載 # 20140902追記
+awk '{if($16=="2"){print $0,"(外)"}
+      else{print $0,"@"}
+     }'   |
+awk '{if($17=="2"){print $0,"(外)"}
+      else{print $0,"@"}
+     }'   |
+# 日付
+awk '{print $4,$8,$20,$7,$1,$2,$9!="_"?substr($9,1,4)"/"substr($9,5,2)"/"substr($9,7,2):"_",$10!="99999999"?substr($10,1,4)"/"substr($10,5,2)"/"substr($10,7,2):"_",$11,$12,$13,$14,$15,$19,$(NF-1),$NF}' |
+# 1:入院外泊ID         2:種別     3:種別名    4:居室        5:利用者(入居者)ID
+# 6:利用者(入居者)氏名 7:期間FROM 8:期間TO    9:出発地      10:帰宅先
+# 11:入院外泊先        12:備考    13:欠食登録 14:欠食登録名
+awk '{print $0,$(NF-1)!="@"?$7$(NF-1):$7,$NF!="@"?$8$NF:$8}' |
+self 1/6 NF-1 NF 9/NF-2   |
+
+
+sed 's/###SPACE###//g'    |
+sed 's/###KAIGYO###//g'   |
+self 1/NF 
+
+
+## 終了
+rm -f $tmp-*
+exit 0

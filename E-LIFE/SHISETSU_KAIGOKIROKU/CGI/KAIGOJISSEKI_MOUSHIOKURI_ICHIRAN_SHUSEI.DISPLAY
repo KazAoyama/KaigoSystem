@@ -1,0 +1,316 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_MOUSHIOKURI_ICHIRAN_SHUSEI.DISPLAY : 介護実績一覧表示.DISPLAY
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_SHUSEI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+test_pompa_dir="${home_dir}/E-LIFE/TEST/POMPA"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+# eval
+eval $(name-source ${namefile})
+
+#echo $shisetsu_select >  $tmp-shisetsu
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="shusei"
+fi
+
+# 利用者マスタの準備
+echo "99999999" "職員連絡"                                 > $tmp-riyosha_igai
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     |
+cat - $tmp-riyosha_igai                                      > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   |
+awk '$9==1'                                                  > $tmp-riyosha_status
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu_select}'"'                                                    |
+awk '$7=="MOUSHIOKURI_ICHIRAN.CGI"{print $1,$9}'                                                                |
+LANG=C sort -u -k2,2n                                                                       |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###PRINT_BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" ] && echo "###PRINT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###PRINT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+
+if [ -e "${searchfile}" ];then
+  # display
+  echo "###SHUSEI_DISPLAY###" "block" >> ${tmp}-calsed1
+  echo "###NEW_TOUROKU###" "none" >> ${tmp}-calsed1
+  # 渡ってきたデータの処理
+  # 対象者
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 1                                    |
+  join1 key=1 $tmp-riyosha_master           |
+  self 2                                    > ${tmp}-riyosha
+  echo "###SHUSEI_RIYOSHA###" "$(cat ${tmp}-riyosha)" >> ${tmp}-calsed1 
+  
+  # post用対象者
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 1                                    > ${tmp}-hd_riyosha
+  echo "###HD_RIYOSHA###" "$(cat ${tmp}-hd_riyosha)" >> ${tmp}-calsed1 
+  
+  # 年月日
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 2                                    |
+  awk '{print substr($1,1,4)"年"substr($1,5,2)"月"substr($1,7,2)"日"}' > ${tmp}-date
+  echo "###TEXT_SHUSEI_DATE###" "$(cat ${tmp}-date)" >> ${tmp}-calsed1 
+  
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 2                                    > ${tmp}-date2
+  echo "###HD_SHUSEI_DATE###" "$(cat ${tmp}-date2)" >> ${tmp}-calsed1 
+  
+  # 時刻
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 3                                    > ${tmp}-time
+  echo "###SHUSEI_TIME###" "$(cat ${tmp}-time)" >> ${tmp}-calsed1 
+  
+  # 種別
+  shusei_shubetsu=$(cat ${searchfile} | self 5 )
+  
+  # 対象者
+  shusei_taisho=$(cat ${searchfile} | self 6 )
+  
+  # 検索項目
+  shusei_koumoku=$(cat ${searchfile} | self 7 )
+  
+  # 内容
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 10                                    > ${tmp}-naiyo
+  echo "###SHUSEI_NAIYO###" "$(cat ${tmp}-naiyo)" >> ${tmp}-calsed1 
+  
+  # 色
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 11                                    > ${tmp}-color
+  echo "###$(cat ${tmp}-color)###" "selected" >> ${tmp}-calsed1 
+  
+  # 日誌共有
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 8                                    > ${tmp}-nisshi
+  echo "###NISSHI_KYOYU###" "$(cat ${tmp}-nisshi)" |
+  awk '{if($2=="on"){print $1,"checked"}else{print $1,""}}' >> ${tmp}-calsed1 
+  
+  # 訪問介護共有
+  cat ${searchfile}                         |
+  # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+  self 9                                    > ${tmp}-houmon
+  echo "###HOUMON_KYOYU###" "$(cat ${tmp}-houmon)" |
+  awk '{if($2=="on"){print $1,"checked"}else{print $1,""}}' >> ${tmp}-calsed1 
+else
+  # display
+  echo "###SHUSEI_DISPLAY###" "none" >> ${tmp}-calsed1
+  echo "###NEW_TOUROKU###" "block" >> ${tmp}-calsed1
+  # 対象者
+  echo ${riyosha_name}                      |
+  join1 key=1 $tmp-riyosha_master           |
+  self 2                                    > ${tmp}-riyosha
+  echo "###SHUSEI_RIYOSHA###" "$(cat ${tmp}-riyosha)" >> ${tmp}-calsed1 
+  
+  # post用対象者
+  echo ${riyosha_name}                      > ${tmp}-hd_riyosha
+  echo "###HD_RIYOSHA###" "$(cat ${tmp}-hd_riyosha)" >> ${tmp}-calsed1 
+  
+  # 年月日
+  if [ "${hd_date}" = "_" -o -z "${hd_date}" ];then
+    hd_date=$(date +%Y%m%d) 
+    text_date=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+  else
+    :
+  fi
+  echo "###TEXT_SHUSEI_DATE###" "${text_date}"          >> ${tmp}-calsed1 
+  
+  echo "###HD_SHUSEI_DATE###" "${hd_date}" >> ${tmp}-calsed1 
+  
+  # 時刻
+  echo "###SHUSEI_TIME###" "" >> ${tmp}-calsed1 
+  
+  # 種別
+  shusei_shubetsu="1"
+  
+  # 対象者
+  shusei_taisho="1"
+  
+  # 検索項目
+  shusei_koumoku="1"
+  
+  # 内容
+  echo "###SHUSEI_NAIYO###" "" >> ${tmp}-calsed1 
+  
+  # 色
+  echo "###$(cat ${tmp}-color)###" "" >> ${tmp}-calsed1 
+  
+  # 日誌共有
+  echo "###NISSHI_KYOYU###" "" >> ${tmp}-calsed1
+  
+  # 訪問介護共有
+  echo "###HOUMON_KYOYU###" "" >> ${tmp}-calsed1
+fi
+
+
+# 実施者の取得
+if [ -n "${JISSHISHA}" -a "${JISSHISHA}" != "_" ];then
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+  self 1 2                                                       > $tmp-user_master
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${tbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU                |
+  # 1:userid 2:施設id  3:建屋 4:フロア 5:ユニットid
+  # 6:事業所詳細 7:役職（ケアマネかサ責） 8:介護支援専門員番号
+  LANG=C sort -k2,2n                                             |
+  join0 key=2 <(echo $shisetsu_select)                           |
+  awk '$3=="'${tateya}'" || $3=="_"'                             |
+  if [ "${floor}" = 0 ];then
+    cat -
+  else
+    awk '$4=="'${floor}'" || $4=="_"'
+  fi                                                             |
+  self 1                                                         |
+  LANG=C sort -k1,1n                                             |
+  join1 key=1 $tmp-user_master                                   |
+  awk '{print $1"+++"$2,$2}'                                     |
+  LANG=C sort -u                                                 |
+  awk '{print $0,"'${JISSHISHA}'"}'                              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-jisshisha
+else
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+  self 1 2                                                       > $tmp-user_master
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${tbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU                |
+  # 1:userid 2:施設id  3:建屋 4:フロア 5:ユニットid
+  # 6:事業所詳細 7:役職（ケアマネかサ責） 8:介護支援専門員番号
+  LANG=C sort -k2,2n                                             |
+  join0 key=2 <(echo $shisetsu_select)                           |
+  awk '$3=="'${tateya}'" || $3=="_"'                             |
+  self 1                                                         |
+  LANG=C sort -k1,1n                                             |
+  join1 key=1 $tmp-user_master                                   |
+  LANG=C sort -u                                                 |
+  awk '{print $1"+++"$2,$2}'                                       > ${tmp}-jisshisha
+fi
+
+# 申し送り項目の設定
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_SELECT                           |
+awk '{print $0,"'${shusei_shubetsu}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_select
+#echo "0" "全て"                                                |
+#cat - ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_TAISHO                         |
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_TAISHO                         |
+awk '{print $0,"'${shusei_taisho}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_taisho
+cat  ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_KOUMOKU                        |
+awk '$1!=7{print $0,"'${shusei_koumoku}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_koumoku
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d) 
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+if [ "${hd_sakuseibi2}" = "_" -o -z "${hd_sakuseibi2}" ];then
+  hd_sakuseibi2=$(date +%Y%m%d) 
+  text_sakuseibi2=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE1### active
+###TEXT_SAKUSEIBI### ${text_sakuseibi}
+###TEXT_SAKUSEIBI2### ${text_sakuseibi2}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+###HD_SAKUSEIBI2### ${hd_sakuseibi2}
+###USERID### ${userid}
+###TATEYA### ${tateya}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###TIME_FROM### ${time_from}
+###TIME_TO### ${time_to}
+###KEYWORD### ${keyword}
+###RIYOSHA_NAME### ${riyosha_name}
+###FLOOR_NAME### ${floor}
+###SHISETSU_NAME### ${shisetsu}
+###JISSHISHA### ${JISSHISHA}
+###MOUSHIOKURI_SELECT### ${moushiokuri_select}
+###MOUSHIOKURI_TAISHO### ${moushiokuri_taisho}
+###MOUSHIOKURI_KOUMOKU### ${moushiokuri_koumoku}
+###SHUSEI_ID### ${ShuseiId}
+###SHISETSU_SELECT### ${shisetsu_select}
+###sort_name### ${sort_name}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_SHUSEI.html   |
+mojihame -l###SHUSEI_SHUBESTU### - ${tmp}-moushiokuri_select |
+mojihame -l###SHUSEI_TAISHO### - ${tmp}-moushiokuri_taisho |
+mojihame -l###SHUSEI_KOUMOKU### - ${tmp}-moushiokuri_koumoku |
+calsed -f ${tmp}-calsed -                                    |
+sed 's/<br>/\n/g' 
+# HTMLの作成
+
+rm -f ${tmp}-*
+exit 0
+

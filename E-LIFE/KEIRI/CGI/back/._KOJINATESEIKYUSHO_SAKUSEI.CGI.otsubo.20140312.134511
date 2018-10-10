@@ -1,0 +1,215 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.CGI : 施設請求書発行CGI
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.CGI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+ch_cgi_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI/CGI"
+
+
+#}}}Functions#######################################
+
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+[ -s ${tmp}-param ] && cgi-name -d_ -i_ ${tmp}-param > ${tmp}-param_name || : > ${tmp}-param_name
+
+eval $(name-source ${tmp}-param_name)
+#MODEの確認
+MODE="$(nameread "MODE" ${tmp}-param_name)"
+[ -n "${MODE}" ] || MODE="init"
+
+
+# 処理の分岐
+case "${MODE}" in
+  # --------------
+  # 初めてこの画面開いたときの(ドロップダウンのみ表示)
+  init )
+    display
+  ;;
+  # --------------
+  # --------------
+  # 繰越請求処理画面選択時
+  kurikoshi_init )
+    display
+  ;;
+  # --------------
+  # --------------
+  # 請求画面選択時
+  seikyu_init )
+    display
+  ;;
+  # --------------
+  # --------------
+  # 表示ボタンを押したとき(請求画面のみ)
+  search )
+    search
+    display
+  ;;
+  # --------------
+  # --------------
+  # 計算(請求画面のみ)
+  keisan )
+    keisan
+    display
+  ;;
+  # --------------
+  # --------------
+  # 請求選択更新(請求・繰越共通)
+  seikyu_koushin )
+    head_koushin
+    display
+  ;;
+  # --------------
+  # --------------
+  # 仮確定、仮確定解除
+  karikakutei )
+    head_koushin_karikakutei
+    display_2
+  ;;
+  # --------------
+  # --------------
+  # 請求書出力
+  karikakutei )
+    seikyu_sakusei
+    head_koushin_seikyu
+  ;;
+  # --------------
+  # --------------
+  # 当月確定
+  tougetsukakutei )
+    head_koushin_tougetsukakutei
+    display
+  ;;
+  # --------------
+esac
+
+
+case "${MODE}" in
+  #初期表示
+  init )
+    ${ch_cgi_dir}/KENGEN_CHECK.CGI ${tmp}-param_name          > ${tmp}-check
+    if [ $(gyo ${tmp}-check) -ne 0 ];then
+      : > ${tmp}-search
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.DISPLAY ${tmp}-param_name ${tmp}-check ${tmp}-search  > ${tmp}-html
+    else
+      ${ch_cgi_dir}/TEST_SIGN_IN.CGI ${tmp}-param_name
+    fi
+    ;;
+
+  #検索する場合
+  search )
+    ${ch_cgi_dir}/KENGEN_CHECK.CGI ${tmp}-param_name          > ${tmp}-check
+    if [ $(gyo ${tmp}-check) -ne 0 ];then
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.SEARCH ${tmp}-param_name               > ${tmp}-search
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.DISPLAY ${tmp}-param_name ${tmp}-check ${tmp}-search > ${tmp}-html
+    else
+      ${ch_cgi_dir}/TEST_SIGN_IN.CGI ${tmp}-param_name
+    fi
+    ;;
+
+  # 登録
+  kojin_kakutei )
+    ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KOJINKAKUTEI ${tmp}-param_name                    > ${tmp}-data
+    ${ch_cgi_dir}/KENGEN_CHECK.CGI ${tmp}-param_name                                       > ${tmp}-check
+    if [ $(gyo ${tmp}-check) -ne 0 ];then
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.SEARCH ${tmp}-param_name                                  > ${tmp}-search
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.DISPLAY ${tmp}-param_name ${tmp}-check ${tmp}-search      > ${tmp}-html
+    else
+      ${ch_cgi_dir}/TEST_SIGN_IN.CGI ${tmp}-param_name
+    fi
+    # message
+    if [ "$(gyo ${tmp}-data)" -ne 0 ];then
+      message="個人確定しました"
+    else
+      message="エラーが発生しました"
+    fi
+cat <<- FIN > $tmp-html3
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+    ;;
+
+  # 印刷
+  print )
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.PRINT_SEARCH ${tmp}-param_name               > ${tmp}-print_search
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.PRINT ${tmp}-param_name ${tmp}-print_search  > ${tmp}-html
+    ;;
+
+  # 削除
+  delete )
+    ${cgi_dir}/SERVICE_TOUROKU.DELETE ${tmp}-param_name                               > ${tmp}-data
+    ${ch_cgi_dir}/KENGEN_CHECK.CGI ${tmp}-param_name                                       > ${tmp}-check
+    if [ $(gyo ${tmp}-check) -ne 0 ];then
+      ${cgi_dir}/SERVICE_TOUROKU.SEARCH ${tmp}-param_name                                  > ${tmp}-search
+      ${cgi_dir}/SERVICE_TOUROKU.DISPLAY ${tmp}-param_name ${tmp}-check ${tmp}-search      > ${tmp}-html
+    else
+      ${ch_cgi_dir}/TEST_SIGN_IN.CGI ${tmp}-param_name
+    fi
+    # message
+    if [ "$(gyo ${tmp}-data)" -ne 0 ];then
+      message="削除しました"
+    else
+      message="エラーが発生しました"
+    fi
+cat <<- FIN > $tmp-html3
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+    ;;
+
+  #その他の場合
+  * )
+    ${ch_cgi_dir}/KENGEN_CHECK.CGI ${tmp}-param_name          > ${tmp}-check
+    if [ $(gyo ${tmp}-check) -ne 0 ];then
+      ${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.DISPLAY ${tmp}-param_name ${tmp}-check > ${tmp}-html
+    else
+      ${ch_cgi_dir}/TEST_SIGN_IN.CGI ${tmp}-param_name
+    fi
+    ;;
+esac
+
+# 返す？
+if [ "$(gyo ${tmp}-check)" -ne 0 ];then
+  :
+else
+  message="権限がありません"
+cat <<- FIN > $tmp-html2
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+fi
+
+
+# HTMLファイルを表示する
+if [ -e "$tmp-html" ];then
+  if [ -e "${tmp}-html3" ];then
+    echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+    cat - ${tmp}-html ${tmp}-html3
+  else
+    echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+    cat - ${tmp}-html
+  fi
+else
+  cat $tmp-html2
+fi
+
+rm -f ${tmp}-*
+exit 0
+

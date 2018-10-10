@@ -1,0 +1,211 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMONKAIGO.TAISHO_JOGAI : 介護請求訪問介護　請求対象者のステータス変更
+#
+# Usage : KAIGOSEIKYU_HOUMONKAIGO.TAISHO_JOGAI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# 対象者を決める
+cat $namefile           |
+awk '$1~/taishosha_check/{print $2}' |
+sed 's/+++/ /g'         > $tmp-taisho_moto
+cat $tmp-taisho_moto    |
+self 1                  |
+LANG=C sort -k1,1n      > ${tmp}-taishosha
+# 1:入居者ID
+
+
+
+# 対象者ごとに処理をまわす
+
+for member in $(cat ${tmp}-taishosha);do
+
+  # 対象年月を決める
+  cat $tmp-taisho_moto                                               |
+  awk '$1=="'${member}'"{print $2}'                                  |
+  LANG=C sort -k1,1n                                                 > $tmp-nengetsu_list
+
+  # 年月ごとに処理を回す
+  for month in $(cat $tmp-nengetsu_list);do
+    
+    nengetsu=$(echo $month)
+  
+    # 日常生活費の分を確定
+    NEN=$(echo ${month} | awk '{print substr($1,1,4)}')
+    TSUKI=$(echo ${month} | awk '{print substr($1,5,2)}')
+
+    # 日常生活費の確定フラグを更新
+    cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SERVICE_JISSEKI_DETAIL_HIYOU              |
+    # 1:訪問介護用のID 2:利用者ID    3:年        4:月       5:日
+    # 6:品目名         7:税抜金額    8:税率      9:税込金額 10:課税フラグ
+    # 11:確定フラグ    12:有効フラグ 13:登録日時 14:登録者
+    awk '{if($2=="'${member}'" && $3=="'${NEN}'" && $4=="'${TSUKI}'"){$11="0";$13="'${current_time}'";$14="'${userid}'"};print $0}'   > $tmp-kakutei_tebukuro
+    
+    lock_file=${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAIGOSEIKYU_HOUMON_TEBUKURO.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    mv $tmp-kakutei_tebukuro ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SERVICE_JISSEKI_DETAIL_HIYOU
+    rm -f ${lock_file}
+    unset lock_file
+  
+    # 自費サービスの確定フラグを更新
+    cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SEIKYU_JIHI_SERVICE                       |
+    # 1:施設ID    2:年月         3:利用者ID 4:利用年月日  5:開始時間
+    # 6:終了時間  7:サービス種類 8:内容     9:所用時間    10:税抜金額
+    # 11:税率     12:税込金額    13:実施者  14:確定フラグ 15:有効フラグ
+    # 16:登録日時 17:ログインID
+    awk '{if($3=="'${member}'" && $2=="'${month}'"){$14="0";$16="'${current_time}'";$17="'${userid}'"};print $0}'  > $tmp-kakutei_jihi
+  
+    lock_file=${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAIGOSEIKYU_HOUMON_JIHI.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    mv $tmp-kakutei_jihi ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SEIKYU_JIHI_SERVICE
+    rm -f ${lock_file}
+    unset lock_file
+  
+    # 元データの確定フラグを更新
+    hajime=$(echo $month | awk '{print $1"01"}')
+    owari=$(mdate ${month}m | tarr | tail -n1)
+    cat ${riyosha_dir}/RIYOUSHA_KAIGOHOKEN                                                    |
+    # 1:利用者ID            2:介護保険ID          3:介護度            4:保険者番号                                        5:保険者名
+    # 6:被保険者番号        7:性別                8:生年月日和暦元号  9:和暦誕生年                                        10:和暦誕生月
+    # 11:和暦誕生日         12:郵便番号           13:住所             14:認定年月和暦元号                                 15:認定和暦年
+    # 16:認定和暦月         17:認定和暦日         18:認定西暦         19:有効期間from和暦元号                             20:有効期間from和暦年
+    # 21:有効期間from和暦月 22:有効期間from和暦日 23:有効期間from西暦 24:有効期間to和暦元号                               25:有効期間to和暦年
+    # 26:有効期間to和暦月   27:有効期間to和暦日   28:有効期間to西暦   29:居宅介護支援者又は介護予防事業者及びその事業者名 30:認定審査会の意見及びサービスの種類
+    # 31:備考               32:利用者負担率
+    join0 key=1 <(echo $member)                                                               |
+    awk '$23<="'${owari}'" && $28>="'${hajime}'"'                                             |
+    self 1 3                                                                                  |
+    tail -n1                                                                                  > $tmp-riyosha_kaigodo
+
+    kaigodo=$(cat ${tmp}-riyosha_kaigodo | self 2)
+    [ "${kaigodo}" = "1" ] && kaigodo_kubun="12"
+    [ "${kaigodo}" = "2" ] && kaigodo_kubun="13"
+    [ "${kaigodo}" = "3" ] && kaigodo_kubun="21"
+    [ "${kaigodo}" = "4" ] && kaigodo_kubun="22"
+    [ "${kaigodo}" = "5" ] && kaigodo_kubun="23"
+    [ "${kaigodo}" = "6" ] && kaigodo_kubun="24"
+    [ "${kaigodo}" = "7" ] && kaigodo_kubun="25"
+
+    if [ "${kaigodo}" = "1" -o "${kaigodo}" = "2" ];then
+      cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_YOBO            |
+      # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+      # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+      # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+      # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+      # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+      # 26:限度額対象フラグ 27:確定フラグ 28:有効フラグ 29:登録時間 30:userid
+      awk '{if($2=="'${member}'" && $3=="'${NEN}'" && $4=="'${TSUKI}'"){$27="0";$29="'${current_time}'";$30="'${userid}'"};print $0}'   > $tmp-new_motoneta
+  
+      lock_file=${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAIGOSEIKYU_HOUMON.LOCK
+      lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+      mv $tmp-new_motoneta ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_YOBO
+      rm -f ${lock_file}
+      unset lock_file
+    else
+      cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_KAIGO            |
+      # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+      # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+      # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+      # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+      # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+      # 26:限度額対象フラグ 27:確定フラグ 28:有効フラグ 29:登録時間 30:userid
+      awk '{if($2=="'${member}'" && $3=="'${NEN}'" && $4=="'${TSUKI}'"){$27="0";$29="'${current_time}'";$30="'${userid}'"};print $0}'   > $tmp-new_motoneta
+  
+      lock_file=${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAIGOSEIKYU_HOUMON.LOCK
+      lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+      mv $tmp-new_motoneta ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_KAIGO
+      rm -f ${lock_file}
+      unset lock_file
+    fi
+
+    # POMPAデータ更新
+    lock_file=${pompa_dir}/KAIGOSEIKYU_HOUMON.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO  |
+    awk '$1!="'${member}'"'                                                                            > $tmp-member_igai
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO  |
+    awk '$1=="'${member}'"'                                                                            |
+    awk '$5!="'${month}'"'                                                                             > $tmp-new_member_data
+    cat $tmp-member_igai $tmp-new_member_data                                                          |
+    LANG=C sort -k1,1n -k2,4n                                                                          > $tmp-new_pompa
+    mv $tmp-new_pompa ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO
+
+    # 7111の更新
+    
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+    delf 1 2 > $tmp-service_meisai
+
+    kensu=$(cat $tmp-service_meisai | awk '$2=="10" && $3=="'${month}'"' | gyo)
+    kyotaku_bangou=$(cat $tmp-service_meisai | head -n1 | self 4)
+    cat $tmp-service_meisai         |
+    awk '$2=="10" && $3=="'${month}'"'                               |
+    self 3 14 16 17                                                  |
+    sm2 1 1 2 4                                                      |
+    self 2 3 4                                                       |
+    # 1:単位数合計 2:保険対象額合計 3:利用者負担分合計
+    awk '{kei=$2+$3;print $1,kei,$2,$3}'                             > ${tmp}-goukei
+    cat $tmp-goukei                                                  |
+    awk '{print "7111","'${month}'","'${kyotaku_bangou}'","1","0","1","'${kensu}'",$1,$2,$3,"0",$4,"0","0","0","0","0","0" }' > ${tmp}-${month}-input_houmon_7111
+
+    cp -p $tmp-${month}-input_houmon_7111 ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.SEIRVICE_SEIKYUJOHO_7111
+      rm -f ${lock_file}
+      unset lock_file
+  done
+done
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+echo "ok"
+
+rm -f ${tmp}-*
+exit 0
+
+

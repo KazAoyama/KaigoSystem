@@ -1,0 +1,1473 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KEIYAKU.TOUROKU
+# 個人情報詳細　契約POPUP
+#
+# Written by E.Okuda 2013/12/10
+
+# 編集＠20141112 "${KeiyakuShurui}" -le "007"を"${KeiyakuShurui}" -le "004"へ
+#(SHISETSU_RIYOUSHA_STATUSを変動させるのは契約種類004:月払い契約まで)
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  cp $tmp-* /home/hands/work/okuda
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+##########################
+# 入力データのチェック
+##########################
+Shisetsu=$(nameread "SHISETSU" $namedata)
+Tateya=$(nameread   "TATEYA" $namedata)
+Floor=$(nameread "FLOOR" ${namedata})
+Unit=$(nameread "UNIT" $namedata)
+Kyoshitsu=$(nameread "KYOSHITSU" $namedata)
+KEIYAKUID=$(nameread "KEIYAKUID" $namedata)
+
+KeiyakuShurui=$(nameread "KeiyakuShurui" $namedata)
+
+# 2015/05/07追加
+KeiyakuJigyousho=$(nameread "KeiyakuJigyousho" $namedata)
+
+# 選択したのが事業所でなく施設だったらファイルを作成
+echo "${Shisetsu}" | awk '$1!~/^1/' > $tmp-shisetsu
+
+# 予防系契約(契約種類20、21)だったら包括選択は必須
+if  [ "${KeiyakuShurui}" -eq "21" -o "${KeiyakuShurui}" -eq "27" ] ; then
+  [ -z "${Houkatsu}" -o "${Houkatsu}" = "_" ] && error_exit "包括を選択してください。"
+else
+  Houkatsu="_"
+fi
+
+[ -z "${Tateya}" ] && Tateya="_"
+[ -z "${Floor}" ] && Floor="_"
+[ -z "${Unit}" ] && Unit="_"
+[ -z "${Kyoshitsu}" ] && Kyoshitsu="_"
+
+[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者データが異常です。"
+[ -z "${KeiyakuShurui}" -o "${KeiyakuShurui}" = "_" ] && error_exit "契約種類を選択してください。"
+[ -z "${KeiyakukikanFrom}" -o "${KeiyakukikanFrom}" = "_" ] && error_exit "契約開始日を入力してください。"
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && error_exit "施設未選択です。"
+
+# 施設契約だったら居室がないとエラー
+[ -s $tmp-shisetsu -a "${Kyoshitsu}" = "_" ] && error_exit "居室が選択されていません。"
+
+#-----------------------------
+# ディレィトリ設定２
+#-----------------------------
+riyousha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA/"
+
+# 施設契約の場合、確定データを利用
+seikyuu_kakutei_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI"
+#-----------------------------
+# チェック用
+  Keiyakubi=$(nameread "Keiyakubi" $namedata | sed 's/\///g' | awk '$1~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/||$1=="_"{print $0}')
+  KeiyakuHikiwatashibi=$(nameread "KeiyakuHikiwatashibi" $namedata | sed 's/\///g' |  awk '$1~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/||$1=="_"{print $0}')
+  KeiyakukikanFrom=$(nameread "KeiyakukikanFrom" $namedata | sed 's/\///g' |  awk '$1~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/||$1=="_"{print $0}')
+  KeiyakukikanTo=$(nameread "KeiyakukikanTo" $namedata | sed 's/\///g' |  awk '$1~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/||$1=="_"{print $0}')
+  TaikyoRiyuu=$(nameread "TaikyoRiyuu" $namedata)
+
+  [ -z "${KeiyakukikanFrom}" -o "${KeiyakukikanFrom}" = "_" ] && error_exit "契約開始日を入力してください。"
+  [ -z "${Keiyakubi}" ] && error_exit "契約日の値が不正です。(8桁の半角数字で入力してください)"
+  [ -z "${KeiyakuHikiwatashibi}" ] && error_exit "引渡日の値が不正です。(8桁の半角数字で入力してください)"
+  [ -z "${KeiyakukikanFrom}" ] && error_exit "契約開始日の値が不正です。(8桁の半角数字で入力してください)"
+  [ -z "${KeiyakukikanTo}" ] && error_exit "契約終了日の値が不正です。(8桁の半角数字で入力してください)"
+
+  [ -z "${KeiyakukikanTo}" -o "${KeiyakukikanTo}" = "_" ] && KeiyakukikanTo="99999999"
+  [ -z "${TaikyoRiyuu}" ] && TaikyoRiyuu="_"
+ # [ -s $tmp-shisetsu -a "${KeiyakukikanTo}" != "99999999" -a "${TaikyoRiyuu}" = "_" -a "${KeiyakuShurui}" -le "007" ] && error_exit "退去理由を入力してください。"
+  [ -s $tmp-shisetsu -a "${KeiyakukikanTo}" != "99999999" -a "${TaikyoRiyuu}" = "_" -a "${KeiyakuShurui}" -le "004" ] && error_exit "退去理由を入力してください。"
+   [ "${KeiyakukikanFrom}" -gt "${KeiyakukikanTo}" ] && error_exit "契約期間が不正です。契約終了日は契約開始日より後の日付を指定してください。"
+
+#---------------
+# 施設契約だったら重複してないかチェック
+if [ -s $tmp-shisetsu ] ; then
+  # 何の契約であれ、契約期間に定員以上に入居者がいる場合はエラーにする
+  # 同じ居室に居る人の絞込み
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$(NF-2)!="9"' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS |
+  # 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+  # 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新時間
+  # 11:更新者
+
+  # 今回の契約の期間と重複する人を絞り込む
+  awk '{if($7>="'${KeiyakukikanFrom}'"&&$7<="'${KeiyakukikanTo}'"){print $0}
+        else if($8>="'${KeiyakukikanFrom}'"&&$8<="'${KeiyakukikanTo}'"){print $0}
+        else if($7<="'${KeiyakukikanFrom}'"&&$8>="'${KeiyakukikanFrom}'"){print $0}
+       }' |
+  # 今回更新の利用者は除く
+  awk '$6!="'${RIYOUSHAID}'"' |
+  self 6  |
+  LANG=C sort -u |
+  gyo     > $tmp-kyoshitsu_ninzuu
+# 1:人数
+
+  # 定員を調べる
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$(NF-2)!="9"{print $0}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+# 1:施設ID       2:建屋ID      3:フロア      4:ユニットID 5:居室NO
+# 6:居室定員人数 7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザーID
+  self 6 > $tmp-teiin
+
+ # [ -s $tmp-kyoshitsu_ninzuu -a "$(cat $tmp-kyoshitsu_ninzuu)" -ge "$(cat $tmp-teiin)" -a "${KeiyakuShurui}" -le "007" ] && error_exit "選択した居室は定員人数の入居契約が存在しており追加できません。施設マスタで定員人数を変更するか、他入居者の契約情報を終了させてください。"
+  [ -s $tmp-kyoshitsu_ninzuu -a "$(cat $tmp-kyoshitsu_ninzuu)" -ge "$(cat $tmp-teiin)" -a "${KeiyakuShurui}" -le "004" ] && error_exit "選択した居室は定員人数の入居契約が存在しており追加できません。施設マスタで定員人数を変更するか、他入居者の契約情報を終了させてください。"
+
+# 事業所だったら
+else 
+  # 同じ契約種類で別包括が入力されたらエラー
+  awk '$2=="'${RIYOUSHAID}'"&&$4=="'${KeiyakuShurui}'"&&$(NF-2)!="9"' ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS |
+# 1:事業所(包括)ID 2:入居者ID   3:契約ID   4:契約種類 5:契約開始日
+# 6:契約終了日     7:削除フラグ 8:更新時間 9:更新者
+  if [ -z "${KEIYAKUID}" -o "${KEIYAKUID}" = "_" ] ; then
+     cat -
+  else
+     awk '$3!="'${KEIYAKUID}'"'
+  fi |
+  awk '{if($5<="'${KeiyakukikanFrom}'"&&$6>="'${KeiyakukikanTo}'"){print $0}
+        else if($5>="'${KeiyakukikanFrom}'"&&$5<="'${KeiyakukikanTo}'"){print $0}
+        else if($6>="'${KeiyakukikanFrom}'"&&$6<="'${KeiyakukikanTo}'"){print $0}
+       }'  > $tmp-houkatsu_error
+  [ -s $tmp-houkatsu_error ] && error_exit "包括契約期間に重複データがあります。契約期間を確認してください。"
+fi
+
+#---------------
+#-----------------
+# 契約金のチェック
+#------------------
+
+cat ${namedata} |
+awk '$1~/KeiyakukinShubetsu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_shubetsu
+
+cat ${namedata} |
+awk '$1~/KeiyakukinShoukyakubiFrom*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   > $tmp-keiyakukin_from
+
+cat ${namedata} |
+awk '$1~/KeiyakukinShoukyakubiTo*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   |
+sed 's/_/99999999/g' > $tmp-keiyakukin_to
+
+cat ${namedata} |
+awk '$1~/KeiyakukinKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_kingaku
+
+cat ${namedata} |
+awk '$1~/KeiyakukinShoukyakuKaisuu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_shoukya_kukaisuu
+
+cat ${namedata} |
+awk '$1~/KeiyakukinHihenkyakuKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_hihenkyaku_kingaku
+
+cat ${namedata} |
+awk '$1~/KeiyakukinSanshutsuHouhou*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_sanshutsu
+
+cat ${namedata} |
+awk '$1~/KeiyakukinTokuhanShubetsu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_tokuhan
+
+cat ${namedata} |
+awk '$1~/KeiyakukinNebikiKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_nebiki_kingaku
+
+cat ${namedata} |
+awk '$1~/KeiyakukinNebikiGoKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_nebikigo_kingaku
+
+cat ${namedata} |
+awk '$1~/KeiyakukinTokuhanFrom*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   > $tmp-keiyakukin_tokuhan_from
+
+cat ${namedata} |
+awk '$1~/KeiyakukinTokuhanTo*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   |
+sed 's/_/99999999/g' > $tmp-keiyakukin_tokuhan_to
+
+cat ${namedata} |
+awk '$1~/KeiyakukinJyunban*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-keiyakukin_jyunban
+
+
+cat $tmp-keiyakukin_from |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error1
+cat $tmp-keiyakukin_to |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error2
+cat $tmp-keiyakukin_tokuhan_from |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error3
+cat $tmp-keiyakukin_tokuhan_to |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error4
+cat $tmp-keiyakukin_kingaku |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error5
+cat $tmp-keiyakukin_shoukya_kukaisuu |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error6
+cat $tmp-keiyakukin_hihenkyaku_kingaku |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error7
+cat $tmp-keiyakukin_nebiki_kingaku |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error8
+cat $tmp-keiyakukin_nebikigo_kingaku |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-keiyakukin_nyuuryoku_error9
+
+keiyakgyo="$(gyo $tmp-keiyakukin_shubetsu)"
+[ $(gyo $tmp-keiyakukin_from) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_to) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_kingaku) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_shoukya_kukaisuu) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_hihenkyaku_kingaku) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_sanshutsu) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_tokuhan) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_nebiki_kingaku) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_nebikigo_kingaku) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_tokuhan_from) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_tokuhan_to) = ${keiyakgyo} -a $(gyo $tmp-keiyakukin_jyunban) = ${keiyakgyo} ] || error_exit
+
+ycat $tmp-keiyakukin_shubetsu $tmp-keiyakukin_from $tmp-keiyakukin_to $tmp-keiyakukin_kingaku $tmp-keiyakukin_shoukya_kukaisuu $tmp-keiyakukin_hihenkyaku_kingaku $tmp-keiyakukin_sanshutsu $tmp-keiyakukin_tokuhan $tmp-keiyakukin_nebiki_kingaku $tmp-keiyakukin_nebikigo_kingaku $tmp-keiyakukin_tokuhan_from $tmp-keiyakukin_tokuhan_to $tmp-keiyakukin_jyunban |
+sed 's/  */ /g'  |
+awk '$1!="_"'    |
+awk '{if($8=="_"){print $0,"_","_","_","99999999"}
+      else{print $0,$9,$10,$11,$12}
+     }'          |
+self 1/8 NF-3/NF NF-4  > $tmp-keiyakukin_data_before
+# 1:契約金種別ID  2:償却開始日  3:償却終了日 4:金額   5:償却回数
+# 6:非返却金額    7:算出方法    8:特販ID     9:値引額 10:値引き後金額
+# 11:特販期間FROM 12:特販期間TO 13:番号
+
+ if [ -s $tmp-keiyakukin_data_before -a "$(head -1 $tmp-keiyakukin_data_before | self 1)" != "_" ] ; then
+   awk '$1!="_"&&$2=="_"{print $2}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error1 # 開始日
+   awk '$1!="_"&&$4=="_"{print $4}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error2 # 金額
+   awk '$1!="_"&&$5=="_"{print $5}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error3 # 償却回数
+   awk '$1!="_"&&$2>$3{print $3}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error4  # 開始日より終了日が先
+#   awk '$1!="_"&&$2<"'${KeiyakukikanFrom}'"{print $0}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error5_1 # 契約金開始日＜契約開始日
+#   awk '$1!="_"&&$2>"'${KeiyakukikanTo}'"{print $2}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error5_2 # 契約金開始日＞契約終了日
+#   awk '$1!="_"&&$3<"'${KeiyakukikanFrom}'"{print $3}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error6_1 # 契約終了日＜契約開始日
+#   awk '$1!="_"&&$3>"'${KeiyakukikanTo}'"{print $0}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error6_2 # 契約終了日＞契約終了日
+   awk '$1!="_"&&$8!="_"&&$9=="_"' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error7 #特販あり値引き金額なし
+   awk '$1!="_"&&$8!="_"&&$10=="_"' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error8 #特販あり値引き後金額なし
+   awk '$1!="_"&&$8!="_"&&$11=="_"' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error9 #特販あり開始日なし
+   awk '$1!="_"&&$8!="_"&&$11>$12' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error10 #特販あり開始日＞終了日
+#   awk '$1!="_"&&$8!="_"&&$11<"'${KeiyakukikanFrom}'"{print $0}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error11_1 #
+#   awk '$1!="_"&&$8!="_"&&$11>"'${KeiyakukikanTo}'"{print $0}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error11_2 #
+#   awk '$1!="_"&&$8!="_"&&$12<"'${KeiyakukikanFrom}'"{print $0}' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error12_1 #
+#   awk '$1!="_"&&$8!="_"&&$12>"'${KeiyakukikanTo}'"' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error12_2 #
+   awk '$1!="_"&&$8!="_"&&$2>$11' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error13 # 契約金開始日＞特販開始日
+   awk '$1!="_"&&$8!="_"&&$3<$12' $tmp-keiyakukin_data_before > $tmp-keiyakukin_error14 # 契約金終了日＜特販終了日
+
+
+   [ -s $tmp-keiyakukin_error1 ] && error_exit "契約金の償却開始日は必須です。"
+   [ -s $tmp-keiyakukin_error2 ] && error_exit "契約金の金額は必須です。"
+   [ -s $tmp-keiyakukin_error3 ] && error_exit "契約金の償却回数は必須です。(償却しない場合は0を入力してください)"
+
+   [ -s $tmp-keiyakukin_nyuuryoku_error1 ] && error_exit "契約金の償却開始日の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error2 ] && error_exit "契約金の償却終了日の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error5_1 ] && error_exit "契約金の償却金額の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error5_2 ] && error_exit "契約金の償却金額の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error6_1 ] && error_exit "契約金の償却回数の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error6_2 ] && error_exit "契約金の償却回数の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error7 ] && error_exit "契約金の非返却金額の数値が不正です。"
+
+#   [ -s $tmp-keiyakukin_error4 ] && error_exit "契約金の償却開始日は償却終了日より前の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error5_1 ] && error_exit "契約金の償却開始日は契約期間内の日付を入力してください。。"
+#   [ -s $tmp-keiyakukin_error5_2 ] && error_exit "契約金の償却開始日は契約期間内の日付を入力してください。。"
+#   [ -s $tmp-keiyakukin_error6_1 ] && error_exit "契約金の償却終了日は契約期間内の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error6_2 ] && error_exit "契約金の償却終了日は契約期間内の日付を入力してください。(契約に終了日が入っている場合は契約金およびその特販も終了日を入力してください。)"
+
+   [ -s $tmp-keiyakukin_error7 ] && error_exit "契約金で特販を選択した場合、値引額は必須です。"
+   [ -s $tmp-keiyakukin_error8 ] && error_exit "契約金で特販を選択した場合、値引後金額は必須です。"
+   [ -s $tmp-keiyakukin_error9 ] && error_exit "契約金で特販を選択した場合、開始日を入力してください。"
+
+   [ -s $tmp-keiyakukin_nyuuryoku_error3 ] && error_exit "契約金の特販開始日の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error4 ] && error_exit "契約金の特販終了日の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error8 ] && error_exit "契約金の特販値引額の数値が不正です。"
+   [ -s $tmp-keiyakukin_nyuuryoku_error9 ] && error_exit "契約金の特販値引後金額の数値が不正です。"
+
+   [ -s $tmp-keiyakukin_error10 ] && error_exit "契約金で特販を選択した場合、開始日は終了日より前の日付を入力してください。"
+   [ -s $tmp-keiyakukin_error13 ] && error_exit "契約金で特販を選択した場合、開始日は償却期間内の日付を入力してください。"
+   [ -s $tmp-keiyakukin_error14 ] && error_exit "契約金で特販を選択した場合、終了日は償却期間内の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error11_1 ] && error_exit "契約金で特販を選択した場合、開始日は契約期間内の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error11_2 ] && error_exit "契約金で特販を選択した場合、開始日は契約期間内の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error12_1 ] && error_exit "契約金で特販を選択した場合、終了日は契約期間内の日付を入力してください。"
+#   [ -s $tmp-keiyakukin_error12_2 ] && error_exit "契約金で特販を選択した場合、終了日は契約期間内の日付を入力してください。(契約に終了日が入っている場合は契約金およびその特販も終了日を入力してください。)"
+
+ fi
+
+#-------------------
+# 利用料のチェック
+#-------------------
+
+cat ${namedata} |
+awk '$1~/RiyouryouShubetsu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_shubetsu
+
+cat ${namedata} |
+awk '$1~/RiyouryouKisanbiFrom*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   > $tmp-riyouryou_kisanbi_from
+
+cat ${namedata} |
+awk '$1~/RiyouryouKisanbiTo*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   |
+sed 's/_/99999999/g' > $tmp-riyouryou_kisanbi_to
+
+cat ${namedata} |
+awk '$1~/RiyouryouKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_kingaku
+
+cat ${namedata} |
+awk '$1~/RiyouryouTokuhanShubetsu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_tokuhan
+
+cat ${namedata} |
+awk '$1~/RiyouryouNebikiKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_nebiki_kingaku
+
+cat ${namedata} |
+awk '$1~/RiyouryouNebikiGoKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_nebikigo_kingaku
+
+cat ${namedata} |
+awk '$1~/RiyouryouTokuhanFrom*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   > $tmp-riyouryou_tokuhanbi_from
+
+cat ${namedata} |
+awk '$1~/RiyouryouTokuhanTo*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   |
+sed 's/_/99999999/g' > $tmp-riyouryou_tokuhanbi_to
+
+cat ${namedata} |
+awk '$1~/RiyouryouJyunban*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-riyouryou_jyunban
+
+cat $tmp-riyouryou_kisanbi_from |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-riyouryou_nyuuryoku_error1
+cat $tmp-riyouryou_kisanbi_to |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-riyouryou_nyuuryoku_error2
+cat $tmp-riyouryou_tokuhanbi_from |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-riyouryou_nyuuryoku_error3
+cat $tmp-riyouryou_tokuhanbi_to |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-riyouryou_nyuuryoku_error4
+cat $tmp-riyouryou_kingaku |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9]*$/' > $tmp-riyouryou_nyuuryoku_error5
+cat $tmp-riyouryou_nebiki_kingaku |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9]*$/' > $tmp-riyouryou_nyuuryoku_error6
+cat $tmp-riyouryou_nebikigo_kingaku |
+awk '$1!="_"{print $0}'         |
+awk '$1!~/^[0-9]*$/' > $tmp-riyouryou_nyuuryoku_error7
+
+riyouryougyo="$(gyo $tmp-riyouryou_shubetsu)"
+[ $(gyo $tmp-riyouryou_kisanbi_from) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_kisanbi_to) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_kingaku) = ${riyouryougyo} -a  $(gyo $tmp-riyouryou_tokuhan) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_nebiki_kingaku) = ${riyouryougyo} -a  $(gyo $tmp-riyouryou_nebikigo_kingaku) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_tokuhanbi_from) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_tokuhanbi_to) = ${riyouryougyo} -a $(gyo $tmp-riyouryou_jyunban) = ${riyouryougyo} ] || error_exit
+
+ycat $tmp-riyouryou_shubetsu $tmp-riyouryou_kisanbi_from $tmp-riyouryou_kisanbi_to $tmp-riyouryou_kingaku $tmp-riyouryou_tokuhan $tmp-riyouryou_nebiki_kingaku $tmp-riyouryou_nebikigo_kingaku $tmp-riyouryou_tokuhanbi_from $tmp-riyouryou_tokuhanbi_to $tmp-riyouryou_jyunban |
+sed 's/  */ /g'  |
+awk '$1!="_"'    |
+awk '{if($5=="_"){print $0,"_","_","_","99999999"}
+      else{print $0,$6,$7,$8,$9}
+     }'          |
+self 1/5 NF-3/NF NF-4 > $tmp-riyouryou_data_before
+# 1:利用料種別ID 2:起算開始日   3:起算終了日   4:金額       5:特販ID
+# 6:値引額       7:値引き後金額 8:特販期間FROM 9:特販期間TO 10:順番
+
+  if [ -s $tmp-riyouryou_data_before -a "$(head -1 $tmp-riyouryou_data_before | self 1)" != "_" ] ; then
+    awk '$1!="_"&&$2=="_"{print $2}' $tmp-riyouryou_data_before > $tmp-riyouryou_error1
+    awk '$1!="_"&&$4=="_"{print $4}' $tmp-riyouryou_data_before > $tmp-riyouryou_error2
+    awk '$1!="_"&&$2>$3{print $3}' $tmp-riyouryou_data_before > $tmp-riyouryou_error3
+#    awk '$1!="_"&&$2<"'${KeiyakukikanFrom}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error4_1
+#    awk '$1!="_"&&$2>"'${KeiyakukikanTo}'"{print $2}' $tmp-riyouryou_data_before > $tmp-riyouryou_error4_2
+#    awk '$1!="_"&&$3<"'${KeiyakukikanFrom}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error5_1
+#    awk '$1!="_"&&$3>"'${KeiyakukikanTo}'"{print $3}' $tmp-riyouryou_data_before > $tmp-riyouryou_error5_2
+
+    # 請求確定済みの一月前は入力させない
+    cat ${seikyuu_kakutei_dir}/SEIKYU_KAKUTEI.${Shisetsu} |
+    awk '$(NF-2)!=9{print $0}' |
+    LANG=C sort                |
+    getlast 1 1                |
+    self 2       > $tmp-kakutei_nengetsu
+
+    kakutei_nengetsu=$(cat $tmp-kakutei_nengetsu)
+    kakutei_year=$(echo ${kakutei_nengetsu} |  awk '{print substr($1,1,4)}')
+    kakutei_month=$(echo ${kakutei_nengetsu} | awk '{print substr($1,5,2)}')
+    kakutei_nengetsuhi=$(mdate ${kakutei_nengetsu}m | self NF)
+
+   # 契約が変更だった場合、もともと入っていた利用料があるかどうかちぇっく
+   awk '$1=="'${RIYOUSHAID}'"&&$2=="'${Shisetsu}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"' ${pompa_dir}/RIYOUSHA_RIYOURYOU |
+#> $tmp-now_riyouryou_data
+# 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+# 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+  self 5 4 6/13 |
+# 1:番号   2:利用料種別 3:起算開始日   4:起算終了日   5:金額
+# 6:特販ID 7:値引額     8:値引き後金額 9:特販期間FROM 10:特販期間TO
+  LANG=C sort   |
+  awk '{print $0,"0"}' > $tmp-now_riyouryou_data
+
+   if [ -s $tmp-riyouryou_data_before -a -s $tmp-now_riyouryou_data ] ; then
+     cat $tmp-riyouryou_data_before |
+# 1:利用料種別ID 2:起算開始日   3:起算終了日   4:金額       5:特販ID
+# 6:値引額       7:値引き後金額 8:特販期間FROM 9:特販期間TO 10:順番
+     self NF 1/NF-1        |
+     awk '{print $0,"1"}'  |
+     # 利用料キー項目の番号をつける
+#     rank                          |
+     cat $tmp-now_riyouryou_data - |
+     LANG=C sort                   > $tmp-riyouryou_hikakuyou_data
+# 1:番号        2:利用料種別ID 3:起算開始日   4:起算終了日   5:金額
+# 6:特販ID      7:値引額       8:値引き後金額 9:特販期間FROM 10:特販期間TO
+# 11:新規データフラグ(1が新規、0は旧データ)
+
+     # 1:起算開始日が変更されているデータ
+     cat $tmp-riyouryou_hikakuyou_data |
+     rank ref=1/3  |
+     getlast 2 4   |
+#     awk '$1=="1"' |
+     awk '$1=="1"&&$NF=="1"' |
+     self 2 4/11   > $tmp-kisankaishibi_new_data
+
+     # 2:起算終了日以下変更されているデータ(起算開始日は変更なし)
+     cat $tmp-riyouryou_hikakuyou_data |
+     rank ref=1/4 |
+     getlast 2 5  |
+     awk '$1=="1"&&$NF=="1"' |
+     self 2 4/11   > $tmp-kisanshuuryoubi_new_data
+# 1:利用料種別ID 2:起算開始日   3:起算終了日   4:金額       5:特販ID
+# 6:値引額       7:値引き後金額 8:特販期間FROM 9:特販期間TO
+  elif [ -s $tmp-riyouryou_data_before ] ; then
+    cat $tmp-riyouryou_data_before > $tmp-kisankaishibi_new_data
+    cat $tmp-riyouryou_data_before >$tmp-kisanshuuryoubi_new_data
+  else
+     :
+  fi
+
+    mikakutei_nengetsu=$(mdate ${kakutei_nengetsu}m/+1)
+    mikaktei_year=$(echo ${mikakutei_nengetsu} | awk '{print substr($1,1,4)}')
+    mikakutei_month=$(echo ${mikakutei_nengetsu} | awk '{print substr($1,5,2)}')
+
+
+  # 居室が変更されて、確定月以前の月額賃料（利用料）があった場合エラー
+#  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KEIYAKUID}'"{print $4,$7}' ${pompa_dir}/RIYOUSHA_KEIYAKU > $tmp-tateya_kyoshitsu
+# 1:建屋  2:居室
+
+#  if [ -s $tmp-tateya_kyoshitsu  -a $tmp-now_riyouryou_data ] ; then
+#    # 月額賃料があって請求確定済みの利用料
+#    awk '$2=="001"&&$3<="'${kakutei_nengetsuhi}'"{print $0}' $tmp-now_riyouryou_data  > $tmp-kakuteizumi_riyouryou
+#    NOWTATEYAKYOSHITSU="$(awk '{print $1$2}' $tmp-tateya_kyoshitsu)"
+#    NEWTATEYAKYOSHITSU="$(echo "${Tateya}${Kyoshitsu}")"
+#    [ -s $tmp-kakuteizumi_riyouryou -a "${NOWTATEYAKYOSHITSU}" != "${NEWTATEYAKYOSHITSU}" ] && error_exit "請求確定を迎えた月額賃料が登録されているため、居室の変更はできません。"
+#  else
+#    :
+#  fi
+
+
+ #------
+ # 請求確定日チェック
+
+    awk '$1!="_"&&$2<="'${kakutei_nengetsuhi}'"{print $2}' $tmp-kisankaishibi_new_data   > $tmp-riyouryou_error6
+    awk '$1!="_"&&$3<"'${kakutei_nengetsuhi}'"{print $3}' $tmp-kisanshuuryoubi_new_data  > $tmp-riyouryou_error7
+
+ #---------
+
+    awk '$1!="_"&&$5!="_"&&$6=="_"{print $6}' $tmp-riyouryou_data_before > $tmp-riyouryou_error8
+    awk '$1!="_"&&$5!="_"&&$7=="_"{print $7}' $tmp-riyouryou_data_before > $tmp-riyouryou_error9
+    awk '$1!="_"&&$5!="_"&&$8=="_"{print $8}' $tmp-riyouryou_data_before > $tmp-riyouryou_error10
+    awk '$1!="_"&&$5!="_"&&$8>$9' $tmp-riyouryou_data_before > $tmp-riyouryou_error11
+#    awk '$1!="_"&&$5!="_"&&$8<"'${KeiyakukikanFrom}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error12_1
+#    awk '$1!="_"&&$5!="_"&&$8>"'${KeiyakukikanTo}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error12_2
+#    awk '$1!="_"&&$5!="_"&&$9<"'${KeiyakukikanFrom}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error13_1
+#    awk '$1!="_"&&$5!="_"&&$9>"'${KeiyakukikanTo}'"{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error13_2    
+    awk '$1!="_"&&$5!="_"&&$8<$2{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error14_1
+    awk '$1!="_"&&$5!="_"&&$9<$2{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error14_2
+    awk '$1!="_"&&$5!="_"&&$8>$3{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error14_3    
+    awk '$1!="_"&&$5!="_"&&$9>$3{print $0}' $tmp-riyouryou_data_before > $tmp-riyouryou_error14_4    
+
+#cp $tmp-* /home/hands/work/okuda 
+    [ -s $tmp-riyouryou_error1 ] && error_exit "利用料の起算開始日は必須です。"
+    [ -s $tmp-riyouryou_error2 ] && error_exit "利用料の金額は必須です。"
+
+   [ -s $tmp-riyouryou_nyuuryoku_error1 ] && error_exit "利用料の起算開始日の数値が不正です。"
+   [ -s $tmp-riyouryou_nyuuryoku_error2 ] && error_exit "利用料の起算終了日の数値が不正です。"
+#   [ -s $tmp-riyouryou_nyuuryoku_error5 ] && error_exit "利用料の金額の数値が不正です。"
+
+    [ -s $tmp-riyouryou_error3 ] && error_exit "利用料の起算開始日は起算終了日より前の日付を入力してください。"
+#    [ -s $tmp-riyouryou_error4_1 ] && error_exit "利用料の起算開始日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-riyouryou_error4_2 ] && error_exit "利用料の起算開始日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-riyouryou_error5_1 ] && error_exit "利用料の起算終了日は契約期間内の日付を入力してください。"  
+#    [ -s $tmp-riyouryou_error5_2 ] && error_exit "利用料の起算終了日は契約期間内の日付を入力してください。(契約に終了日が入っている場合は利用料およびその特販も終了日を入力してください。)"  
+    [ -s $tmp-riyouryou_error6 ] && error_exit "利用料の起算開始日は請求未確定の"${mikaktei_year}"年"${mikakutei_month}"月以降の日付を入力してください。(ただし、既に請求確定を一度迎えた利用料は起算開始日の変更はできません。この利用料を終了させて新しい追加して入力してください。)"
+    [ -s $tmp-riyouryou_error7 ] && error_exit "利用料の起算終了日は"${kaktei_year}"年"${kakutei_month}"月末日以降の日付を入力してください"
+
+    [ -s $tmp-riyouryou_error8 ] && error_exit  "利用料で特販を選択した場合、値引額は必須です。"
+    [ -s $tmp-riyouryou_error9 ] && error_exit  "利用料で特販を選択した場合、値引後金額は必須です。"
+    [ -s $tmp-riyouryou_error10 ] && error_exit "利用料で特販を選択した場合、開始日を入力してください。"
+
+   [ -s $tmp-riyouryou_nyuuryoku_error3 ] && error_exit "利用料の特販開始日の数値が不正です。"
+   [ -s $tmp-riyouryou_nyuuryoku_error4 ] && error_exit "利用料の特販終了日の数値が不正です。"
+   [ -s $tmp-riyouryou_nyuuryoku_error6 ] && error_exit "利用料の特販値引額の数値が不正です。"
+   [ -s $tmp-riyouryou_nyuuryoku_error7 ] && error_exit "利用料の特販値引後金額の数値が不正です。"
+
+    [ -s $tmp-riyouryou_error11 ] && error_exit "利用料で特販を選択した場合、開始日は終了日より前の日付を入力してください。"
+ #   [ -s $tmp-riyouryou_error12_1 ] && error_exit "利用料で特販を選択した場合、開始日は契約期間内の日付を入力してください。"
+ #   [ -s $tmp-riyouryou_error12_2 ] && error_exit "利用料で特販を選択した場合、開始日は契約期間内の日付を入力してください。(契約に終了日が入っている場合は利用料およびその特販も終了日を入力してください。)"
+ #   [ -s $tmp-riyouryou_error13_1 ] && error_exit "利用料で特販を選択した場合、終了日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-riyouryou_error13_2 ] && error_exit "利用料で特販を選択した場合、終了日は契約期間内の日付を入力してください。(契約に終了日が入っている場合は利用料およびその特販も終了日を入力してください。)"
+    [ -s $tmp-riyouryou_error14_1 ] && error_exit "利用料で特販を選択した場合、開始日は利用料期間内の日付を入力してください。"
+    [ -s $tmp-riyouryou_error14_2 ] && error_exit "利用料で特販を選択した場合、終了日は利用料期間内の日付を入力してください。"
+    [ -s $tmp-riyouryou_error14_3 ] && error_exit "利用料で特販を選択した場合、開始日は利用料期間内の日付を入力してください。"
+    [ -s $tmp-riyouryou_error14_4 ] && error_exit "利用料で特販を選択した場合、終了日は利用料期間内の日付を入力してください。"
+  fi
+
+#---------------------
+# 特販チェック
+#---------------------
+  
+cat ${namedata} |
+awk '$1~/^TokuhanShubetsu*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-tokuhan_shubetsu
+
+cat ${namedata} |
+awk '$1~/TokuhanNebikiKingaku*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-tokuhan_nebiki_kingaku
+
+#cat ${namedata} |
+#awk '$1~/TokuhanNebikiGoKingaku*/{print $0}' |
+#LANG=C sort     |
+#self 2          > $tmp-tokuhango_kingaku
+
+cat ${namedata} |
+awk '$1~/TokuhanbiFrom*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   > $tmp-tokuhanbi_from
+
+cat ${namedata} |
+awk '$1~/TokuhanbiTo*/{print $0}' |
+LANG=C sort     |
+self 2          |
+sed 's/\///g'   |
+sed 's/_/99999999/g' > $tmp-tokuhanbi_to
+
+cat ${namedata} |
+awk '$1~/TokuhanNaiyou*/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-tokuhan_naiyou
+
+
+cat $tmp-tokuhanbi_from |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-tokuhan_nyuuryoku_error1
+cat $tmp-tokuhanbi_to |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-tokuhan_nyuuryoku_error2
+cat $tmp-tokuhan_nebiki_kingaku |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/' > $tmp-tokuhan_nyuuryoku_error3
+
+tokuhangyo="$(gyo $tmp-tokuhan_shubetsu)"
+
+# 行チェック
+[ $(gyo $tmp-tokuhan_nebiki_kingaku) = ${tokuhangyo} -a $(gyo $tmp-tokuhanbi_from) = ${tokuhangyo} -a $(gyo $tmp-tokuhanbi_to) = ${tokuhangyo} -a  $(gyo $tmp-tokuhan_naiyou) = ${tokuhangyo} ] || error_exit
+
+ycat $tmp-tokuhan_shubetsu $tmp-tokuhan_nebiki_kingaku $tmp-tokuhanbi_from $tmp-tokuhanbi_to $tmp-tokuhan_naiyou |
+sed 's/  */ /g'  |
+awk '$1!="_"'    > $tmp-tokuhan_data_before
+# 1:特販種別ID 2:値引金額 3:開始日 4:終了日 5:内容
+
+  if [ -s $tmp-tokuhan_data_before -a "$(head -1 $tmp-tokuhan_data_before | self 1)" != "_" ] ; then
+    awk '$1!="_"&&$3!="_"&&$4!="_"&&$3>$4{print $3}' $tmp-tokuhan_data_before > $tmp-tokuhan_error1
+#    awk '$1!="_"&&$3!="_"&&$3<"'${KeiyakukikanFrom}'"{print $0}' $tmp-tokuhan_data_before > $tmp-tokuhan_error2_1
+#    awk '$1!="_"&&$3!="_"&&$3>"'${KeiyakukikanTo}'"{print $3}' $tmp-tokuhan_data_before > $tmp-tokuhan_error2_2
+    awk '$1!="_"&&$4!="99999999"&&$4<"'${KeiyakukikanFrom}'"{print $0}' $tmp-tokuhan_data_before > $tmp-tokuhan_error3_1
+    awk '$1!="_"&&$4!="99999999"&&$4>"'${KeiyakukikanTo}'"{print $0}' $tmp-tokuhan_data_before > $tmp-tokuhan_error3_2
+
+   [ -s $tmp-tokuhan_nyuuryoku_error1 ] && error_exit "特販情報の開始日の数値が不正です。"
+   [ -s $tmp-tokuhan_nyuuryoku_error2 ] && error_exit "特販情報終了日の数値が不正です。"
+   [ -s $tmp-tokuhan_nyuuryoku_error3 ] && error_exit "特販情報の値引額の数値が不正です。"
+    [ -s $tmp-tokuhan_error1 ] && error_exit "特販情報の開始日は終了日より前の日付を入力してください。"
+#    [ -s $tmp-tokuhan_error2_1 ] && error_exit "特販情報の開始日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-tokuhan_error2_2 ] && error_exit "特販情報の開始日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-tokuhan_error3_1 ] && error_exit "特販情報の終了日は契約期間内の日付を入力してください。"
+#    [ -s $tmp-tokuhan_error3_2 ] && error_exit "特販情報の終了日は契約期間内の日付を入力してください。"
+
+  fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+# 利用者番号
+  RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+  KEIYAKUID="$(nameread "KEIYAKUID" ${namedata})"
+
+if [ -z "${KEIYAKUID}" -o "${KEIYAKUID}" = "_" ] ; then
+  ## 契約IDの発番 ##i
+   # 今回取得するID数
+   last_no="1"
+   # 現状の最終番号
+    now_last_no=$(cat ${kanri_dir}/RIYOUSHA_ID)
+    # 今回の発番後に、数字が限度を超えないかチェック
+    new_last_no=$(expr ${now_last_no} + ${last_no})
+
+  mkdir -p ${kanri_dir}/RIYOUSHA_KEIYAKU_ID
+  [ -e ${kanri_dir}/RIYOUSHA_KEIYAKU_ID/${RIYOUSHAID} ] || echo "001" > ${kanri_dir}/RIYOUSHA_KEIYAKU_ID/${RIYOUSHAID}
+  get_no ${last_no} ${kanri_dir}/RIYOUSHA_KEIYAKU_ID/${RIYOUSHAID} > $tmp-keiyaku_id
+  keiyaku_id="$(cat $tmp-keiyaku_id)"
+else
+  keiyaku_id="$(echo "${KEIYAKUID}")"
+fi
+
+#--------------------------------------------------------------
+# 作成テーブル一覧
+#
+# 利用者契約
+# 利用者契約金
+# 利用者利用料
+# 利用者特販
+# 施設利用者テーブル
+
+#--------------------------------------------------------------
+
+#######################
+# 1:利用者契約テーブル
+#######################
+
+KeiyakuNenrei=$(nameread "KeiyakuNenrei" $namedata)
+KeiyakuShurui=$(nameread "KeiyakuShurui" $namedata)
+TaikyoRiyuuShousai=$(nameread "TaikyoRiyuuShousai" $namedata)
+KeiyakuBikou=$(nameread "KeiyakuBikou" $namedata)
+[ "${KeiyakuBikou}" = "_" -a "${TaikyoRiyuu}" = "99" ] && KeiyakuBikou="契約削除のため。"
+
+
+if [ -s $tmp-data ] ;then
+  cat $tmp-data |
+  self 1/2      |
+  # 1:利用者(入居者)ID 2:契約ID          3:施設ID     4:建屋ID        5:フロアID
+  # 6:ユニットID       7:居室ID          8:入居時年齢
+  awk '{print $0,"'${Shisetsu}'","'${Tateya}'","'${Floor}'","'${Unit}'","'${Kyoshitsu}'","'${KeiyakuNenrei}'","'${KeiyakuShurui}'","'${Keiyakubi}'","'${KeiyakuHikiwatashibi}'","'${KeiyakukikanFrom}'","'${KeiyakukikanTo}'","'${TaikyoRiyuu}'","'${TaikyoRiyuuShousai}'","'${KeiyakuBikou}'","_","_","_","_","_","1","'${cur_time}'","'${USERID}'"}'  > $tmp-riyousha_keiyaku_input
+else
+  # 追加データの作成
+  echo "${RIYOUSHAID}" "${keiyaku_id}" "${Shisetsu}" "${Tateya}" "${Floor}" "${Unit}" "${Kyoshitsu}" "${KeiyakuNenrei}" "${KeiyakuShurui}" "${Keiyakubi}" "${KeiyakuHikiwatashibi}" "${KeiyakukikanFrom}" "${KeiyakukikanTo}" "${TaikyoRiyuu}" "${TaikyoRiyuuShousai}" "${KeiyakuBikou}" "_" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_keiyaku_input
+  # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+  # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+  # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+  # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+  # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 2:利用者契約金テーブル
+#########################
+if [ -s $tmp-keiyakukin_data_before ] ; then
+# 1:契約金種別ID  2:償却開始日  3:償却終了日 4:金額   5:償却回数
+# 6:非返却金額    7:算出方法    8:特販ID     9:値引額 10:値引き後金額
+# 11:特販期間FROM 12:特販期間TO 13:番号
+
+  # 現在この契約についてる契約金の最大番号
+#  LastNumber=$(awk '$NF!="_"{print $NF}' $tmp-keiyakukin_data_before | LANG=C sort | tail -1)
+  LastNumber=$(cat ${pompa_dir}/RIYOUSHA_KEIYAKUKIN | awk '$1=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$2=="'${Shisetsu}'"{print $5}' | LANG=C sort | tail -1)
+  # 今回新規の契約金の数
+  NoNumber=$(awk '$NF=="_"' $tmp-keiyakukin_data_before | gyo)
+
+  if [ ! -z "${NoNumber}" -a "${NoNumber}" != "0" ] ; then
+    : > $tmp-keiyakukin_newdata
+    for i in $(seq 1 ${NoNumber}) ; do
+      awk '$NF=="_"' $tmp-keiyakukin_data_before |
+      rank                                       |
+      awk '$1=="'${i}'"{print $0,"'${LastNumber}'"+"'${i}'"}'  |
+      self 2/NF-2 NF  >> $tmp-keiyakukin_newdata            
+    done
+   awk '$NF!="_"' $tmp-keiyakukin_data_before |
+   cat - $tmp-keiyakukin_newdata
+
+  else
+   cat $tmp-keiyakukin_data_before 
+  fi |
+  self 1 NF 2/NF-1 |
+#cat $tmp-keiyakukin_data_before |
+# 1:契約金種別ID  2:番号          3:償却開始日  4:償却終了日 5:金額
+# 6:償却回数      7:非返却金額    8:算出方法    9:特販ID     10:値引額
+# 11:値引き後金額 12:特販期間FROM 13:特販期間TO
+#rank                            |
+#self 2 1 3/NF                   |
+  awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${keiyaku_id}'",$0,"_","_","_","_","_","1","'${cur_time}'","'${USERID}'"}' |
+  LANG=C sort -k1,5               |
+  
+  if [ "$(self 1 $tmp-keiyakukin_shubetsu | head -1)" != "_" ]; then
+    awk '$5!="_"{print $0}' 
+  # 1:利用者(入居者)ID 2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+  # 6:償却開始日       7:償却終了日 8:金額        9:償却回数     10:非返却率
+  # 11:非返却金額      12:算出方法  13:削除フラグ 14:更新日時　  15:ID
+  else
+    uniq
+  fi > $tmp-riyousha_keiyakukin_newdata
+else
+ :
+fi
+
+# 現在のデータから削除するもの
+cat ${pompa_dir}/RIYOUSHA_KEIYAKUKIN |
+# 同じ契約種別の契約金情報を取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$2=="'${Shisetsu}'"{print $0}' |
+# 契約種別が今回の更新にないものだけ抽出 
+LANG=C sort -k1,5                   |
+if [ -s $tmp-riyousha_keiyakukin_newdata ] ; then
+  join1 +ng key=1/5 $tmp-riyousha_keiyakukin_newdata - > $tmp-riyouryou_yuukou  2> $tmp-keiyakukin_sakujyo
+else
+  cat - > $tmp-keiyakukin_sakujyo
+fi
+
+# 削除対象のフラグを9:削除にする
+cat $tmp-keiyakukin_sakujyo |
+awk '{print "9","'${cur_time}'","'${USERID}'",$0}'        |
+self 4/NF-3 1 2 3       |
+if [ -s $tmp-riyousha_keiyakukin_newdata ] ; then
+  cat - $tmp-riyousha_keiyakukin_newdata 
+else
+  cat -
+fi |
+LANG=C sort                 >  $tmp-riyousha_keiyakukin_input
+
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 3:利用者利用料テーブル
+#########################
+# 1:利用料種別ID 2:起算開始日   3:起算終了日   4:金額       5:特販ID
+# 6:値引額       7:値引き後金額 8:特販期間FROM 9:特販期間TO 10:順番
+
+  # 現在この契約についてる利用料の最大番号
+#  LastNumber=$(awk '$NF!="_"{print $NF}' $tmp-keiyakukin_data_before | LANG=C sort | tail -1)
+  RLastNumber=$(cat ${pompa_dir}/RIYOUSHA_RIYOURYOU | awk '$1=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$2=="'${Shisetsu}'"{print $5}' | LANG=C sort | tail -1)
+  # 今回新規の契約金の数
+  RNoNumber=$(awk '$NF=="_"' $tmp-riyouryou_data_before | gyo)
+
+  if [ ! -z "${RNoNumber}" -a "${RNoNumber}" != "0" ] ; then
+    : > $tmp-riyouryou_newdata
+    for i in $(seq 1 ${RNoNumber}) ; do
+      awk '$NF=="_"' $tmp-riyouryou_data_before |
+      rank                                       |
+      awk '$1=="'${i}'"{print $0,"'${RLastNumber}'"+"'${i}'"}'  |
+      self 2/NF-2 NF  >> $tmp-riyouryou_newdata
+    done
+   awk '$NF!="_"' $tmp-riyouryou_data_before |
+   cat - $tmp-riyouryou_newdata
+
+  else
+   cat $tmp-riyouryou_data_before
+  fi |
+  self 1 NF 2/NF-1 |
+# 1:利用料種別ID 2:順番   3:起算開始日   4:起算終了日   5:金額
+# 6:特販ID       7:値引額 8:値引き後金額 9:特販期間FROM 10:特販期間TO
+
+#cat $tmp-riyouryou_data_before |
+# 1:利用料種別ID 2:起算開始日   3:起算終了日   4:金額       5:特販ID
+# 6:値引額       7:値引き後金額 8:特販期間FROM 9:特販期間TO 10:順番
+#rank                           |
+#self 2 1 3/NF                  |
+awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${keiyaku_id}'",$0,"_","_","_","_","_","1","'${cur_time}'","'${USERID}'"}' |
+LANG=C sort -k1,5              |
+if [ "$(self 1 $tmp-riyouryou_shubetsu | head -1)" != "_" ]; then
+  awk '$5!="_"{print $0}'
+else
+  uniq
+fi >  $tmp-riyousha_riyouryou_newdata
+# 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+# 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+
+# 現在のデータから削除するもの
+cat ${pompa_dir}/RIYOUSHA_RIYOURYOU |
+# 同じ契約種別の利用料情報を取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$2=="'${Shisetsu}'"{print $0}' |
+# 契約種別が今回の更新にないものだけ抽出
+LANG=C sort -k1,5                   |
+#if [ -s $tmp-riyousha_riyouryou_newdata ] ;then
+  join1 +ng key=1/5 $tmp-riyousha_riyouryou_newdata - >$tmp-riyouryou_yuukou  2> $tmp-riyouryou_sakujyo
+#else
+#  cat - > $tmp-riyouryou_sakujyo
+#fi
+
+cat $tmp-riyouryou_sakujyo  |
+awk '{print "9","'${cur_time}'","'${USERID}'",$0}'        |
+self 4/NF-3 1 2 3           > $tmp-riyouryou_sakujyo_result
+
+if [ -s $tmp-riyouryou_sakujyo_result ] ; then
+  cat $tmp-riyouryou_sakujyo_result $tmp-riyousha_riyouryou_newdata 
+else
+  cat $tmp-riyousha_riyouryou_newdata
+fi |
+LANG=C sort                 >  $tmp-riyousha_riyouryou_input
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#cp $tmp-* /home/hands/work/okuda 
+
+#########################
+# 4:利用者特販テーブル
+#########################
+cat $tmp-tokuhan_data_before |
+rank                         |
+self 2 1 3/NF                |
+awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${keiyaku_id}'",$0,"_","_","_","_","_","1","'${cur_time}'","'${USERID}'"}' |
+LANG=C sort -k1,5            |
+# 1:利用者(入居者)ID 2:施設ID  3:契約ID 4:特販種別ID 5:番号
+# 6:値引金額         7:開始日  8:終了日 9:内容       10:予備1
+# 11:予備2           12:予備3  13:予備4 14:予備5     15:削除フラグ
+# 16:更新日          17:更新者
+
+if [ "$(self 1 $tmp-tokuhan_shubetsu | head -1)" != "_" ]; then
+  # 種別がないものは削除
+  awk '$5!="_"{print $0}'
+
+else
+ uniq
+fi  > $tmp-riyousha_tokuhan_newdata
+
+# 現在のデータから削除するもの
+cat ${pompa_dir}/RIYOUSHA_TOKUHAN |
+# 同じ契約種別の契約金情報を取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$2=="'${Shisetsu}'"{print $0}' |
+# 契約種別が今回の更新にないものだけ抽出
+LANG=C sort -k1,5                   |
+#if [ -s $tmp-riyousha_tokuhan_newdata ] ; then
+  join1 +ng key=1/5 $tmp-riyousha_tokuhan_newdata -  >$tmp-tokuhan-yuukou  2> $tmp-tokuhan_sakujyo
+#else
+#  cat -  > $tmp-tokuhan_sakujyo
+#fi
+
+cat $tmp-tokuhan_sakujyo  |
+awk '{print "9","'${cur_time}'","'${USERID}'",$0}'        |
+self 4/NF-3 1 2 3         > $tmp-tokuhan_sakujyo_result
+if [ -s $tmp-tokuhan_sakujyo_result ] ; then
+  cat $tmp-tokuhan_sakujyo_result $tmp-riyousha_tokuhan_newdata  
+else
+  cat $tmp-riyousha_tokuhan_newdata
+fi |
+LANG=C sort                 >  $tmp-riyousha_tokuhan_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 5:施設利用者テーブル
+#########################
+#[ -z "${KEIYAKUID}" ] && KEIYAKUID="_"
+# 施設データ
+# 契約IDがない(新規の施設契約情報であれば一から作る)
+if [ -s $tmp-shisetsu ] ; then
+ : > $tmp-shisetsu_riyousha_input
+
+# 入居データだったら
+if [ "${KeiyakuShurui}" = "001" -o "${KeiyakuShurui}" = "002" -o "${KeiyakuShurui}" = "003" -o "${KeiyakuShurui}" = "004" -o "${KeiyakuShurui}" = "005" -o "${KeiyakuShurui}" = "006" -o "${KeiyakuShurui}" = "007" ] ; then
+
+   # この入居者の施設利用者ステータスが既にあるか
+   awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS > $tmp-newstatus
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+# 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新時間
+# 11:更新者
+
+   # 施設利用者ステータスがあれば
+   if [ -s $tmp-newstatus ] ; then
+     # この契約以外での入居契約
+     awk '$1=="'${RIYOUSHAID}'"&&$2!="'${keiyaku_id}'"&&$3=="'${Shisetsu}'"&&$4=="'${Tateya}'"&&$7=="'${Kyoshitsu}'"&&$(NF-2)!="9"{print $0}'  ${pompa_dir}/RIYOUSHA_KEIYAKU |
+     awk '$9<="004"'        > $tmp-hoka_nyuukyo_keiyaku
+
+     # 他入居契約があってこの契約が入居契約だったら比較して古い入居日と先の退去日を優先
+#     if [ -s $tmp-hoka_nyuukyo_keiyaku -a "${KeiyakuShurui}" -le "007" ] ; then
+     if [ -s $tmp-hoka_nyuukyo_keiyaku -a "${KeiyakuShurui}" -le "004" ] ; then
+       Nyuukyobi="$(awk '{if($12<="'${KeiyakukikanFrom}'"){print $12}else{print "'${KeiyakukikanFrom}'"}}' $tmp-hoka_nyuukyo_keiyaku | LANG=C sort | head -1)"
+       Taikyobi="$(awk '{if($13>="'${KeiyakukikanTo}'"){print $13}else{print "'${KeiyakukikanTo}'"}}' $tmp-hoka_nyuukyo_keiyaku | LANG=C sort | tail -1)"
+     # ほか入居日がない場合
+     elif [ -s $tmp-hoka_nyuukyo_keiyaku ] ; then
+      Nyuukyobi="$(cat $tmp-hoka_nyuukyo_keiyaku | self 12 | LANG=C sort | head -1)"
+      Taikyobi="$(cat $tmp-hoka_nyuukyo_keiyaku  | self 13 | LANG=C sort | tail -1)"
+     # 	他入居日がある場合
+     else
+      Nyuukyobi=$(echo "${KeiyakukikanFrom}")
+      Taikyobi=$(echo "${KeiyakukikanTo}")
+     fi
+
+   # 施設利用者利用者ステータスがなければ新規で作成
+   else
+     Nyuukyobi=$(echo "${KeiyakukikanFrom}")
+     Taikyobi=$(echo "${KeiyakukikanTo}")
+   fi
+
+   # 施設利用者ステータス更新 
+   echo "${Shisetsu}" "${Tateya}" "${Floor}" "${Unit}" "${Kyoshitsu}" "${RIYOUSHAID}" "${Nyuukyobi}" "${Taikyobi}" "1" "${cur_time}" "${USERID}" >> $tmp-shisetsu_riyousha_input
+    # 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+    # 6:入居者ID 7:入居日 8:退去日
+#else
+# : > $tmp-shisetsu_riyousha_input
+#fi
+
+   # 契約IDがあったら(契約の変更)
+   if [ ! -z "${KEIYAKUID}" -a "${KEIYAKUID}" != "_" ] ; then
+     # 変更前のこの契約
+     awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_KEIYAKU > $tmp-riyousha_keiyaku_now
+     # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+     # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+     # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+     # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+     # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+
+     Now_Kyoshitsu="$(awk '{print $7}' $tmp-riyousha_keiyaku_now)"
+   else
+     : 
+   fi
+
+   # 現在の居室と更新データの居室が同じでなかったら
+   if [ ! -z "${Now_Kyoshitsu}" -a "${Now_Kyoshitsu}" != "${Kyoshitsu}" ] ; then
+     # この契約以外での入居契約
+     awk '$1=="'${RIYOUSHAID}'"&&$2!="'${keiyaku_id}'"&&$3=="'${Shisetsu}'"&&$4=="'${Tateya}'"&&$7=="'${Now_Kyoshitsu}'"&&$(NF-2)!="9"{print $0}'  ${pompa_dir}/RIYOUSHA_KEIYAKU |
+#     awk '$9<="007"'  > $tmp-now_hoka_nyuukyo_keiyaku
+     awk '$9<="004"'  > $tmp-now_hoka_nyuukyo_keiyaku
+
+    # この契約以外での入居契約があったら
+    if [ -s $tmp-now_hoka_nyuukyo_keiyaku ] ; then
+      NowNyuukyobi="$(cat $tmp-now_hoka_nyuukyo_keiyaku | self 12 | LANG=C sort | head -1)"
+      NowTaikyobi="$(cat $tmp-now_hoka_nyuukyo_keiyaku  | self 13 | LANG=C sort | tail -1)"
+
+      # 施設利用者ステータス更新
+      awk '$1=="'${Shisetsu}'"&&$5=="'${Now_Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS |
+      self 1/6 |
+      awk '{print $0,"'${NowNyuukyobi}'","'${NowTaikyobi}'","1","'${cur_time}'","'${USERID}'"}' >> $tmp-shisetsu_riyousha_input
+
+    # この契約以外での入居契約がなかったら
+    else
+      # 施設利用者ステータスに削除フラグを付けて更新
+      awk '$1=="'${Shisetsu}'"&&$5=="'${Now_Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"{print $0}'  ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS |
+      delf NF-2/NF |
+      awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'  >> $tmp-shisetsu_riyousha_input
+    fi
+  else
+   :
+  fi
+else
+ :
+fi
+
+else
+:
+fi
+
+  # この利用者の部屋番号"0"のデータがあったら削除フラグ
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="0"&&$6=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS |
+  delf NF-2/NF |
+  awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'  >> $tmp-shisetsu_riyousha_input
+
+##  : > $tmp-shisetsu_riyousha_input
+#
+#   # 居室が変わっていなければ
+#   if [ "${Now_Kyoshitsu}" -eq "${New_Kyoshitsu}" ] ;then
+#
+#     # この契約が入居契約でほかに入居契約があれば
+#     if [ -s $tmp-shisetsu_riyousha_status_now -a "${KeiyakuShurui}" -le "007" ] ;then
+#
+#       NyuukyoFrom="$(awk '{if($12<="'${KeiyakukikanFrom}'"){print $12}else{print "'${KeiyakukikanFrom}'"}}' $tmp-shisetsu_riyousha_status_now | LANG=C sort | head -1)"
+#       NyuukyoTo="$(awk '{if($13>="'${KeiyakukikanTo}'"){print $13}else{print "'${KeiyakukikanTo}'"}}' $tmp-shisetsu_riyousha_status_now | LANG=C sort | tail -1)"
+#
+#       cat $tmp-riyousha_keiyaku_input |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFrom}'","'${NyuukyoTo}'","1","'${cur_time}'","'${USERID}'"}' 
+#   
+#     # この契約が入居入居契約でなく、ほかに入居契約があれば更新不要
+#     elif [ -s $tmp-shisetsu_riyousha_status_now -a "${KeiyakuShurui}" -gt "007" ] ; then
+#       : 
+#
+#     # この契約が入居契約でほかに入居契約がなければこの入居期間が利用者施設ステータスに反映される
+#     elif [ "${KeiyakuShurui}" -le "007" ] ; then
+#       NyuukyoFrom=$(echo "${KeiyakukikanFrom}")
+#       NyuukyoTo=$(echo "${KeiyakukikanTo}")
+#       
+#       cat $tmp-riyousha_keiyaku_input |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFrom}'","'${NyuukyoTo}'","1","'${cur_time}'","'${USERID}'"}'
+#
+#     # 入居契約がなければ同じ居室の契約の中で一番古いFromと一番遅いToに
+#     else
+#       awk '$1=="'${RIYOUSHAID}'"&&$2!="'${keiyaku_id}'"&&$3=="'${Tateya}'"&&$7=="'${Kyoshitsu}'"&&$9>="008"&&$(NF-2)!="9"{print $12,$13}'  ${pompa_dir}/RIYOUSHA_KEIYAKU > $tmp-hoka_keiyaku_data
+#       NyuukyoFrom="$(awk '{if($12<="'${KeiyakukikanFrom}'"){print $12}else{print "'${KeiyakukikanFrom}'"}}' $tmp-hoka_keiyaku_data | LANG=C sort | head -1)"
+#       NyuukyoTo="$(awk '{if($13>="'${KeiyakukikanTo}'"){print $13}else{print "'${KeiyakukikanTo}'"}}' $tmp-hoka_keiyaku_data | LANG=C sort | tail -1)"
+#
+#       cat $tmp-riyousha_keiyaku_input |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFrom}'","'${NyuukyoTo}'","1","'${cur_time}'","'${USERID}'"}'
+#     fi >> $tmp-shisetsu_riyousha_input
+#
+#
+#   # 居室がかわっていたら
+#   elif [ "${Now_Kyoshitsu}" != "${New_Kyoshitsu}" ] ;then
+#
+#     # 過去契約データの居室の更新、ほかに入居のデータがあったら
+#     if [ -s $tmp-shisetsu_riyousha_status_now ] ; then
+#       NyuukyoFromOld="$(cat $tmp-shisetsu_riyousha_status_now | self 12 | LANG=C sort | head -1)"
+#       NyuukyoToOld="$(cat $tmp-shisetsu_riyousha_status_now | self 13 | LANG=C sort | tail -1)"
+#
+#       cat $tmp-shisetsu_riyousha_status_now |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFromOld}'","'${NyuukyoToOld}'","1","'${cur_time}'","'${USERID}'"}' >> $tmp-shisetsu_riyousha_input
+#
+#     # 入居データがなければ
+#     else
+#
+#       awk '$1=="'${RIYOUSHAID}'"&&$2!="'${keiyaku_id}'"&&$3=="'${Tateya}'"&&$7=="'${Kyoshitsu}'"&&$9>="008"&&$(NF-2)!="9"{print $12,$13}'  ${pompa_dir}/RIYOUSHA_KEIYAKU > $tmp-hoka_keiyaku_data
+#
+#       # 他契約の中で更新
+#       if [ -s $tmp-hoka_keiyaku_data ] ; then
+#         NyuukyoFromOld="$(cat $tmp-hoka_keiyaku_data | self 12 | LANG=C sort | head -1)"
+#         NyuukyoToOld="$(cat $tmp-hoka_keiyaku_data | self 13 | LANG=C sort | tail -1)"
+#
+#         cat $tmp-hoka_keiyaku_data |
+#         # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#         # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#         # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#         # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#         # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#         self 3/7 1    |
+#         # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#         # 6:利用者(入居者)ID      
+#         awk '{print $0,"'${NyuukyoFromOld}'","'${NyuukyoToOld}'","1","'${cur_time}'","'${USERID}'"}'
+#
+#       # 他契約データがなければこの施設データは削除
+#       else
+#         awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Now_Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS |
+#         self 1/NF-3 |
+#         awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' >> $tmp-shisetsu_riyousha_input
+#
+#       fi >> $tmp-shisetsu_riyousha_input
+#    fi
+#
+#    # 新規居室データについて
+#    awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${New_Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS > $tmp-new_kyoshitsu_data
+#
+#    # この契約が入居契約で施設データがある 
+#    if [ "${KeiyakuShurui}" -le "007" -s $tmp-new_kyoshitsu_data ] ; then
+#
+#       NyuukyoFromNew="$(awk '{if($12<="'${KeiyakukikanFrom}'"){print $12}else{print "'${KeiyakukikanFrom}'"}}' $tmp-new_kyoshitsu_data | LANG=C sort | head -1)"
+#       NyuukyoToNew="$(awk '{if($13>="'${KeiyakukikanTo}'"){print $13}else{print "'${KeiyakukikanTo}'"}}' $tmp-new_kyoshitsu_data | LANG=C sort | tail -1)"
+#
+#       cat $tmp-riyousha_keiyaku_input |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFromNew}'","'${NyuukyoToNew}'","1","'${cur_time}'","'${USERID}'"}'
+#
+#    # この契約が入居契約で施設データがある場合は更新しない
+#    elif [ "${KeiyakuShurui}" -gt "007" -s $tmp-new_kyoshitsu_data ] ; then
+#      :
+#
+#    # 新規
+#    else
+#       NyuukyoFromNew=$(echo "${KeiyakukikanFrom}")
+#       NyuukyoToNew=$(echo "${KeiyakukikanTo}")
+#
+#       cat $tmp-riyousha_keiyaku_input |
+#       # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+#       # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+#       # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+#       # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+#       # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+#       self 3/7 1    |
+#       # 1:施設ID           2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+#       # 6:利用者(入居者)ID
+#       awk '{print $0,"'${NyuukyoFromNew}'","'${NyuukyoToNew}'","1","'${cur_time}'","'${USERID}'"}' 
+#    fi  >> $tmp-shisetsu_riyousha_input
+#    
+#
+#  fi
+#
+## 施設でーたではない
+#else
+#   : > $tmp-shisetsu_riyousha_input
+#fi
+#
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 6:事業所利用者テーブル
+#########################
+# 施設ではなく契約IDがない(新規の居宅訪問介護)
+if [ ! -s $tmp-shisetsu -a ${KEIYAKUID} = "_" ] ; then
+  KeiyakukikanFrom=$(nameread "KeiyakukikanFrom" $namedata | sed 's/\///g')
+  KeiyakukikanTo=$(nameread "KeiyakukikanTo" $namedata | sed 's/\///g')
+  [ -z "${KeiyakukikanTo}" ] && KeiyakukikanTo="99999999"
+
+  echo "${Shisetsu}" "${RIYOUSHAID}" "${KeiyakukikanFrom}" "${KeiyakukikanTo}" "1" "${cur_time}" "${USERID}" > $tmp-jigyousho_riyousha_jyunbi_input
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日
+
+# 施設で契約IDある
+elif [ ! -s $tmp-shisetsu ] ; then
+  cat $tmp-riyousha_keiyaku_input |
+  # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+  # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+  # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+  # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+  # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+  self 3 1 12 13 NF-2/NF          > $tmp-jigyousho_riyousha_jyunbi_input
+
+# 契約事業所がセットされている場合（2015/05/07）
+elif [ ! -z "${KeiyakuJigyousho}" -a "${KeiyakuJigyousho}" != "_" ] ; then
+  echo "${KeiyakuJigyousho}" "${RIYOUSHAID}" "${KeiyakukikanFrom}" "${KeiyakukikanTo}" "1" "${cur_time}" "${USERID}" > $tmp-jigyousho_riyousha_jyunbi_input
+else
+
+ : > $tmp-jigyousho_riyousha_jyunbi_input
+
+fi
+
+
+if [ -s $tmp-jigyousho_riyousha_jyunbi_input ] ; then
+  
+  status_jigyousho=$(awk '{print $1}' $tmp-jigyousho_riyousha_jyunbi_input)
+  status_riyousha=$(awk '{print $2}' $tmp-jigyousho_riyousha_jyunbi_input)
+  status_from=$(awk '{print $3}' $tmp-jigyousho_riyousha_jyunbi_input)
+  status_to=$(awk '{print $4}' $tmp-jigyousho_riyousha_jyunbi_input)
+
+  ## 同じ事業所の利用状況
+  #awk '$1=="'${status_jigyousho}'"&&$2=="'${status_riyousha}'"{print $0}' ${pompa_dir}/JIGYOUSHO_RIYOUSHA_STATUS |
+
+  # JIGYOUSHO_RIYOUSHA_STATUSは、更新データ、過去全ての契約の開始日、終了日から導き出す
+  # 開始日：一番早い日付　終了日：一番遅い日付
+  LANG=C sort ${pompa_dir}/RIYOUSHA_KEIYAKU                                                                      |
+  # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+  # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+  # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+  # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+  # 21:予備5           22:削除フラグ 23:更新日     24:更新者
+  join1 key=1 <(echo ${RIYOUSHAID})                                                                              |
+  awk '$2!="'${keiyaku_id}'"{print $0}'  |
+  self 12 13                                                                                                     > $tmp-old_pompa_data
+  # 1:契約開始日 2:契約終了日
+
+  # 更新データと過去データ合わす
+  self 3 4 $tmp-jigyousho_riyousha_jyunbi_input                                                                  |
+  cat - $tmp-old_pompa_data                                                                                      |
+  tee $tmp-motodata                                                                                              |
+  LANG=C sort -k1,1n                                                                                             |
+  # 1:契約開始日
+  self 1                                                                                                         |
+  atama -1                                                                                                       > $tmp-start_bi
+
+  LANG=C sort -k2,2n $tmp-motodata                                                                               |
+  self 2                                                                                                         |
+  # 1:契約終了日
+  tail -1                                                                                                        > $tmp-end_bi
+
+  keiyaku_start_bi=$(cat $tmp-start_bi)
+  keiyaku_end_bi=$(cat $tmp-end_bi)
+
+  self 1 2 5/NF $tmp-jigyousho_riyousha_jyunbi_input                                                             |
+  # 1:事業所ID 2:入居者ID 3:削除フラグ 4:更新時間 5:更新者
+  awk '{print $1,$2,"'${keiyaku_start_bi}'","'${keiyaku_end_bi}'",$3,$4,$5}'                                     > $tmp-jigyousho_riyousha_input
+
+else
+  : > $tmp-jigyousho_riyousha_input
+fi
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日 5:削除フラグ
+# 6:更新時間 7:更新者
+
+###################
+# 7:包括利用者テーブル
+###################
+
+  : > $tmp-houkatsu_riyousha_input
+# 契約が訪問介護の予防と地域包括の時だけ更新
+if [ "${KeiyakuShurui}" = "021" -o "${KeiyakuShurui}" = "027" ] ; then
+
+  cat $tmp-jigyousho_riyousha_input |
+  awk '{print "'${Houkatsu}'","'${keiyaku_id}'","'${KeiyakuShurui}'",$0}' |
+  # 1:事業所(包括)ID 2:契約ID     3:契約種類   4:事業所ID 5:入居者ID
+  # 6:契約開始日     7:契約終了日 8:削除フラグ 9:更新時間 10:更新者
+  self 1 5 2 3 6/NF                 |
+  # 追記： 事業所と包括は期間の設定が別なので再度設定
+  awk '{print $0,"'${KeiyakukikanFrom}'","'${KeiyakukikanTo}'"}'          |
+  self 1/4 NF-1 NF 7/NF-2           > $tmp-houkatsu_jyubi
+
+  awk '$2=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS > $tmp-houkatsu_now
+  # 1:事業所(包括)ID 2:入居者ID   3:契約ID   4:契約種類 5:契約開始日
+  # 6:契約終了日     7:削除フラグ 8:更新時間 9:更新者
+
+  # 新しいデータと今までのデータを比較して変更されていたら
+  if [ -s $tmp-houkatsu_now -a "$(cat $tmp-houkatsu_now $tmp-houkatsu_jyubi | uniq | gyo)" != "1" ] ; then
+
+   # 日付のみ変更以外は削除行更新
+   if [ "$(cat $tmp-houkatsu_now $tmp-houkatsu_jyubi | self 1/4 | uniq | gyo)" != "1" ] ; then
+    cat $tmp-houkatsu_now |
+    delf NF-2/NF          |
+    awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' >> $tmp-houkatsu_riyousha_input
+   else
+    :
+   fi
+  else
+    :
+  fi
+  cat $tmp-houkatsu_jyubi >> $tmp-houkatsu_riyousha_input
+#> $tmp-houkatsu_riyousha_input
+
+# 地域包括がない契約だった場合(でも以前に地域包括があった)削除フラグつける
+else
+  awk '$2=="'${RIYOUSHAID}'"&&$3=="'${keiyaku_id}'"{print $0}' ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS > $tmp-houkatsu_now
+
+ if [ -s $tmp-houkatsu_now ] ; then
+    cat $tmp-houkatsu_now |
+    delf NF-2/NF          |
+    awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' >> $tmp-houkatsu_riyousha_input
+ else
+    :
+ fi
+
+fi
+# 1:事業所ID(包括ID) 2:入居者ID   3:契約ID   4:契約種類ID 5:契約開始日
+# 6:契約終了日       7:削除フラグ 8:更新時間 9:更新者
+
+
+
+
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+#cat <<- FIN | LANG=C sort -u > $tmp-target-table
+#RIYOUSHA/SHISETSU_RIYOUSHA_STATUS SHISETSU_RIYOUSHA_STATUS
+#FIN
+: > $tmp-target-table
+[ -s $tmp-riyousha_keiyaku_input ] && echo "RIYOUSHA_KEIYAKU RIYOUSHA_KEIYAKU" >> $tmp-target-table
+[ -s $tmp-riyousha_keiyakukin_input ] && echo "RIYOUSHA_KEIYAKUKIN RIYOUSHA_KEIYAKUKIN" >> $tmp-target-table
+[ -s $tmp-riyousha_riyouryou_input ] && echo "RIYOUSHA_RIYOURYOU RIYOUSHA_RIYOURYOU" >> $tmp-target-table
+[ -s $tmp-riyousha_tokuhan_input ] && echo "RIYOUSHA_TOKUHAN RIYOUSHA_TOKUHAN" >> $tmp-target-table
+[ -s $tmp-shisetsu_riyousha_input ] && echo "SHISETSU_RIYOUSHA_STATUS SHISETSU_RIYOUSHA_STATUS" >> $tmp-target-table
+[ -s $tmp-jigyousho_riyousha_input ] && echo "JIGYOUSHO_RIYOUSHA_STATUS JIGYOUSHO_RIYOUSHA_STATUS" >> $tmp-target-table
+[ -s $tmp-houkatsu_riyousha_input ] && echo "HOUKATSU_RIYOUSHA_STATUS HOUKATSU_RIYOUSHA_STATUS" >> $tmp-target-table
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+#cat <<- FIN > $tmp-koushin_pompa
+#shisetsu_riyousha SHISETSU_RIYOUSHA_STATUS 7 10 11 ${pompa_dir} ${input_dir} 
+#FIN
+: > $tmp-koushin_pompa
+
+[ -s $tmp-riyousha_keiyaku_input ] && echo "riyousha_keiyaku RIYOUSHA_KEIYAKU 2 23 24 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_keiyakukin_input ] && echo "riyousha_keiyakukin RIYOUSHA_KEIYAKUKIN 5 23 24 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_riyouryou_input ] && echo "riyousha_riyouryou RIYOUSHA_RIYOURYOU 5 20 21 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_tokuhan_input ] && echo "riyousha_tokuhan RIYOUSHA_TOKUHAN 5 16 17 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-shisetsu_riyousha_input ] && echo "shisetsu_riyousha SHISETSU_RIYOUSHA_STATUS 6 10 11 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-jigyousho_riyousha_input ] && echo "jigyousho_riyousha JIGYOUSHO_RIYOUSHA_STATUS 2 6 7 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-houkatsu_riyousha_input ] && echo "houkatsu_riyousha HOUKATSU_RIYOUSHA_STATUS 3 8 9 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+#cp -p $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+cp -p ${pompa_dir}/RIYOUSHA_MASTER ${data_dir}/RIYOUSHA_MASTER
+cp -p ${pompa_dir}/RIYOUSHA_KIHON ${data_dir}/RIYOUSHA_KIHON
+cp -p ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS ${data_dir}/SHISETSU_RIYOUSHA_STATUS
+cp -p ${pompa_dir}/JIGYOUSHO_RIYOUSHA_STATUS ${data_dir}/JIGYOUSHO_RIYOUSHA_STATUS
+cp -p ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS ${data_dir}/HOUKATSU_RIYOUSHA_STATUS
+
+cp -p ${pompa_dir}/RIYOUSHA_KEIYAKU ${riyousha_dir}/RIYOUSHA_KEIYAKU
+cp -p ${pompa_dir}/RIYOUSHA_KEIYAKUKIN ${riyousha_dir}/RIYOUSHA_KEIYAKUKIN
+cp -p ${pompa_dir}/RIYOUSHA_RIYOURYOU ${riyousha_dir}/RIYOUSHA_RIYOURYOU
+cp -p ${pompa_dir}/RIYOUSHA_TOKUHAN ${riyousha_dir}/RIYOUSHA_TOKUHAN
+
+echo "result ok ${KEIYAKUID}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

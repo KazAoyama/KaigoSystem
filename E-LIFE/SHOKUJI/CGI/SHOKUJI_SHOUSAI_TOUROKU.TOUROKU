@@ -1,0 +1,315 @@
+#!/bin/bash
+#
+# SHOKUJI_SHOUSAI_TOUROKU.TOUROKU
+# 食事メニュー登録
+#
+# Written by E.Okuda 20140110
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+today=$(date +%Y%m%d)
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+  Shisetsu=$(nameread     "shisetsu"            $namedata)
+  Tateya=$(nameread       "Tateya"              $namedata)
+  Floor=$(nameread        "Floor"              $namedata)
+  Unit=$(nameread         "Unit"              $namedata)
+  Kyoshitsu=$(nameread    "Kyoshitsu"              $namedata)
+  Nyuukyosha=$(nameread    "Nyuukyosha"              $namedata)
+  KikanFrom=$(nameread    "KikanFrom"           $namedata | sed 's/\///g')
+  KikanTo=$(nameread      "KikanTo"             $namedata | sed 's/\///g')
+  [ -z "${KikanTo}" -o "${KikanTo}" = "_" ] && KikanTo="99999999"
+  Keitai="_" #なくなった項目なのでそのまま予備項目とする
+  Shushoku=$(nameread     "Shushoku"          $namedata)
+  Fukushoku=$(nameread  "Fukushoku"   $namedata)
+  shijishoku_c1=$(nameread  "shijishoku_c1"  $namedata | han)
+  shijishoku_t1=$(nameread  "shijishoku_t1"   $namedata | han)
+  shijishoku_c2=$(nameread "shijishoku_c2"     $namedata | han)
+  shijishoku_t2=$(nameread  "shijishoku_t2" ${namedata} | han)
+  shijishoku_c3=$(nameread    "shijishoku_c3" ${namedata})
+  shijishoku_t3=$(nameread    "shijishoku_t3" ${namedata})
+  shijishoku_t33=$(nameread     "shijishoku_t33" ${namedata})
+  Allergy=$(nameread       "Allergy" ${namedata} | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')
+  Sonota=$(nameread  "Sonota" ${namedata} | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')
+  Kinshishoku=$(nameread  "Kinshishoku" ${namedata} | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')
+  SHOKUJISHOUSAIID=$(nameread  "SHOKUJISHOUSAIID" ${namedata})
+#--------------------------------------------------------------
+###############################
+# # MODE=tourokuのとき
+###############################
+
+if [ "${MODE}" = "touroku" ] ; then
+
+# 入力データのチェック
+#
+  [ -z "${Nyuukyosha}" -o "${Nyuukyosha}" = "_" ] && error_exit "利用者を選択してください。"
+  [ -z "${SHOKUJISHOUSAIID}" -o "${SHOKUJISHOUSAIID}" = "_" ] && error_exit "データが不正です。新規作成の場合はラジオボタンにて新規を選択して、やり直してください。"
+  [ -z "${KikanFrom}" -o "${KikanFrom}" = "_" ] && error_exit "期間を入力してください。"
+#  [ -z "${Sonota}" -o "${Sonota}" = "_" ] && error_exit "期間を入力してください。"
+  [ -z "${Shushoku}" -o "${Shushoku}" = "_" ] && error_exit "主食形態を選択してください。"
+  [ -z "${Fukushoku}" -o "${Fukushoku}" = "_" ] && error_exit "副食形態を選択してください。"
+
+echo "${KikanFrom}" |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-kikan_from_error
+
+echo "${KikanTo}" |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-kikan_to_error
+
+[ -s $tmp-kikan_from_error ] && error_exit "期間(自)に不正な日付が入力されています。"
+[ -s $tmp-kikan_to_error ] && error_exit "期間(至)に不正な日付が入力されています。"
+
+isdate "${KikanFrom}"
+echo $?  > $tmp-kikan_from_check
+[ "$(cat $tmp-kikan_from_check)" != "0" ] && error_exit "期間(自)に不正な日付が入力されています。"
+
+if [ "${KikanTo}" != "99999999" ] ; then
+      isdate "${KikanTo}"
+      echo $?  > $tmp-kikan_to_check
+    [ "$(cat $tmp-kikan_to_check)" != "0" ] && error_exit "期間(至)に不正な日付が入力されています。"
+fi
+
+
+# 既存データとの日付チェック
+awk '$1=="'${Nyuukyosha}'"&&$2!="'${SHOKUJISHOUSAIID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI > $tmp-kizon_data
+# 1:利用者ID             2:食事詳細ID      3:期間FROM             4:期間TO                    5:形態
+# 6:主食                 7:副食            8:指示食：糖尿病       9:指示食：糖尿病カロリーcal 10:指示食：減塩食
+# 11:指示食：減塩食塩分g 12:指示食：肝臓食 13:指示食：肝臓食塩分g 14:指示食：肝臓蛋白g        15:食事アレルギー
+# 16:禁止食              17:その他
+
+
+cat $tmp-kizon_data |
+# 始まりが既存データToより前など
+awk '{if($3>="'${KikanFrom}'"&&$4=="99999999"){print $0}
+      else if($3<="'${KikanFrom}'"&&$4>="'${KikanFrom}'"){print $0}
+      else if($3>="'${KikanFrom}'"&&$3<="'${KikanTo}'"){print $0}
+      else if($4=="'${KikanFrom}'"){print $0}
+      else if($3=="'${KikanTo}'"){print $0}
+     }'  > $tmp-nengetsu_error
+
+#cat $tmp-kizon_data |
+#awk '$3=="'${KikanFrom}'"{print $0}' > $tmp-doujitsu_error
+
+#cat $tmp-kizon_data |
+#awk '$3>"'${KikanFrom}'"{print $0}' > $tmp-mae_error
+
+  [ -s $tmp-nengetsu_error ] && error_exit "年月に重複するデータがあります。"
+#  [ -s $tmp-doujitsu_error ] && error_exit "データを変更登録する場合は期間(自)を変更してください。"
+#  [! -s $tmp-doujitsu_error -a -s $tmp-mae_error ] && error_exit "既存データより以前のデータはこの画面では登録できません。"
+
+  [ "${KikanFrom}" -gt "${KikanTo}" ] && error_exit "期間(自)より期間(至)は後の日付を入力してください。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル
+#
+# 食事内容テーブル
+#
+#--------------------------------------------------------------
+  ##########################
+  # 食事メニューテーブル
+  ##########################
+
+# 有効食事の取得
+# チェックボックス
+[ -z "${shijishoku_c1}" -o "${shijishoku_c1}" = "_" ] && shijishoku_c1="0"
+[ -z "${shijishoku_c2}" -o "${shijishoku_c2}" = "_" ] && shijishoku_c2="0"
+[ -z "${shijishoku_c3}" -o "${shijishoku_c3}" = "_" ] && shijishoku_c3="0"
+[ -z "${shijishoku_t1}" -o "${shijishoku_t1}" = "_" ] && shijishoku_t1="_"
+[ -z "${shijishoku_t2}" -o "${shijishoku_t2}" = "_" ] && shijishoku_t2="_"
+[ -z "${shijishoku_t3}" -o "${shijishoku_t3}" = "_" ] && shijishoku_t3="_"
+[ -z "${shijishoku_t33}" -o "${shijishoku_t33}" = "_" ] && shijishoku_t33="_"
+
+#------------------------------------------------------------------------------------
+
+# 既存データの更新
+cat ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI |
+# 1:利用者ID             2:食事詳細ID      3:期間FROM             4:期間TO                    5:形態
+# 6:主食                 7:副食            8:指示食：糖尿病       9:指示食：糖尿病カロリーcal 10:指示食：減塩食
+# 11:指示食：減塩食塩分g 12:指示食：肝臓食 13:指示食：肝臓食塩分g 14:指示食：肝臓蛋白g        15:食事アレルギー
+# 16:禁止食              17:その他 
+awk '$1=="'${Nyuukyosha}'"&&$2=="'${SHOKUJISHOUSAIID}'"{print $1,$2,"'${KikanFrom}'","'${KikanTo}'","'${Keitai}'","'${Shushoku}'","'${Fukushoku}'","'${shijishoku_c1}'","'${shijishoku_t1}'","'${shijishoku_c2}'","'${shijishoku_t2}'","'${shijishoku_c3}'","'${shijishoku_t3}'","'${shijishoku_t33}'","'${Allergy}'","'${Kinshishoku}'","'${Sonota}'","1","'${cur_time}'","'${USERID}'"}' > $tmp-shokuji_shousai_input
+
+# 削除の場合
+elif [ "${MODE}" = "sakujyo" ] ; then
+
+cat ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI |
+# 1:利用者ID             2:食事詳細ID      3:期間FROM             4:期間TO                    5:形態
+# 6:主食                 7:副食            8:指示食：糖尿病       9:指示食：糖尿病カロリーcal 10:指示食：減塩食
+# 11:指示食：減塩食塩分g 12:指示食：肝臓食 13:指示食：肝臓食塩分g 14:指示食：肝臓蛋白g        15:食事アレルギー
+# 16:禁止食              17:その他
+awk '$1=="'${Nyuukyosha}'"&&$2=="'${SHOKUJISHOUSAIID}'"{print $0}' |
+delf NF-2/NF   |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'     > $tmp-shokuji_shousai_input
+
+fi
+
+
+#
+#cat $tmp-sakujyo_taishou |
+#join1 key=1 - ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI |
+#awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+# self 1/14 NF-2 NF-1 NF  > $tmp-shokuji_shousai_input
+#fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI SHOKUJI_SHOUSAI
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+shokuji_shousai SHOKUJI_SHOUSAI 2 19 20 ${pompa_dir}/${Shisetsu}/${Tateya} ${input_dir}/${Shisetsu}/${Tateya}
+FIN
+
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#    error_unlock "ロック処理失敗"
+# 20150910mod
+# ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+# ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+    error_exit "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/SHOKUJI_SHOUSAI_TOUROKU/${Shisetsu}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $lock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok" "${shokujishousai_id}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

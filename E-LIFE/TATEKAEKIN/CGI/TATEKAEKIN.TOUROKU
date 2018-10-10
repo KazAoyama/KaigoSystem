@@ -1,0 +1,245 @@
+#!/bin/bash
+#
+# TATEKAEKIN.TOUROKU : 立替金登録
+#
+# Usage : TATEKAEKIN.TOUROKU namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+idkanri_dir="/DATA/E-LIFE/TATEKAEKIN/KANRI/ID"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+# データチェック
+# 時刻が数値かどうか
+#number_check=$(echo ${tatekae_kingaku} | awk '/[^0-9]/ {print $0}')
+#if [ -z ${number_check} ];then
+#  exit 1
+#else
+#  :
+#fi
+
+# 内容に半角スペースがあったら取る
+#tatekae_tekiyou=$(echo ${tatekae_tekiyou} | sed 's/_//g' | sed 's/ //g')
+
+# 請求確定後かどうかチェック
+# 請求確定ファイルを取得
+if [ -s /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu ];then
+   cat /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu  |
+   awk '$1=="'$shisetsu'" && $4!="9"' |
+   self 2                           |
+   getlast 1 1                      |
+   awk '{print $1"31","'$hd_tatekae_hiduke'"}'   |
+   # 確定日付が対象年月日より大きい場合は確定済み
+   awk '$1>=$2'                     > $tmp-kakutei_nengetsu
+   [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "請求確定確認エラー"
+   if [ "$(gyo $tmp-kakutei_nengetsu)" != "0" ] ; then
+       exit 1
+   fi
+else
+  :
+fi
+
+
+# ユニットがなかったら0をセット
+if [ -n "${nyuryoku_unit}" -a "${nyuryoku_unit}" != "_" ];then
+  :
+else
+  nyuryoku_unit="0"
+fi
+
+# 入金か出金かで処理を分岐
+case ${nyuryoku_nyushukkin} in
+  # 入金の場合
+  nyukin )
+    # 対象が入居者かどうかで分岐
+    case ${taisho} in
+      # 入居者
+      nyukyosha )
+        echo ${hd_tatekae_hiduke} ${taisho} ${nyuryoku_riyosha_name} "1" ${nyuryoku_tatekae_houhou} "1" ${nyuryoku_nyukin_koumoku} ${tatekae_tekiyou} ${tatekae_kingaku} "0" ${input_tateya} ${nyuryoku_floor} ${nyuryoku_unit}
+        # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+        # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+        # 11:所属建屋 12:所属フロア 13:所属ユニット
+      ;;
+      # その他
+      sonota )
+        echo ${hd_tatekae_hiduke} ${taisho} ${taisho__koumoku_sonota} "1" ${nyuryoku_tatekae_houhou} "1" ${nyuryoku_nyukin_koumoku} ${tatekae_tekiyou} ${tatekae_kingaku} "0" "_" "_" "_"
+        # 1:立替日付 2:立替対象 3:対象者 4:入出金フラグ 5:立替方法
+        # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+        # 11:_ 12:_ 13:_
+      ;;
+    esac
+  ;;
+  # 出金の場合
+  shukkin )
+    # 対象が入居者かどうかで分岐
+    case ${taisho} in
+      # 入居者
+      nyukyosha )
+        echo ${hd_tatekae_hiduke} ${taisho} ${nyuryoku_riyosha_name} "2" ${nyuryoku_tatekae_houhou} "2" ${nyuryoku_shukkin_koumoku} ${tatekae_tekiyou} "0" ${tatekae_kingaku} ${input_tateya} ${nyuryoku_floor} ${nyuryoku_unit}
+        # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+        # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+        # 11:所属建屋 12:所属フロア 13:所属ユニット
+      ;;
+      # その他
+      sonota )
+        echo ${hd_tatekae_hiduke} ${taisho} ${taisho__koumoku_sonota} "2" ${nyuryoku_tatekae_houhou} "2" ${nyuryoku_shukkin_koumoku} ${tatekae_tekiyou} "0" ${tatekae_kingaku} "_" "_" "_"
+        # 1:立替日付 2:立替対象 3:対象者 4:入出金フラグ 5:立替方法
+        # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+        # 11:_ 12:_ 13:_
+      ;;
+    esac
+  ;;
+esac  > ${tmp}-input_data
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# input_dataができたらIDを取得して保存
+# shuseiの場合は上書保存
+if [ -e ${tmp}-input_data ];then
+  case ${MODE} in
+    touroku )
+      if [ -e "${idkanri_dir}/TATEKAEKIN" ];then
+          new_num="$(getno -s 1 ${idkanri_dir}/TATEKAEKIN)"
+          echo ${new_num} > ${tmp}-new_num
+          mv ${tmp}-new_num ${idkanri_dir}/TATEKAEKIN
+        else
+          new_num="$(echo "0000001")"
+          echo ${new_num} > ${idkanri_dir}/TATEKAEKIN
+        fi
+      cat ${tmp}-input_data       |
+      # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+      # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+      # 11:所属建屋 12:所属フロア 13:所属ユニット
+      awk '{print $0,"'${new_num}'","'${current_time}'"}'              > ${tmp}-input
+      # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+      # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+      # 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+    ;;
+    uwagaki )
+      cat ${tmp}-input_data       |
+      awk '{print $0,"'${uwagaki_id}'","'${current_time}'"}'             > ${tmp}-input
+      # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+      # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+      # 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+    ;;
+  esac
+
+  # 列数チェック
+  [ "$(retu $tmp-input)" -ne 15 ] && exit 1
+
+  # 立替idがセットされてなかったら止める
+  [ "$(awk '$14=="_"{print}' $tmp-input | gyo)" -ne 0 ] && exit 1
+
+  # INPUTデータを保存
+  mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-input ${input_dir}/${today}/TATEKAEKIN.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+  # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+  # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+  # 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+
+  # POMPA
+  save_month=$(echo ${hd_tatekae_hiduke} | awk '{print substr($1,1,6)}')
+  mkdir -p ${pompa_dir}/${shisetsu}/${save_month}
+  lock_file=${pompa_dir}/TATEKAEKIN.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN ];then
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN ${tmp}-input |
+    LANG=C sort -k14,14n -k15,15n                                                    |
+    getlast 14 14                                                                    |
+    LANG=C sort -k1,1n -k2,2n -k3,3n
+  else
+    cat ${tmp}-input                                                                 
+  fi                                                                                 > ${tmp}-pompa
+  cp -p ${tmp}-pompa ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  # 請求データ
+  save_month=$(echo ${hd_tatekae_hiduke} | awk '{print substr($1,1,6)}')
+  mkdir -p ${seikyu_dir}/${shisetsu}/${save_month}
+  lock_file=${seikyu_dir}/TATEKAEKIN.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  if [ -e ${seikyu_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN ];then
+    cat ${seikyu_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN ${tmp}-input |
+    LANG=C sort -k14,14n -k15,15n                                                    |
+    getlast 14 14                                                                    |
+    LANG=C sort -k1,1n -k2,2n -k3,3n
+  else
+    cat ${tmp}-input                                                                 
+  fi                                                                                 > ${tmp}-pompa
+  cp -p ${tmp}-pompa ${seikyu_dir}/${shisetsu}/${save_month}/${save_month}.TATEKAEKIN
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+
+
+  cat ${tmp}-pompa
+else
+  :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+rm -f ${tmp}-*
+exit 0

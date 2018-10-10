@@ -1,0 +1,132 @@
+#!/bin/bash
+#
+# JIGYOUSHO_MASTER_ICHIRAN.DISPLAY
+# アセスメント　表示用CGI
+#
+# Written by K.Aoyama :20131125
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+#USER_ID="00001"
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明で>
+す"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+#--------------------------------------------------------------
+# ファイルの取得
+# ログイン施設によって選択できる事業所を絞る
+cat ${pompa_dir}/JIGYOUSHO_MASTER/SHISETSU_JIGYOUSHO_MASTER    |
+awk '$(NF-2)!="9"'                                             |
+if [ "$shisetsu" = "1004" -o "$shisetsu" = "1005" ]; then
+   awk '$2=="'$shisetsu'"||$2=="0000"{print $1}'
+else
+   awk '{print $1}'
+fi |
+LANG=C sort -k1,1 -u  > $tmp-shisetsu_jigyousho
+
+cp $tmp-shisetsu_jigyousho $work_dir/shisetsu_jigyousho
+
+
+# サービス事業所があてられていない事業者のリスト
+cat ${pompa_dir}/JIGYOUSHO_MASTER/SHISETSU_JIGYOUSHO_MASTER    |
+awk '$(NF-2)!="9"&&($2=="1004"||$2=="1005")' |
+self 1 2                                     > $tmp-service_jigyousho
+
+# 本来の事業所マスタとオリジナル事業所マスタ
+cat ${pompa_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER ${pompa_dir}/JIGYOUSHO_MASTER/CUSTOM_JIGYOUSHO_MASTER |
+LANG=C sort -k1,1        |
+# ログイン施設による絞込み
+join0 key=1 $tmp-shisetsu_jigyousho |
+if [ -z "$deleteCheck" -o "$deleteCheck" = "_" ] ; then
+awk '$(NF-2)!="9"'
+else
+cat -
+fi |
+LANG=C sort -k4,4                         |
+join1 key=4 /${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE - |
+# 1:事業所ID                               2:事業者番号                  3:事業者名称                    4:サービス事業者タイプ            5:サービスグループ
+# 6:サービス事業者タイプ名                 7:事業者区分                  8:指定基準事業所区分            9:地域区分                        10:生活保護指定
+# 11:割引率                                12:施設等の区分               13:特別地域加算                 14:特定事業>所加算                15:中山間地域などの小規模事業所（地域）
+# 16:中山間地域などの小規模事業所（規模>） 17:日中の身体介護20分未満体制 18:サービス提供責任者体制の減算 19:同一建物に居住する利用者の減算 20:介護職員処遇改善加算
+# 21:緊急時訪問看護加>算                   22:特別管理体制               23:ターミナルケア体制           24:サービス提供体制強化加算       25:時間延長サービス体制
+# 26:個別機能訓練体制                      27:入浴介助体制               28:職員の欠員によ>る減算        29:栄養改善体制                   30:口腔機能向上体制
+# 31:若年性認知症利用（入所）者受入加算    32:機能訓練指導体制           33:夜間勤務条件基準             34:送迎体制                       35:ユニット型個室の有無
+# 36:ユニット型順個室の有無                37:従来型個室の有無           38:多床室の有無                 39:療養食加算                     40:ユニットケア体制
+# 41:看護体制加算                          42:夜勤職員配置加算           43:緊急短期入所体制確>保加算    44:運動機能向上加算               45:事業所評価加算（申出）の有無
+# 46:生活機能向上グループ活>動加算         47:24時間通報体制加算
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# サービスグループ
+# --------------------------
+if [ -z "${ServiceGroup}" -o "${ServiceGroup}" = "0" ] ; then
+  cat -
+else
+  awk '$5=="'${ServiceGroup}'"'
+fi |
+#--------------------------------------------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${ServiceType}" -o "${ServiceType}" = "0" ] ; then
+  cat -
+else
+  awk '$4=="'${ServiceType}'"'
+fi |
+# サービス事業者があたっているかどうかチェック
+LANG=C sort -k1,1 |
+join2 +"@" key=1 $tmp-service_jigyousho   |
+awk '{if($2=="@"){$2="red"}else{$2="black"};print $0}'   |
+self 1 3/NF 2     |
+# --------------------------
+if [ -z "${Sort}" -o "${Sort}" = "0" ] ; then
+  LANG=C sort -k1n,1n
+else
+  LANG=C sort -k4n,4n
+fi |
+#--------------------------------------------------------------
+self 1 2 4 7 3 6 NF > ${tmp}-jigyousha_ichiran
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "事業者一覧取得エラー"
+
+# 出力
+cat ${tmp}-jigyousha_ichiran
+
+
+## 終了
+rm -f $tmp-*
+exit 0

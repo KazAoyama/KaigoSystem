@@ -1,0 +1,268 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI_KOJIN.DISPLAY : 償却管理個人一覧.DISPLAY
+#
+# Usage : SHOKYAKU_KANRI_KOJIN.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m | awk '{substr($1,5,2)}')"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/KEIRI/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" ];then
+  Riyoushamei="_"
+  Riyoushaid="_"
+  floor="_"
+  unit="_"
+  tateya="1"
+  kikan_from_year=""
+  kikan_from_month=""
+  kikan_to_year=""
+  kikan_to_month=""
+  # デフォルトメッセージを作成
+  echo "###DEFAULT_MES###" "条件を設定して「検索」ボタンをクリックしてください。入力する場合は「入力」ボタンをクリックしてください。" >> ${tmp}-calsed1
+else
+  if [ "$(gyo ${searchfile})" = "0" ];then
+    echo "###DEFAULT_MES###" "データがありません" >> ${tmp}-calsed1
+  else
+    echo "###DEFAULT_MES###" "" >> ${tmp}-calsed1
+  fi
+fi
+
+# 月別から飛んできたときの処理
+cat ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2                          > $tmp-riyosha_kihon
+if [ -n "${Riyoushamei}" = "_" -a "${Riyoushamei}" != "_" ];then
+  :
+else
+  echo ${Riyoushaid}                                   |
+  join1 key=1 $tmp-riyosha_kihon                       |
+  self 2                                               > $tmp-riyoshamei
+  Riyoushamei=$(cat $tmp-riyoshamei)
+fi
+
+# 対象者名の処理
+if [ -n "${Riyoushamei}" -a "${Riyoushamei}" != "_" ];then
+  echo "###RIYOSHAMEI###" "${Riyoushamei}" >> $tmp-calsed1
+else
+  echo "###RIYOSHAMEI###" "" >> $tmp-calsed1
+fi
+
+# 利用者IDの処理
+echo "###RIYOSHAID###" "${Riyoushaid}" >> $tmp-calsed1
+
+# 一時金種別の取得
+cat ${hometbl_dir}/RIYOURYOU_MASTER/KEIYAKUKIN_MASTER   |
+# 1:施設ID 2:契約金種別ID 3:契約金種別名 4:順番 5:有効フラグ
+awk '$1=="'${shisetsu}'" && $3!="_"'                    |
+awk '$5==1'                                             |
+LANG=C sort -k4,4                                       |
+self 2 3                                                       |
+awk '{print $0,"'${shubetsu_select}'"}'                        |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2}}'    > $tmp-shubetsu_select
+
+# 期間の表示
+# 年は過去5年から未来5年としておく
+KAKO_NEN=$(echo $this_year | lcalc '$1-5')
+MIRAI_NEN=$(echo $this_year | lcalc '$1+5')
+seq ${KAKO_NEN} ${MIRAI_NEN}              > $tmp-kikan_year
+
+if [ -n "${kikan_from_year}" -a "${kikan_from_year}" != "_" ];then
+  echo "0000"                                                 |
+  cat - $tmp-kikan_year                                       |
+  awk '{if($1=="0000"){print $1,"　"}else{print $1,$1"年"}}'  |
+  awk '{print $1,$2,"'${kikan_from_year}'"}'                  |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  echo "0000"                                                 |
+  cat - $tmp-kikan_year                                       |
+  awk '{if($1=="0000"){print $1,"　"}else{print $1,$1"年"}}'  |
+  awk '{print $1,$2,"0000"}'                                  |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+fi                                                            > $tmp-kikan_from_year
+if [ -n "${kikan_to_year}" -a "${kikan_to_year}" != "_" ];then
+  echo "9999"                                                 |
+  cat - $tmp-kikan_year                                       |
+  awk '{if($1=="9999"){print $1,"　"}else{print $1,$1"年"}}'  |
+  awk '{print $1,$2,"'${kikan_to_year}'"}'                  |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  echo "9999"                                                 |
+  cat - $tmp-kikan_year                                       |
+  awk '{if($1=="9999"){print $1,"　"}else{print $1,$1"年"}}'  |
+  awk '{print $1,$2,"9999"}'                                  |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+fi                                                            > $tmp-kikan_to_year
+
+seq 1 12 | maezero 1.2                                        > $tmp-kikan_month
+if [ -n "${kikan_from_month}" -a "${kikan_from_month}" != "_" ];then
+  echo "00"                                                   |
+  cat - $tmp-kikan_month                                      |
+  awk '{if($1=="00"){print $1,"　"}else{print $1,$1,"月"}}'   |
+  awk '{print $1,$2,"'${kikan_from_month}'"}'                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  echo "00"                                                   |
+  cat - $tmp-kikan_month                                      |
+  awk '{if($1=="00"){print $1,"　"}else{print $1,$1,"月"}}'   |
+  awk '{print $1,$2,"00"}'                                    |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+fi                                                            > $tmp-kikan_from_month
+if [ -n "${kikan_to_month}" -a "${kikan_to_month}" != "_" ];then
+  echo "99"                                                   |
+  cat - $tmp-kikan_month                                      |
+  awk '{if($1=="99"){print $1,"　"}else{print $1,$1,"月"}}'   |
+  awk '{print $1,$2,"'${kikan_to_month}'"}'                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  echo "99"                                                   |
+  cat - $tmp-kikan_month                                      |
+  awk '{if($1=="99"){print $1,"　"}else{print $1,$1,"月"}}'   |
+  awk '{print $1,$2,"99"}'                                    |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+fi                                                            > $tmp-kikan_to_month
+
+# SEARCHファイルの処理
+cat ${searchfile}                                              |
+# 1:年月          2:部屋番号        3:起算月        4:経過月数       5:残り月数
+# 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+# 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+awk '{print substr($1,1,4)"/"substr($1,5,2),$2,substr($3,1,4)"/"substr($3,5,2),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13}'       |
+comma 6 7 8 9 10 11 12 13                                      > $tmp-search_kekka
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE4### active
+###LI_NYUUKYOSHASEIKYU5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/SHOKYAKU_KANRI_KOJIN1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/SHOKYAKU_KANRI_KOJIN2.html   |
+mojihame -l###SHUBETSU_SELECT### - ${tmp}-shubetsu_select |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-search_kekka       |
+mojihame -l###KIKAN_FROM_YEAR### - ${tmp}-kikan_from_year |
+mojihame -l###KIKAN_TO_YEAR### - ${tmp}-kikan_to_year     |
+mojihame -l###KIKAN_FROM_MONTH### - ${tmp}-kikan_from_month |
+mojihame -l###KIKAN_TO_MONTH### - ${tmp}-kikan_to_month |
+#mojihame -l###NYURYOKU_NYUKIN_KOUMOKU### - ${tmp}-nyuryoku_nyukin_koumoku |
+#mojihame -l###SHUKKIN_KOUMOKU### - ${tmp}-shukkin_koumoku |
+#mojihame -l###NYURYOKU_SHUKKIN_KOUMOKU### - ${tmp}-nyuryoku_shukkin_koumoku |
+#mojihame -l###TAISHO_KOUMOKU_SONOTA### - ${tmp}-taisho__koumoku_sonota |
+#mojihame -l###SERVICE_MASTER### - ${tmp}-service_master |
+#mojihame -l###NYURYOKU_SERVICE_MASTER### - ${tmp}-nyuryoku_service_master |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+#mojihame -l###SEARCH_DATA### - ${tmp}-search_data |
+calsed -f ${tmp}-calsed - 
+# HTMLの作成
+
+rm -f ${tmp}-*
+exit 0
+

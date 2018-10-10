@@ -1,0 +1,125 @@
+#!/bin/bash
+#
+# TEIKYOUHYOU_KUHEN.SEARCH
+# 提供票（区分変更）　検索用CGI
+#
+# Written by K.Aoyama :20140723
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && ${hdTaishouYear}=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && ${taishoumonth}=$curmonth
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+RiyouhyouYear
+RiyouhyouMonth
+YoteiKakuteiFlg
+JissekiKakuteiFlg
+CareManager
+FIN
+cat $tmp-header |
+tateyoko > ${tmp}-header_yoko
+
+
+: > ${tmp}-riyouhyou_base
+
+if [ -s ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO ] ; then
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 対象年月
+# --------------------------
+#
+awk '$2=="'${hdTaishouYear}'"&&$3=="'${taishoumonth}'"'    |
+#--------------------------------------------------------------
+getlast 1 1              |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1                      |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-riyouhyou_base
+fi
+
+
+if [ ${MODE} = "search" -o ${MODE} = "print" -o ${MODE} = "allprint" ] ; then
+# 利用票ファイルの取得
+  cat ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$2=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+  awk '$3=="'${hdTaishouYear}'"&&$4=="'$taishoumonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 1:表示順 2:事業者タイプ 3:サービス区分 4:実績確定フラグ 5:予定データ値 6:実績データ値
+# 7:サービス開始時間 8:サービス終了時間 9:供給者ID 10:介護保険対象区分
+# 11:付随費用
+  self 1 5 6 7 8 10 12 13 14 15 17 16 |
+  LANG=C sort -k1,1n    |
+  awk '{print "l",$0}'  >  ${tmp}-riyouhyou_record
+
+fi
+
+cp ${tmp}-riyouhyou_record ${work_dir}/teikyouhyou_kuhen_record
+
+cat ${tmp}-riyouhyou_base ${tmp}-riyouhyou_record
+
+## 終了
+rm -f $tmp-*
+exit 0

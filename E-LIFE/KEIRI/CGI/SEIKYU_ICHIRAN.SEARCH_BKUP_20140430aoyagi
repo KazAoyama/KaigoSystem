@@ -1,0 +1,181 @@
+#!/bin/bash
+#
+# SEIKYU_ICHIRAN.SEARCH : 請求一覧さーち
+#
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/SEIKYU_ICHIRAN.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+# 引数設定
+namefile=${1}
+
+# 変数
+eval $(name-source ${namefile})
+if [ \( -n "${MODE}" \) -o \( "${MODE}" = "_" \) ] ; then
+  MODE="init"
+fi
+this_year="$(date +%Y)"
+
+# ------------------------------------------
+# エラー関数
+function error_exit {
+  message="${1}"
+  echo "${message}"
+#  rm ${tmp}-*
+  exit 1
+}
+# ------------------------------------------
+
+# ------------------------------------------
+# マスタ用意
+
+# なまえ
+awk '$6!="9"' ${riyosha_dir}/RIYOUSHA_MASTER |
+self 1/2 |
+LANG=C sort > ${tmp}-RIYOUSHA_MASTER
+# 1:入居者ID 2:入居者名
+# ------------------------------------------
+
+# ------------------------------------------
+# 検索処理
+
+# 1.ヘッダから明細を回収
+# 2.入居者IDごとに明細を展開して
+# 3.請求明細の表示項目ごとに合計しなおす
+#   管理費賃料：項目ID＝001と003
+#   食費：項目ID＝002,shokuji,kesshoku
+#   月額利用料：項目ID＝数字3桁で001-003以外
+#   立替金：項目ID＝tatekae${数字}
+#   その他：今のところ項目ID＝service,denwa
+
+# ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+# -
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+# -
+# ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/SEIKYU_MEISAI.${seikyu_syori_month}.${seikyusaki}
+# -
+# 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備      18:予備        19:予備           20:予備
+# 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+
+# ヘッダから「請求ステータス：6当月確定済みか7FBデータ作成済み」で「請求確定月＝選択した年月」を取得
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+awk '$24!="9"' -                          |
+getlast 1 2                               |
+cjoin0 key=3 <(echo "6 7" | tarr) -       |
+cjoin0 key=14 <(echo "${year}${month}") - |
+self 8 2 1 10                             > ${tmp}-head_kari
+# 1:居室番号 2:入居者ID 3:処理月 4:明細ファイル名
+
+
+# 入居者IDごとにくりかえし処理で明細を集計してつなげる
+self 2 ${tmp}-head_kari |
+LANG=C sort -u |
+while read id ; do
+  # ヘッダから部屋情報を変数へいれる
+  user_heya="$(cjoin0 key=2 <(echo "${id}") ${tmp}-head_kari | self 1 | LANG=C sort -u | tail -1)"
+  # 明細ファイル展開
+  cjoin0 key=2 <(echo "${id}") ${tmp}-head_kari |
+  while read heya u_id syori_month file_name ; do
+    self 1/3 5 9/11 ${seikyu_dir}/${shisetsu}/MEISAI/${syori_month}/${file_name} |
+    # 1:処理月     2:入居者ID 3:行分類フラグ 4:項目ID 5:金額税抜き
+    # 6:金額税込み 7:税額
+    # -
+    # 合計項目(行分類フラグ15,25,30)を除く
+    cjoin0 +ng key=3 <(echo "15 25 30" | tarr) - 2>&1 1> /dev/null               |
+    # 請求先設定で入居者IDが処理中の人じゃない場合があるのでよみかえる
+    awk '{$2="'${id}'";
+          print}'
+  done > ${tmp}-meisai_kihon_${id}
+
+  # 項目ごとにまとめる
+  # -
+  # 管理費賃料(項目番号1)
+  cjoin0 key=4 <(echo "001 003" | tarr | LANG=C sort) ${tmp}-meisai_kihon_${id} |
+  sm2 2 2 5 7                                                                   |
+  # 1:入居者ID 2:金額税抜き 3:金額税込み 4:税額
+  awk '{print $0,"'${user_heya}'","1"}' -                                       |
+  # 1:入居者ID 2:金額税抜き 3:金額税込み 4:税額 5:居室
+  # 6:項目番号
+  self 5 1 6 3                                                                  > ${tmp}-koumoku_1
+  [ ! -s ${tmp}-koumoku_1 ] && echo "${user_heya} ${id} 1 0" > ${tmp}-koumoku_1
+  # 1:居室 2:入居者ID 3:項目番号 4:金額税込み
+  # -
+  # 食費(項目番号2)
+  awk '$4~/002/ || $4~/shokuji/ || $4~/kesshoku/' ${tmp}-meisai_kihon_${id} |
+  sm2 2 2 5 7                                                               |
+  awk '{print $0,"'${user_heya}'","2"}' -                                   |
+  self 5 1 6 3                                                              > ${tmp}-koumoku_2
+  [ ! -s ${tmp}-koumoku_2 ] && echo "${user_heya} ${id} 2 0" > ${tmp}-koumoku_2
+  # 1:居室 2:入居者ID 3:項目番号 4:金額税込み
+  # -
+  # 月額利用料(項目番号3)
+  awk --re-interval '$4~/^[0-9]{3}/' ${tmp}-meisai_kihon_${id} |
+  awk '$4!="001" && $4!="002" && $4!="003"'                    |
+  sm2 2 2 5 7                                                  |
+  awk '{print $0,"'${user_heya}'","3"}' -                      |
+  self 5 1 6 3                                                 > ${tmp}-koumoku_3
+  [ ! -s ${tmp}-koumoku_3 ] && echo "${user_heya} ${id} 3 0" > ${tmp}-koumoku_3
+  # 1:居室 2:入居者ID 3:項目番号 4:金額税込み
+  # -
+  # 立替金(項目番号4)
+  awk '$4~/tatekae/' ${tmp}-meisai_kihon_${id} |
+  sm2 2 2 5 7                                  |
+  awk '{print $0,"'${user_heya}'","4"}' -      |
+  self 5 1 6 3                                 > ${tmp}-koumoku_4
+  [ ! -s ${tmp}-koumoku_4 ] && echo "${user_heya} ${id} 4 0" > ${tmp}-koumoku_4
+  # 1:居室 2:入居者ID 3:項目番号 4:金額税込み
+  # -
+  # その他(項目番号5)
+  awk '$4~/service/ || $4~/denwa/ || $4~/event/' ${tmp}-meisai_kihon_${id} |
+  sm2 2 2 5 7                                                              |
+  awk '{print $0,"'${user_heya}'","5"}' -                                  |
+  self 5 1 6 3                                                             > ${tmp}-koumoku_5
+  [ ! -s ${tmp}-koumoku_5 ] && echo "${user_heya} ${id} 5 0" > ${tmp}-koumoku_5
+  # 1:居室 2:入居者ID 3:項目番号 4:金額税込み
+
+  # 項目番号でソートして横展開
+  cat ${tmp}-koumoku_1 \
+      ${tmp}-koumoku_2 \
+      ${tmp}-koumoku_3 \
+      ${tmp}-koumoku_4 \
+      ${tmp}-koumoku_5 |
+  LANG=C sort -k1,3 -  |
+  delf 3               |
+  # 1:居室 2:入居者ID 3:金額税込み
+  yarr num=2           |
+  # 1:居室               2:入居者ID           3:金額税込み(管理費賃料) 4:金額税込み(食費) 5:金額税込み(月額利用料)
+  # 6:金額税込み(立替金) 7:金額税込み(その他)
+  # -
+  # 合計の算出
+  awk '{goukei=$3+$4+$5+$6+$7;
+        print $0,goukei}' -    |
+  self 1/2 NF 3/NF-1
+  # 1:居室                   2:入居者ID           3:全項目合計         4:金額税込み(管理費賃料) 5:金額税込み(食費)
+  # 6:金額税込み(月額利用料) 7:金額税込み(立替金) 8:金額税込み(その他)
+done |
+# なまえつける
+LANG=C sort -k2,2 |
+join1 key=2 ${tmp}-RIYOUSHA_MASTER -
+# 1:居室             2:入居者ID               3:入居者名           4:全項目合計         5:金額税込み(管理費賃料)
+# 6:金額税込み(食費) 7:金額税込み(月額利用料) 8:金額税込み(立替金) 9:金額税込み(その他)
+# ------------------------------------------
+
+
+#rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,368 @@
+#!/bin/bash
+#
+# SCHEDULE_NYUKYOSHA_TOUROKU.SEARCH
+# スケジュール詳細　検索用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# スケジュールID
+[ -z "${ScheduleID}" -o "${ScheduleID}" = "_" ] && error_exit "スケジュールが特定されていません"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+ScheduleID
+EventType
+EventName
+EventDate
+EventStart
+EventEnd
+EventYoyaku
+EventPlace
+EventFee
+EventTantousha1
+EventTantousha2
+EventSupplement
+EventTateya
+EventKazeiKbn
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_SHOUSAI |
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"'     |
+delf 1 NF-2/NF  |
+# 1:データ区分 2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻   7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1   12:担当者2       13:追記              14:建屋          15:課税区分
+tee $tmp-result             |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}' > ${tmp}-schedule_detail
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュール詳細取得エラー"
+
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-schedule_detail
+
+
+cat <<- FIN > $tmp-header_enddate
+EventEndDate
+CateringTypeMorning
+CateringTypeNoon
+CateringTypeNight
+FIN
+
+cat ${tmp}-header_enddate   |
+yarr                > ${tmp}-header_enddate_yoko
+
+#--------------------------------------------------------------
+# スケジュール終了日ファイルの取得
+if [ -s ${apdata_dir}/SCHEDULE/SCHEDULE_ENDDATE ] ; then
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_ENDDATE |
+# ゲスト宿泊時の帰宅日データ
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:ケータリングタイプ      7:予備２         8:予備３             9:予備４         10:予備５
+# 11:有効フラグ 12:処理時間      13:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"'     |
+self 5/8  |
+# 1:終了日 2:ケータリングタイプ朝 3:ケータリングタイプ昼 4:ケータリングタイプ夜
+tee $tmp-enddate_result             |
+cat ${tmp}-header_enddate_yoko -    |
+tateyoko                    |
+awk '{print "f",$0}' > ${tmp}-schedule_detail_enddate
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュール日付(至)取得エラー"
+fi
+
+[ "$(gyo $tmp-enddate_result)" = "0" ] && : > ${tmp}-schedule_detail_enddate
+
+#--------------------------------------------------------------
+# 利用者ファイルの取得
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_SANKASHA  |
+# 1:施設   2:スケジュールID 3:利用者ID 4:利用チェック 5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$7!="9"'     |
+delf 1 2 NF-2/NF                                   |
+self 1 3 2 4                                       |
+# 1:データ区分 2:利用者ID 3:備考 4:利用チェック 5:費用
+awk '{print "s",$0}'                               > $tmp-sankasha
+
+
+#--------------------------------------------------------------
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_GUEST    |
+# 1:施設 2:スケジュールID 3:ゲスト名 4:関係入居者     5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ログインユーザ
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$9!="9"'     |
+delf 1 2 NF-2/NF                                   |
+# 1:データ区分 2:ゲスト名 3:関係入居者 4:備考 5:費用 6:性別
+awk '{print "g",$0}'                               > $tmp-guest
+
+
+#--------------------------------------------------------------
+# 部屋予約
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_RESERVATION    |
+# 1:施設        2:スケジュールID 3:部屋ID 4:部屋名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$9!="9"'     |
+self 3                                                    |
+# 1:データ区分 2:ゲスト名 3:関係入居者 4:備考 5:費用 6:性別
+awk '{print "r",$0}'                               > $tmp-reservation
+
+# レストラン予約注文
+cat <<- FIN > $tmp-header_restaurant_yoyaku
+restaurantMenu
+NyukyoshaOrderNum
+GuestOrderNum
+OrderCancel
+FIN
+
+cat ${tmp}-header_restaurant_yoyaku   |
+yarr                > ${tmp}-header_restaurant_yoyaku_yoko
+
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_RESTAURANT_ORDER ] ; then
+  cat ${pompa_dir}/SCHEDULE/SCHEDULE_RESTAURANT_ORDER  |
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"'     |
+# 1:施設         2:スケジュールID 3:開催日      4:メニューID  5:入居者注文数
+# 6:ゲスト注文数 7:キャンセル日付 8:食事実績ID1 9:食事実績ID2 10:入居者ID
+# 11:有効フラグ  12:処理時間      13:ユーザID
+  self 4/7 |
+  tee $tmp-restaurant_yoyaku_gyo |
+  cat $tmp-header_restaurant_yoyaku_yoko - |
+  tateyoko |
+  awk '{print "y",$0}' > ${tmp}-schedule_restaurant_yoyaku
+fi
+
+[ "$(gyo $tmp-restaurant_yoyaku_gyo)" = "0" ] && : > ${tmp}-schedule_restaurant_yoyaku
+
+# ケータリング・ルームサービス注文基本
+cat <<- FIN > $tmp-header_catering_roomservice_basic
+CateringCancel
+rd_catering_roomservice
+FIN
+
+# ケータリング・ルームサービス注文１
+cat <<- FIN > $tmp-header_catering_roomservice1
+cateringMenu1
+cateringShokushu1
+NyukyoshaCateringNum1
+GuestCateringNum1
+FIN
+# ケータリング・ルームサービス注文２
+cat <<- FIN > $tmp-header_catering_roomservice2
+cateringMenu2
+cateringShokushu2
+NyukyoshaCateringNum2
+GuestCateringNum2
+FIN
+# ケータリング・ルームサービス注文３
+cat <<- FIN > $tmp-header_catering_roomservice3
+cateringMenu3
+cateringShokushu3
+NyukyoshaCateringNum3
+GuestCateringNum3
+FIN
+# ケータリング・ルームサービス注文４
+cat <<- FIN > $tmp-header_catering_roomservice4
+cateringMenu4
+cateringShokushu4
+NyukyoshaCateringNum4
+GuestCateringNum4
+FIN
+# ケータリング・ルームサービス注文５
+cat <<- FIN > $tmp-header_catering_roomservice5
+cateringMenu5
+cateringShokushu5
+NyukyoshaCateringNum5
+GuestCateringNum5
+FIN
+
+cat ${tmp}-header_catering_roomservice_basic   |
+yarr                > ${tmp}-header_catering_roomservice_basic_yoko
+
+cat ${tmp}-header_catering_roomservice1   |
+yarr                > ${tmp}-header_catering_roomservice1_yoko
+
+cat ${tmp}-header_catering_roomservice2   |
+yarr                > ${tmp}-header_catering_roomservice2_yoko
+
+cat ${tmp}-header_catering_roomservice3   |
+yarr                > ${tmp}-header_catering_roomservice3_yoko
+
+cat ${tmp}-header_catering_roomservice4   |
+yarr                > ${tmp}-header_catering_roomservice4_yoko
+
+cat ${tmp}-header_catering_roomservice5   |
+yarr                > ${tmp}-header_catering_roomservice5_yoko
+
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 8 13 |
+  LANG=C sort -u |
+  tee $tmp-catering_roomservice_basic_gyo |
+  cat $tmp-header_catering_roomservice_basic_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice_basic
+fi
+
+[ "$(gyo $tmp-catering_roomservice_basic_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice_basic
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"&&$4=="1"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 5/7 |
+# 日付違いで同じ内容のものが入っているため、一つにする
+  head -1 |
+# 食種をjoinする。
+  join1 key=1 <(self 1 3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:メニューID 2:食種 3:入居者注文数 4:ゲスト注文数
+  tee $tmp-catering_roomservice1_gyo |
+  tee $work_dir/roomservice1_rec |
+  cat $tmp-header_catering_roomservice1_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice1
+fi
+
+[ "$(gyo $tmp-catering_roomservice1_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice1
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"&&$4=="2"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 5/7 |
+# 日付違いで同じ内容のものが入っているため、一つにする
+  head -1 |
+# 食種をjoinする。
+  join1 key=1 <(self 1 3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:メニューID 2:食種 3:入居者注文数 4:ゲスト注文数
+  tee $tmp-catering_roomservice2_gyo |
+  cat $tmp-header_catering_roomservice2_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice2
+fi
+
+[ "$(gyo $tmp-catering_roomservice2_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice2
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"&&$4=="3"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 5/7 |
+# 日付違いで同じ内容のものが入っているため、一つにする
+  head -1 |
+# 食種をjoinする。
+  join1 key=1 <(self 1 3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:メニューID 2:食種 3:入居者注文数 4:ゲスト注文数
+  tee $tmp-catering_roomservice3_gyo |
+  cat $tmp-header_catering_roomservice3_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice3
+fi
+
+[ "$(gyo $tmp-catering_roomservice3_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice3
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"&&$4=="4"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 5/7 |
+# 日付違いで同じ内容のものが入っているため、一つにする
+  head -1 |
+# 食種をjoinする。
+  join1 key=1 <(self 1 3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:メニューID 2:食種 3:入居者注文数 4:ゲスト注文数
+  tee $tmp-catering_roomservice4_gyo |
+  cat $tmp-header_catering_roomservice4_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice4
+fi
+
+[ "$(gyo $tmp-catering_roomservice4_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice4
+
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+  awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$(NF-2)!="9"&&$4=="5"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER  |
+# 1:施設         2:スケジュールID 3:開催日                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:入居者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  self 5/7 |
+# 日付違いで同じ内容のものが入っているため、一つにする
+  head -1 |
+# 食種をjoinする。
+  join1 key=1 <(self 1 3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:メニューID 2:食種 3:入居者注文数 4:ゲスト注文数
+  tee $tmp-catering_roomservice5_gyo |
+  cat $tmp-header_catering_roomservice5_yoko - |
+  tateyoko |
+  awk '{print "c",$0}' > ${tmp}-schedule_catering_roomservice5
+fi
+
+[ "$(gyo $tmp-catering_roomservice5_gyo)" = "0" ] && : > ${tmp}-schedule_catering_roomservice5
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-schedule_detail $tmp-sankasha $tmp-guest $tmp-reservation ${tmp}-schedule_detail_enddate ${tmp}-schedule_restaurant_yoyaku ${tmp}-schedule_catering_roomservice_basic ${tmp}-schedule_catering_roomservice1 ${tmp}-schedule_catering_roomservice2 ${tmp}-schedule_catering_roomservice3 ${tmp}-schedule_catering_roomservice4 ${tmp}-schedule_catering_roomservice5
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,404 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_TATEKAEKIN.UPLOAD
+#
+# データ取込：立替金情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  cp $tmp-* /home/hands/work/okuda
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE10" $mime > $tmp-excel_file
+
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE10/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+# 立替金マスタ
+cat ${excel} |
+e2t2 1 a2 f-  > $tmp-data
+# 1:ItemKindCode 2:IOcode 3:DispNum 4:CodeName 5:CodeKana
+# 6:DelFlag
+[ -s "$tmp-data" ] || error_exit
+
+# 立替金他対象者ますた
+cat ${excel} |
+e2t2 2 a2 e-  > $tmp-data2
+# 1:OtherTargetCode 2:DispNum 3:CodeName 4:CodeKana 5:DelFlag
+[ -s "$tmp-data2" ] || error_exit
+
+# 立替金実績
+cat ${excel} |
+e2t2 3 a2 j-  > $tmp-data3
+# 1:TmpBillingID                          2:PaymentDate  3:ServiceType 4:UserID        5:TempMethodCode(立替方法)
+# 6:IOcode(入出金フラグ、10=入金,20=出金) 7:ItemKindCode 8:Money       9:Remarks(摘要) 10:StaffID
+[ -s "$tmp-data3" ] || error_exit
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#---------------------------
+# マスタ
+#入金 
+#/home/hands/E-LIFE/TATEKAEKIN/TBL/$施設/NYUKIN_KOUMOKU
+#1:入金項目ID 2:入金項目名 3:表示順 4:登録日時 5:USERID
+
+#出金
+#/home/hands/E-LIFE/TATEKAEKIN/TBL/$施設/SHUKKIN_KOUMOKU
+#1:出金項目ID 2:出金項目名 3:表示順 4:登録日時 5:USERID
+
+#立替対象項目(入居者以外)
+#/home/hands/E-LIFE/TATEKAEKIN/TBL/$施設/TATEKAE_TAISHO
+#1:立替対象ID 2:立替対象名 3:表示順 4:登録日時 5:USERID
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU ] ; then
+   now_nyuukinid="$(cat /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU)"
+else
+   now_nyuukinid="000"
+fi
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU ] ; then
+   now_shukkinid="$(cat /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU)"
+else
+   now_shukkinid="000"
+fi
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO ] ; then
+   now_taishou="$(cat /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO)"
+else
+   now_taishou="000"
+fi
+
+#---------------------
+# 入出金項目マスタ
+#---------------------
+
+# IOcodeが10:入金のものだけで入金マスタをつくる
+cat $tmp-data        |
+awk '$2=="10"{print $1,$4,$NF!="-1"?$3:"0","2014071500000000","00078"}' |
+rank                 |
+awk '{print $1+"'${now_nyuukinid}'",$0}' |
+self 3 1 4/NF        |
+maezero 2.3          |
+LANG=C sort          > $tmp-nyuukin_master
+# 1:ItemKindCode  2:入金項目ID 3:入金項目名 4:表示順 5:登録日時
+# 6:USERID
+
+# IOcodeが20:出勤のものだけで出金マスタをつくる
+cat $tmp-data        |
+awk '$2=="20"{print $1,$4,$NF!="-1"?$3:"0","2014071500000000","00078"}' |
+rank                 |
+awk '{print $1+"'${now_shukkinid}'",$0}' |
+self 3 1 4/NF        |
+maezero 2.3          |
+LANG=C sort          > $tmp-shukkin_master
+# 1:ItemKindCode 2:出金項目ID 3:出金項目名 4:表示順 5:登録日時
+# 6:USERID
+
+#----------------------------------
+# 立替対象項目(入居者以外)マスタ
+#----------------------------------
+cat $tmp-data2       |
+rank                 |
+awk '{print $2,$1+"'${now_taishou}'",$4,$NF!="0"?"9":$3,"2014071500000000","00078"}' |
+maezero 2.3          |
+LANG=C sort          > $tmp-taishou_master
+# 1:OtherTargetCode 2:立替対象ID 3:立替対象名 4:表示順 5:登録日時
+# 6:USERID
+
+[ -s $tmp-taishou_master -a -s $tmp-shukkin_master -a -s $tmp-nyuukin_master ] || error_exit "立替金マスタ作成に失敗しました"
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "立替金マスタ作成に失敗しました"
+
+#-------------------------------------
+# 立替金実績
+#/home/hands/E-LIFE/TATEKAEKIN/POMPA/$施設/$年月/$年月.TATEKAEKIN
+#/DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN/$施設/$年月/$年月.TATEKAEKIN
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+# 11:建屋            12:フロア  13:ユニット 14:立替金ID    15:登録時間
+
+cat $tmp-nyuukin_master $tmp-shukkin_master |
+self 1 2                                    |
+LANG=C sort -u                              > $tmp-tatekaekoumoku_master
+
+ if [ -s /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN ] ; then
+   now_tatekaekin_tourokuid=$(cat /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN)
+ else
+   now_tatekaekin_tourokuid="0000000"
+ fi
+
+cat $tmp-data3      |
+# 1:TmpBillingID                          2:PaymentDate  3:ServiceType 4:UserID        5:TempMethodCode(立替方法)
+# 6:IOcode(入出金フラグ、10=入金,20=出金) 7:ItemKindCode 8:Money       9:Remarks(摘要) 10:StaffID
+
+# ServiceTypeが33以外なら立替対象はsonota、33ならnyukyosha 
+awk '{if($3!="33"){print $2,"sonota",$4,$6=="10"?"1":"2",$5,$6=="10"?"1":"2",$7,$9,$6=="10"?$8:"0",$6!="10"?$8:"0"}else{print $2,"nyukyosha",$4,$6=="10"?"1":"2",$5,$6=="10"?"1":"2",$7,$9,$6=="10"?$8:"0",$6!="10"?$8:"0"}
+     }'             |
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+
+# 立替方法の置き換え10現金⇒2、20振込み⇒1、30その他⇒3
+awk '{if($5=="10"){print $0,"2"}
+      else if($5=="20"){print $0,"1"}
+      else{print $0,"3"}
+     }'             |
+self 1/4 NF 6/NF-1  |
+# 立替フラグ
+cjoin1 key=7 $tmp-tatekaekoumoku_master - |
+delf 7              |
+rank                |
+awk '{print $1+"'${now_tatekaekin_tourokuid}'",$0}' |
+maezero 1.7         |
+self 3/NF 1         > $tmp-tatekaekin_data_before
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+# 11:立替金ID
+
+new_tatekaekin_tourokuid="$(self NF $tmp-tatekaekin_data_before | LANG=C sort |tail -1)"
+
+[ -s $tmp-tatekaekin_data_before ] || error_exit "立替金実績作成に失敗しました"
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "立替金実績作成にに失敗しました"
+
+# 立替対象ごとに利用者IDあるいは対象IDと施設ID～ユニットIDを取得
+ #-------
+ # sonota
+ #-------
+self 1 2 $tmp-taishou_master > $tmp-taishou_master_newid
+
+cat $tmp-tatekaekin_data_before                 |
+awk '$2=="sonota"'  |
+LANG=C sort -k3,3   |
+#立替対象項目(入居者以外)マスタとじょいん
+cjoin1 key=3 $tmp-taishou_master_newid -        |
+delf 3              |
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+# 11:立替金ID
+awk '{print $0,"_","_","_","2014071500000000"}' |
+self 1/10 NF-3/NF-1 NF-4 NF                     > $tmp-sonota
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+# 11:建屋            12:フロア  13:ユニット 14:立替金ID    15:登録時間
+
+ #-----------
+ # nyukyosha
+ #-----------
+
+[ -s /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} ] || error_exit "利用者情報がありません。利用者情報を先にアップロードしてください。"
+[ -s /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SHISETSU_RIYOUSHA_STATUS_${Shisetsu} ] || error_exit "利用者情報がありません。利用者情報を先にアップロードしてください。"
+
+ # 準備
+ cat /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SHISETSU_RIYOUSHA_STATUS_${Shisetsu} | 
+ self 6 2/4            |
+ LANG=C sort -u        |
+ getlast 1 1           > $tmp-riyousha_tateya_floor_unit
+
+# 利用者を取得
+cat $tmp-tatekaekin_data_before                 |
+awk '$2=="nyukyosha"'  |
+LANG=C sort -k3,3      |
+cjoin1 +ng key=3 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-nyuukyosha 2>$tmp-tatekaekin_nyuukyosha_${Shisetsu}_ng
+
+[ -s $tmp-nyuukyosha ] || error_exit
+
+# 建屋～フロアを取得
+cat $tmp-nyuukyosha |
+delf 3              |
+LANG=C sort -k3,3   |
+cjoin1 +ng key=3 $tmp-riyousha_tateya_floor_unit - > $tmp-nyuukyosha_tateya 2>$tmp-tatekaekin_nyuukyosha_shisetsu_status_${Shisetsu}_ng
+# 1:立替日付YYYYmmdd 2:立替対象     3:利用者ID 4:建屋           5:フロア
+# 6:ユニット         7:入出金フラグ 8:立替方法 9:立替項目フラグ 10:立替項目
+# 11:摘要            12:入金額      13:出金額  14:立替金ID
+
+[ -s $tmp-nyuukyosha_tateya ] || error_exit
+
+# 入居者データとその他データをあわせる
+cat $tmp-nyuukyosha_tateya |
+self 1/3 7/13 4/6 NF       |
+awk '{print $0,"2014071500000000"}' |
+# 1:立替日付YYYYmmdd 2:立替対象 3:利用者ID  4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ   7:立替項目 8:摘要      9:入金額       10:出金額
+# 11:建屋            12:フロア  13:ユニット 14:立替金ID    15:登録時間
+cat - $tmp-sonota          |
+LANG=C sort                > $tmp-tatekaekin_jisseki_result_all
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "立替金実績取込に失敗しました"
+
+moto_gyo=$(gyo $tmp-data3)
+result_gyo=$(gyo $tmp-tatekaekin_jisseki_result_all)
+
+[ ! -s "$tmp-tatekaekin_jisseki_result_all" -o "$(retu $tmp-tatekaekin_jisseki_result_all)" != "15" ] && error_exit "立替金実績取込に失敗しました"
+#[ "${moto_gyo}" = "${result_gyo}" ] || error_exit
+#--------------------
+# 取込施設のみの情報を指定の場所へ保存
+
+cp $tmp-tatekaekin_jisseki_result_all /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/TATEKAEKIN_JISSEKI_ALL_${Shisetsu}
+
+# 入金出金対象者マスタを整形
+cat $tmp-nyuukin_master  |
+delf 1                   |
+LANG=C sort -u           > $tmp-nyuukin_master_${Shisetsu}_result
+
+mkdir -p /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU ] ; then
+  cat $tmp-nyuukin_master_${Shisetsu}_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU |
+  LANG=C sort -u           > $tmp-nyuukin_master_result
+else
+  cat $tmp-nyuukin_master_${Shisetsu}_result > $tmp-nyuukin_master_result
+fi
+
+cat $tmp-shukkin_master  |
+delf 1                   |
+LANG=C sort -u           > $tmp-shukkin_master_${Shisetsu}_result
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU ] ; then
+  cat $tmp-shukkin_master_${Shisetsu}_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU |
+  LANG=C sort -u           > $tmp-shukkin_master_result
+else
+  cat $tmp-shukkin_master_${Shisetsu}_result > $tmp-shukkin_master_result
+fi
+cat $tmp-taishou_master  |
+delf 1                   |
+LANG=C sort -u           > $tmp-taishou_master_${Shisetsu}_result
+
+if [ -s /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO ] ; then
+  cat $tmp-taishou_master_${Shisetsu}_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO |
+  LANG=C sort -u           > $tmp-taishou_master_result
+else
+  cat $tmp-taishou_master_${Shisetsu}_result > $tmp-taishou_master_result
+fi
+
+cp $tmp-nyuukin_master_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/NYUKIN_KOUMOKU_${Shisetsu}
+cp $tmp-shukkin_master_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SHUKKIN_KOUMOKU_${Shisetsu}
+cp $tmp-taishou_master_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/TATEKAE_TAISHO_${Shisetsu}
+#----------------------
+# テーブル更新
+
+ # 立替金マスタ
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/back
+cp -p /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/back/NYUKIN_KOUMOKU_${cur_time}
+cp -p /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/back/SHUKKIN_KOUMOKU_${cur_time}
+cp -p /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/back/TATEKAE_TAISHO_${cur_time}
+
+
+   cp $tmp-nyuukin_master_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/NYUKIN_KOUMOKU
+   cp $tmp-shukkin_master_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/SHUKKIN_KOUMOKU
+   cp $tmp-taishou_master_result /home/hands/E-LIFE/TATEKAEKIN/TBL/${Shisetsu}/TATEKAE_TAISHO
+
+ # 立替金実績
+  cat $tmp-tatekaekin_jisseki_result_all |
+  awk '{print substr($1,1,6)}'  |
+  LANG=C sort -u |
+# 1:年月
+  while read NENGETSU ;do
+
+    cat $tmp-tatekaekin_jisseki_result_all |
+    awk '$1~/^'${NENGETSU}'/'   > $tmp-data_${NENGETSU}
+
+   # 該当年月の実績があったら更新
+   if [ -s $tmp-data_${NENGETSU} ] ; then
+     mkdir -p /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}
+     mkdir -p /DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN/${Shisetsu}/${NENGETSU}
+      # 既にデータがあったら念のためバックアップとる
+      if [ -s /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/${NENGETSU}.TATEKAEKIN ] ; then
+        mkdir -p /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/back
+        cp -p /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/${NENGETSU}.TATEKAEKIN /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/back/${NENGETSU}.TATEKAEKIN_${cur_time}
+
+      # 既にあるデータと一つにする
+        cat $tmp-data_${NENGETSU} /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/${NENGETSU}.TATEKAEKIN |
+        LANG=C sort > $tmp-data_${NENGETSU}_result
+      else
+        cat $tmp-data_${NENGETSU} > $tmp-data_${NENGETSU}_result
+      fi
+
+     cp $tmp-data_${NENGETSU}_result /home/hands/E-LIFE/TATEKAEKIN/POMPA/${Shisetsu}/${NENGETSU}/${NENGETSU}.TATEKAEKIN
+     cp $tmp-data_${NENGETSU}_result /DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN/${Shisetsu}/${NENGETSU}/${NENGETSU}.TATEKAEKIN
+   else
+     :
+   fi
+
+  done
+
+  # 管理番号
+  [ -s /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN ] && cp -p /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN_${cur_time}
+  echo "${new_tatekaekin_tourokuid}"  > /home/hands/work/okuda/DATA_TORIKOMI_RESULT/TATEKAEKIN_ID
+  echo "${new_tatekaekin_tourokuid}"  > /DATA/E-LIFE/TATEKAEKIN/KANRI/ID/TATEKAEKIN
+
+
+
+#-------------------------------------------------------------
+# データのチェック用
+cp $tmp-*ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}
+#cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA 
+
+#-------------------------------------------------------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

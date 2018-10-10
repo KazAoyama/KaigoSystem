@@ -1,0 +1,124 @@
+#!/bin/bash
+#
+# KENKOUSHINDANSHO_UPLOAD.SEARCH : 健康診断書アップロード.SEARCH
+#
+# Usage : KENKOUSHINDANSHO_UPLOAD.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.Inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+# SHISETSU_RIYOSHA_STATUSの準備
+mukou=$(mdate ${today}/+31)
+kanata=$(mdate ${today}/-31)
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 <(echo $shisetsu)                                |
+awk '$2=="'${tateya}'"'                                      |
+awk '$7<="'${mukou}'" && $8>="'${kanata}'"'                  |
+awk '$9==1'                                                  |
+LANG=C sort -u -k1,3n -k4,4n -k6,6n                          > $tmp-riyosha_status
+
+# 検索
+cat $tmp-riyosha_status                                      |
+if [ "${floor}" = 0 ];then
+  cat -
+else
+  awk '$3=="'${floor}'"' -
+fi                                                           |
+if [ "${unit}" = 0 ];then
+  cat -
+else
+  awk '$4=="'${unit}'"' -
+fi                                                           |
+if [ ${riyosha_name} = "00" ];then
+  cat -
+else
+  awk '$6=="'${riyosha_name}'"' -
+fi                                                           > $tmp-taisho_status
+
+# 居室番号のマスタ準備
+self 6 5 $tmp-taisho_status                                  |
+LANG=C sort -u -k1,1                                         > $tmp-riyosha_room
+
+# 利用者基本の準備
+self 1 2 3 ${riyosha_dir}/RIYOUSHA_KIHON                     > $tmp-riyosha_kihon
+
+# 備考の準備
+if [ ${riyosha_name} = "00" ];then
+  cat ${pompa_dir}/KENKOUSHINDANSHO/${shisetsu}/*
+else
+  cat ${pompa_dir}/KENKOUSHINDANSHO/${shisetsu}/${riyosha_name}
+fi                                                           |
+awk '$(NF-2)!=9'                                             |
+LANG=C sort -k1,1                                            |
+self 1 2                                                     |
+awk '{print substr($1,12),$2}'                               > $tmp-biko
+[ "$(gyo $tmp-biko)" = 0 ] && echo "@ @" > $tmp-biko
+cp $tmp-biko ${work}/biko_master
+
+self 6 $tmp-taisho_status                                    |
+LANG=C sort -u                                               > $tmp-taisho_list
+
+ls /home/hands/E-LIFE/UNEI/TENPU/KENKOUSHINDANSHO/           |
+LANG=C sort -u                                               |
+join0 key=1 $tmp-taisho_list                                 |
+while read RIYOSHA_DIR ; do
+  ls /home/hands/E-LIFE/UNEI/TENPU/KENKOUSHINDANSHO/${RIYOSHA_DIR}/*_KENKOUSHINDANSHO.pdf
+done                                                         |
+tee ${work}/butalist |
+awk '{print substr($1,48,8),substr($1,57,4)"/"substr($1,61,2)"/"substr($1,63,2)"/"substr($1,65,2)":"substr($1,67,2),substr($1,12)}' |
+tee ${work}/butagorira |
+LANG=C sort -k3,3                                            |
+join2 key=3 $tmp-biko                                        |
+LANG=C sort -k1,1                                            |
+join1 key=1 $tmp-riyosha_room                                |
+join1 key=1 $tmp-riyosha_kihon                               |
+tee ${work}/biutahaoogui |
+LANG=C sort -k4,4 -k3,3                                      |
+awk '{print $1,$4,$2,$5,$7,$6,"閲覧"}'                       |
+if [ -n ${biko} -a ${biko} != "_" ];then
+  awk '$5~/'${biko}'/'
+else
+  cat -
+fi                                                           |
+cat -
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,412 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KOJINKAKUTEI : 個人確定処理 開発中！
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.KOJINKAKUTEI namefile datafile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+#source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+##時間みたいだけ
+#test_start_time=$(date "+%s")
+
+# 引数設定
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+function error_exit {
+  message="${1}"
+  cat ${tmp}-lock |
+  while read name ;do
+    rm -f ${name}.LOCK
+  done
+  echo "${message}"
+#  rm ${tmp}-*
+  exit 1
+}
+
+# 変数(子でもtmpは共用なのでnameに追記する)
+#echo "tmp /home/hands/work/otsubo/keisan${$}.$(date +%N)" |
+echo "tmp /var/tmp/keisan${$}.$(date +%N)" |
+cat - ${namefile}                          > ${namefile}.new
+eval $(name-source ${namefile}.new)
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 請求処理月とその他日付設定
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# -----------------------------------------------------------------------------------------------
+# ディレクトリ
+
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU ] && mkdir ${input_dir}/${today}/SEIKYU
+[ ! -e ${seikyu_dir}/${shisetsu} ] && mkdir ${seikyu_dir}/${shisetsu}
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month} ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO
+[ ! -e ${seikyu_dir}/${shisetsu}/HEAD ] && mkdir ${seikyu_dir}/${shisetsu}/HEAD
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# ロックをかける
+# 更新がかかるのはヘッダのみ、明細は上書きなのでロックの必要なし
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 請求対象者リスト
+cjoin0 key=1 <(echo "${shisetsu}") ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:削除フラグ 10:更新時間
+# 11:更新者
+######################################################青葉台2丁目の9月の請求終わったら消す
+#if [ "${shisetsu}" = "0001" ];then
+#awk '$2=="02"'
+#else
+#cat -
+#fi |
+######################################################################################################################
+awk '$9!="9"'              |
+awk '{from=substr($7,1,6);
+      to=substr($8,1,6);
+      print $0,from,to}' - |
+# 1:施設ID   2:建屋ID    3:フロアID  4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日    8:退去日    9:削除フラグ 10:更新時間
+# 11:更新者  12:入居年月 13:退去年月
+awk '$12<="'${seikyu_syori_month}'" && $13>="'${seikyu_syori_month}'"' - |
+self 6 12/13 1/5           |
+# 1:入居者ID 2:入居年月   3:退去年月 4:施設ID 5:建屋ID
+# 6:フロアID 7:ユニットID 8:居室ID
+LANG=C sort -k1,3          |
+# 同じ月で引越しなどしていると二行あるが、一行にしたいのでソートしてgetlastする(inputに残したり明細に表示する部屋番号はこれ)
+getlast 1 1                |
+self 1 4/NF                |
+# 1:入居者ID 2:施設ID 3:建屋ID 4:フロアID 5:ユニットID
+# 6:居室ID
+tee ${tmp}-member_heya     |
+self 1                     > ${tmp}-member
+# 1:入居者ID
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました"
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 2014/05/08追加
+# 契約状況リスト
+
+# 画面に契約状況を表示するためリストを作成
+matsubi=$(mdate ${seikyu_syori_month}m | tarr | tail -n1)
+awk '$22!="9"' ${riyosha_dir}/RIYOUSHA_KEIYAKU |
+# 1:利用者ID   2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID 7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日  12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考      17:予備       18:予備       19:予備      20:予備
+# 21:予備      22:削除フラグ 23:更新日     24:更新者
+self 1 12 13 9                     |
+# 1:利用者ID 2:契約開始日 3:契約終了日 4:契約種類ID
+
+# 契約種別IDは固定(001：体験、002：ショートステイ、003-007：本入居)のため絞込み
+awk '$4~/^00[1-7]$/'               |
+# 請求の月を含む期間を抽出し、同じ利用者で複数行出る場合は最新をとる
+awk '$2<="'${matsubi}'" && $3>="'${seikyu_syori_month}'"' |
+LANG=C sort                        |
+getlast 1 1                        |
+delf 2 3                           |
+cjoin0 key=1 ${tmp}-member         > ${tmp}-member_keiyaku
+# 1:利用者ID 2:契約種類ID
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 請求対象者リストが空のときは対象者がいないのでここで処理終了
+if [ ! -s ${tmp}-member ] ; then
+  error_exit "請求の対象者がいません"
+fi
+# -----------------------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------------------
+# 使用するマスタの準備
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.MST ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ------------------------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------------------
+# 支払の集計
+
+## 1.請求対象月の請求金額を普通に計算する(部屋単位の項目もなにも考えず全員取る)(月額利用料のみ対象)
+##   特販と税計算もする
+## 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+##   a.先取りの請求が始まった項目を遡って、請求できていないものを請求するレコードを作製する
+##     特販と税計算もする
+##   b.先取りの請求が終わった項目を遡って、返金するレコードを作製する
+##     特販と税計算もする
+##   c. 返金したレコード、日割り返金したレコードはフラグ更新する 更新データ作成箇所!!
+## 3.実績系をとりまとめる(税はデータに入ってるから計算しないはず)
+## 4.作成した全てのinputに対して口座情報と請求先設定ファイルをみて支払者ごとのキーをふりファイルを分ける
+##   ヘッダも作成する 更新データ作成箇所!!
+ #
+# 部屋当たりの支払について
+#
+# 電話以外の部屋あたりにかかる金額(賃料、利用料)は「支払う人だけ」部屋当たりの金額を設定する。
+# 引越しや退去などで設定者の起算終了日を入力する場合は、
+# 同室の人の起算開始日に上記日付の翌日日付を入れる(月内途中から部屋に残る人が支払い開始)
+# じゃないととりっぱぐれる
+
+# ------------------------------------
+# 1.請求対象月の請求金額を普通に計算する(部屋単位の項目もなにも考えず全員取る)(月額利用料のみ対象)
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ------------------------------------
+
+# ------------------------------------
+# 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_FUSOKU ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_HENKIN ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_FLG ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ------------------------------------
+
+# ------------------------------------
+# 一部後回しにしたものの特販と税と日割り計算する
+
+# 計算手順
+# 日割り判定する
+#   日割り対象：
+#     特販対象：日割り金額-日割り値引金額を算出し採用
+#     特販対象外：日割り金額を算出し採用
+#   日割り対象外：
+#     特販対象：特販金額を採用
+#     特販対象外：通常金額を採用
+# 税計算する
+
+# 月額利用料のinput発生年月日はその月初とする
+
+# 対象は1と2-aで作成したファイル
+# -
+# 1:${tmp}-getsugaku_riyouryou_kihon
+# 2-a:${tmp}-getsugaku_riyouryou_kako_kihon
+# -
+# 1:入居者ID      2:請求月      3:契約ID   4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分 9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID  14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO
+
+# ---------------------
+# 日割り処理とそうでない処理を別ファイルにする
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_BUNKI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+# 日割り側の処理
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_HIWARI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+# 日割りしない側の処理
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_NOTHIWARI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+# 通常処理の日割りとそうでないものあわせて税計算する
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_MATOME ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ---------------------
+
+# 不在返金する人のデータを計算
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.FUZAIHENKIN ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ---------------------
+
+# 不在返金する人のデータを計算(1ヶ月以上不在の場合サービス返金)
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.GAIHAKUHENKIN ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ---------------------
+
+# ------------------------------------
+
+# ------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+# --------------------
+# 電話課金の集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.DENWA ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# 電気水道の集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.SUIDODENKI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# --------------------
+# 立替金の集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.TATEKAE ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# --------------------
+# 有料サービスの集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.SERVICE ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# --------------------
+# 食事実績の集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.SHOKUJI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# --------------------
+# 欠食実績の集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KESSHOKU ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# --------------------
+# イベントの集計
+(
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.EVENT ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && : > ${tmp}-err2
+) &
+# --------------------
+
+# ------------------------------------
+
+wait
+[ -e ${tmp}-err2 ] && error_exit "$(cat ${tmp}-result)"
+
+# ------------------------------------
+# 4.口座情報と請求先設定ファイルをみて支払者ごとのキーをふりファイルを分ける
+
+# 振り分け設定二種類を取得する。振り分けの順番は下記番号
+#   1.請求先設定情報：請求の一部を他入居者口座から払う
+#   2.契約の口座情報：他入居者口座から払う(明細は別々、明細は一緒)、自身の口座
+#
+# 月額利用料の振り分け設定する
+ 
+# --------------------
+# 請求先設定情報と口座情報の取得
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.MST_KOUZA ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# ヘッダデータ作成
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.HEAD ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# 明細データ作成
+
+# 集計対象
+# -
+# 10:施設利用料明細行(*:請求先設定項目)
+#   ${tmp}-HENKIN_ALL_${member_id} *
+#   ${tmp}-HENKIN_HIWARI.${member_id} *
+#   ${tmp}-TUJYOU_INPUT *
+#   ${tmp}-SHOKUJI_INPUT
+#   ${tmp}-KESSHOKU_INPUT
+#   ${tmp}-DENWA_INPUT
+# -
+# 15:施設利用料合計行
+# -
+# 20:個別利用料明細行
+#   ${tmp}-TATEKAE_INPUT
+#   ${tmp}-SERVICE_INPUT
+#   ${tmp}-EVENT_INPUT1
+#   ${tmp}-EVENT_INPUT2
+# -
+# 25:個別利用料合計行
+# -
+# 30:全項目合計行
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.MEISAI ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+# ------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 計算はしるごとに上書きしているディレクトリは中身を空にする(ごみがのこるの防ぐため)
+# (明細の処理月内すべて、過去も含む)
+
+rm ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/*
+rm ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO/*
+# -----------------------------------------------------------------------------------------------
+
+# ------------------------------------
+# データ更新
+
+# 更新対象
+# -
+# 過去明細
+#   ${tmp}-SEIKYU_MEISAI.${年月}.*.new 更新リスト：${tmp}-kako_meisai_koushin_name
+# 現在明細
+#   ${tmp}-MEISAI_KANSEI.* 更新リスト：${tmp}-genzai_meisai_koushin_name
+# 現在ヘッダ
+#   ${tmp}-HEAD_MST
+#   ${tmp}-HEAD_INPUT
+# -
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KOUSHIN ${namefile}.new > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ------------------------------------
+
+
+# -----------------------------------------------------------------------------------------------
+# ロックを解除
+# 更新がかかるのはヘッダのみ、明細は上書きなのでロックの必要なし
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# -----------------------------------------------------------------------------------------------
+
+echo "計算が終了しました"
+
+##時間みたいだけ
+#test_end_time=$(date "+%s")
+
+#result_time="$(echo "$test_start_time $test_end_time" | awk '{print $2-$1}')"
+#echo "計算が終了しました($result_time)"
+
+#rm -f ${tmp}-*
+exit 0

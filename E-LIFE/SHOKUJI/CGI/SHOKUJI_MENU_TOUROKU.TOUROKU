@@ -1,0 +1,401 @@
+#!/bin/bash
+#
+# SHOKUJI_MENU_TOUROKU.TOUROKU
+# 食事メニュー登録
+#
+# Written by E.Okuda 20140110
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/SHOKUJI/KANRI"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+  Shisetsu=$(nameread        "shisetsu"            $namedata)
+  Tateya=$(nameread          "Tateya"              $namedata)
+  KikanFrom=$(nameread       "KikanFrom"           $namedata | sed 's/\///g')
+  KikanTo=$(nameread         "KikanTo"             $namedata | sed 's/\///g')
+  Iro=$(nameread             "Iro"        $namedata)
+  Shokushu=$(nameread        "Shokushu"          $namedata)
+  ShokujiMenu=$(nameread     "ShokujiMenu"   $namedata | sed 's/ //g'| sed 's/\\n//g')
+  NyuukyoshaKakaku=$(nameread  "NyuukyoshaKakaku"   $namedata | han)
+  Guest1Kakaku=$(nameread    "Guest1Kakaku"     $namedata | han)
+  Guest2Kakaku=$(nameread    "Guest2Kakaku"     $namedata | han)
+  StaffKakaku=$(nameread     "StaffKakaku" ${namedata} | han)
+  # グリーンハウス価格追加(2015/07/29)
+  GreenHouseKakaku=$(nameread "GreenHouseKakaku" ${namedata} | han)
+  Choushoku=$(nameread       "Choushoku" ${namedata})
+  Chuushoku=$(nameread       "Chuushoku" ${namedata})
+  Yuushoku=$(nameread        "Yuushoku" ${namedata})
+  Oyatsu=$(nameread          "Oyatsu" ${namedata})
+  SHOKUJIMENUID=$(nameread   "SHOKUJIMENUID" ${namedata})
+  Hyouji=$(nameread          "Hyouji" ${namedata})
+  KisshokuTaishou=$(nameread "KisshokuTaishou" ${namedata})
+
+  [ -z "${KisshokuTaishou}" ] && KisshokuTaishou="_"
+
+  # ドリンクタイプ追加
+  drinkType=$(nameread "drinkType" ${namedata})
+  [ -z "${drinkType}" ] && drinkType="_"
+
+  # レストラン表示追加
+  hideRestaurant=$(nameread "hideRestaurant" ${namedata})
+  [ -z "${hideRestaurant}" ] && hideRestaurant="_"
+
+  # 表示順は数字じゃないものが入ってきたら空にする
+  echo "${Hyouji}"                  |
+  awk '$1!~/^[0-9]*$/{print $0}'    > $tmp-hyouji_not_number
+  [ -s $tmp-hyouji_not_number ] && Hyouji="_"
+
+  [ -z "${KikanTo}" -o "${KikanTo}" = "_" ] && KikanTo="99999999"
+
+# 有効食事の取得
+   [ -z "${Choushoku}" -o "${Choushoku}" = "_" ] && Choushoku="0"
+   [ -z "${Chuushoku}" -o "${Chuushoku}" = "_" ] && Chuushoku="0"
+   [ -z "${Yuushoku}" -o "${Yuushoku}" = "_" ] && Yuushoku="0"
+   [ -z "${Oyatsu}" -o "${Oyatsu}" = "_" ] && Oyatsu="0"
+
+# 価格の値
+   [ -z "${NyuukyoshaKakaku}" -o "${NyuukyoshaKakaku}" = "_" ] && NyuukyoshaKakaku="0"
+   [ -z "${Guest1Kakaku}" -o "${Guest1Kakaku}" = "_" ] && Guest1Kakaku="0"
+   [ -z "${Guest2Kakaku}" -o "${Guest2Kakaku}" = "_" ] && Guest2Kakaku="0"
+   [ -z "${StaffKakaku}" -o "${StaffKakaku}" = "_" ] && StaffKakaku="0"
+   [ -z "${GreenHouseKakaku}" -o "${GreenHouseKakaku}" = "_" ] && GreenHouseKakaku="0"
+#--------------------------------------------------------------
+###############################
+# # MODE=tourokuのとき
+###############################
+
+if [ "${MODE}" = "touroku" ] ; then
+
+# 入力データのチェック
+#
+#  [ -z "${riyousha_i}" -o "${riyousha_i}" = "_" ] && error_exit "利用者を選択してください。"
+  [ -z "${KikanFrom}" -o "${KikanFrom}" = "_" ] && error_exit "期間を入力してください。"
+  [ -z "${ShokujiMenu}" -o "${ShokujiMenu}" = "_" ] && error_exit "メニュー名を入力してください。"
+  [ "${NyuukyoshaKakaku}" = "_"  -a "${Guest1Kakaku}" = "_"  -a "${Guest2Kakaku}" = "_" -a "${StaffKakaku}" = "_" ] && error_exit "金額を入力してください。"
+
+  [ "${Choushoku}" != "1" -a "${Chuushoku}" != "1" -a "${Yuushoku}" != "1" -a "${Oyatsu}" != "1" ] && error_exit "有効食事をチェックしてください。"
+
+#--------------------------------------------------------------
+# 入力チェック
+
+  echo "${KikanFrom}" |
+  awk '$1!~/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/' > $tmp-kikan_from_error
+  echo "${KikanTo}" |
+  awk '$1!~/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/' > $tmp-kikan_to_error
+
+  [ -s $tmp-kikan_from_error ] && error_exit "期間(自)の値が不正です。"
+  [ -s $tmp-kikan_to_error ] && error_exit "期間(至)の値が不正です。"
+  [ "${KikanTo}" != "_" -a "${KikanFrom}" -gt "${KikanTo}" ] && error_exit "期間(自)より期間(至)は後の日付を入力してください。"
+
+  echo "${NyuukyoshaKakaku}" |
+  awk '$1!~/^[0-9.]*$/{print $0}' > $tmp-nyuukyosha_kakaku_error
+
+  echo "${Guest1Kakaku}"      |
+  awk '$1!~/^[0-9.]*$/{print $0}' > $tmp-guest_kakaku_error
+
+  echo "${Guest2Kakaku}"      |
+  awk '$1!~/^[0-9.]*$/{print $0}'  > $tmp-guest_kakaku_error2
+  
+  echo "${StaffKakaku}"      |
+  awk '$1!~/^[0-9.]*$/{print $0}'   > $tmp-staff_kakaku_error
+
+  echo "${GreenHouseKakaku}"      |
+  awk '$1!~/^[0-9.]*$/{print $0}'   > $tmp-greenhouse_kakaku_error
+
+  [ -s $tmp-nyuukyosha_kakaku_error ] && error_exit "入居者価格の値が不正です。(半角数字で入力してください。)"
+  [ -s $tmp-guest_kakaku_error ] && error_exit "ゲスト１価格の値が不正です。(半角数字で入力してください。)"
+  [ -s $tmp-guest_kakaku_error2 ] && error_exit "ゲスト２価格の値が不正です。(半角数字で入力してください。)"
+  [ -s $tmp-staff_kakaku_error ] && error_exit "スタッフ価格の値が不正です。(半角数字で入力してください。)"
+  [ -s $tmp-greenhouse_kakaku_error ] && error_exit "グリーンハウス価格の値が不正です。(半角数字で入力してください。)"
+
+#--------------------------------------------------------------
+# 食事メニューID
+  SHOKUJIMENUID="$(nameread "SHOKUJIMENUID" ${namedata})"
+
+if [ -n "${SHOKUJIMENUID}" -a "${SHOKUJIMENUID}" != "_" ] ; then
+   shokujimenu_id="$(echo "${SHOKUJIMENUID}")"
+else
+   # 新規データならばIDをふる(利用者ID)
+   ### 管理IDの発番
+   # 今回取得するID数
+   last_no="1"
+
+   mkdir -p ${kanri_dir}/${Shisetsu}
+   touch ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID
+    [ -s ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID ] || echo "001" > ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID
+   # 現状の最終番号
+    now_last_no=$(cat ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID)
+    # 今回の発番後に、数字が限度を超えないかチェック
+    new_last_no=$(expr ${now_last_no} + ${last_no})
+
+    # 超えてたらリセット
+    [ ${new_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID
+
+    get_no ${last_no} ${kanri_dir}/${Shisetsu}/SHOKUJI_MENU_ID > $tmp-id_all
+
+    # この場合取得するのは一つなのでそのまま変数に
+    shokujimenu_id="$(cat $tmp-id_all)"
+    #data_id="${today}${new_no}"
+fi
+
+#--------------------------------------------------------------
+# 更新テーブル
+#
+# 食事メニューテーブル
+#
+#--------------------------------------------------------------
+  ##########################
+  # 食事メニューテーブル
+  ##########################
+
+# 有効食事の取得
+   [ -z "${Choushoku}" -o "${Choushoku}" = "_" ] && Choushoku="0"
+   [ -z "${Chuushoku}" -o "${Chuushoku}" = "_" ] && Chuushoku="0"
+   [ -z "${Yuushoku}" -o "${Yuushoku}" = "_" ] && Yuushoku="0"
+   [ -z "${Oyatsu}" -o "${Oyatsu}" = "_" ] && Oyatsu="0"
+
+# 価格の値
+   [ -z "${NyuukyoshaKakaku}" -o "${NyuukyoshaKakaku}" = "_" ] && NyuukyoshaKakaku="0"
+   [ -z "${Guest1Kakaku}" -o "${Guest1Kakaku}" = "_" ] && Guest1Kakaku="0"
+   [ -z "${Guest2Kakaku}" -o "${Guest2Kakaku}" = "_" ] && Guest2Kakaku="0"
+   [ -z "${StaffKakaku}" -o "${StaffKakaku}" = "_" ] && StaffKakaku="0"
+   [ -z "${GreenHouseKakaku}" -o "${GreenHouseKakaku}" = "_" ] && GreenHouseKakaku="0"
+
+#------------------------------------------------------------------------------------
+# 追加データの作成
+# 20150729 グリーンハウス価格追加
+  echo "${shokujimenu_id}" "${ShokujiMenu}" "${Shokushu}" "${Shisetsu}" "${Tateya}" "${NyuukyoshaKakaku}" "${Guest1Kakaku}" "${Guest2Kakaku}" "${StaffKakaku}" "${Choushoku}" "${Chuushoku}" "${Yuushoku}" "${Oyatsu}" "${KikanFrom}" "${KikanTo}" "${Iro}" "${Hyouji}" "${KisshokuTaishou}" "${GreenHouseKakaku}" "_" "_" "1" "${cur_time}" "${USERID}">  $tmp-shokuji_menu_input
+# 1:メニューid 2:メニュー名  3:食事種類    4:施設ID          5:建屋ID
+# 6:入居者価格 7:ゲスト1価格 8:ゲスト2価格 9:スタッフ価格    10:朝食
+# 11:昼食      12:夕食       13:おやつ     14:期間From(西暦) 15:期間To(和暦)
+# 16:色        17:予備項目1（2014/9/3より表示順番号） 18:予備項目2(喫食率対象)  19:グリーンハウス価格      20:予備項目4
+# 21:予備項目5 22:削除フラグ 23:更新日時   24:更新者
+
+# レストラン表示
+  echo "${shokujimenu_id}" "${hideRestaurant}" "1" "${cur_time}" "${USERID}" > $tmp-hiderestaurant_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# ドリンクタイプ
+  :> $tmp-drink_type_input
+  if [ "${Shokushu}" = "03" ] ; then
+     echo "${shokujimenu_id}" "$drinkType" "1" "${cur_time}" "${USERID}" > $tmp-drink_type_input
+  fi
+
+
+# 削除の場合
+elif [ "${MODE}" = "sakujyo" ] ; then
+ cat ${namedata} |
+ awk '$1~/sakujyocheck*/{print $2}' |
+ LANG=C sort  > $tmp-sakujyo_taishou
+# 1:メニューiD
+
+ [ ! -s "$tmp-sakujyo_taishou" ] && error_exit "削除対象が選択されていません。"
+
+ cat $tmp-sakujyo_taishou |
+ join1 key=1 - ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU |
+ awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+  self 1/21 NF-2 NF-1 NF  > $tmp-shokuji_menu_input
+fi
+
+# レストラン対象施設かどうか
+cat ${home_dir}/TBL/CONFIG/RESTAURANT_SHISETSU_LIST |
+while read res_shisetsuid ;do
+    if [ "${res_shisetsuid}" = "${Shisetsu}" ] ; then
+       echo "1" > $tmp-disp_restaurant
+       break
+    else
+       echo "0" > $tmp-disp_restaurant
+    fi
+: ; done
+
+checkRestaurant=$(cat $tmp-disp_restaurant)
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+${Shisetsu}/SHOKUJI_MENU SHOKUJI_MENU
+FIN
+
+if [ "${checkRestaurant}" == "1" ] ; then
+#if [ "${Shisetsu}" = "0003" -o "${Shisetsu}" = "0006" ] ; then
+cat <<- FINN | LANG=C sort -u >> $tmp-target-table
+${Shisetsu}/SHOKUJI_RESTAURANT SHOKUJI_RESTAURANT_MENU
+${Shisetsu}/SHOKUJI_DRINKTYPE SHOKUJI_DRINKTYPE
+FINN
+fi
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+shokuji_menu SHOKUJI_MENU 1 23 24 ${pompa_dir}/${Shisetsu} ${input_dir}/${Shisetsu}
+FIN
+
+
+if [ "${checkRestaurant}" == "1" ] ; then
+#if [ "${Shisetsu}" = "0003" -o "${Shisetsu}" = "0006" ] ; then
+cat <<- FINN >> $tmp-koushin_pompa
+shokuji_menu SHOKUJI_MENU 1 23 24 ${pompa_dir}/${Shisetsu} ${input_dir}/${Shisetsu}
+hiderestaurant SHOKUJI_RESTAURANT_MENU 1 4 5 ${pompa_dir}/${Shisetsu} ${input_dir}/${Shisetsu}
+drink_type SHOKUJI_DRINKTYPE 1 4 5 ${pompa_dir}/${Shisetsu} ${input_dir}/${Shisetsu}
+FINN
+fi
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#    error_unlock "ロック処理失敗"
+# 20150910mod
+# ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+# ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+    error_exit "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) -gt 0 ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${Shisetsu}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/SHOKUJI_MENU_TOUROKU/${Shisetsu}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $lock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok" "${shokujimenu_id}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

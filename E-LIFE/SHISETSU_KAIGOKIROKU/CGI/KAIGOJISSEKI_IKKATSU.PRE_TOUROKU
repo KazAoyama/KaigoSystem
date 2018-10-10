@@ -1,0 +1,1029 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_IKKATSU.TOUROKU : 介護請求居宅支援検索用CGI
+#
+# Usage : KAIGOJISSEKI_IKKATSU.TOUROKU ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+cgi_path="/RACK_KORITSU/cgi-bin"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# INPUTディレクトリ作成
+mkdir -p ${input_dir}/KAIGOJISSEKI/${today}
+
+# POMPAディレクトリ作成
+mkdir -p ${pompa_dir}/${shisetsu}/${this_month}
+
+# データを保存する月を決める
+save_month=$(echo ${hd_sakuseibi}     |
+            awk '{print substr($1,1,6)}')
+# 一応過去分データ保存用に過去ディレクトリも作成
+mkdir -p ${pompa_dir}/${shisetsu}/${save_month}
+
+# 対象者が渡って来なかったらストップ
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  :
+else
+  echo "error" "対象者が選択されていません" && exit 1
+fi
+
+# 食事・水分摂取にチェックが入っているときの処理
+if [ "${shokuji_suibun}" = "on" ];then
+## 食事摂取の処理
+  if [ -n "${shokuji_checked}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_shokuji}" ] && houmon_shokuji="off"
+      echo ${riyosha_name} ${hd_sakuseibi} ${houmon_shokuji} "1" ${shokuji_kaigo_kounmoku} ${start_time} "shushoku_yoryo+++【主食容量】""+++""${shushoku_yoryo}""+++shushoku_keitai+++【主食形態】+++""${shushoku_keitai}""+++fukushoku_yoryo+++【副食容量】""+++""${fukushoku_yoryo}""+++fukushoku_yoryo1+++【副食形態】""+++""${fukushoku_yoryo1}" ${kaijo_place} ${biko} ${shoyo_time} ${jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} ${houmon_shokuji} "1" ${shokuji_kaigo_kounmoku} ${start_time} "【主食容量】""+++""${shushoku_yoryo}""+++【主食形態】+++""${shushoku_keitai}""+++【副食容量】""+++""${fukushoku_yoryo}""+++【副食形態】""+++""${fukushoku_yoryo1}" ${kaijo_place} ${biko} ${shoyo_time} ${jisshisha} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【主食容量】 8:option 9:value 10:【主食形態】 
+# 11:option 12:value 13:【副食容量】 14:option 15:value 16:【副食形態】 17:option 18:value  19:介助場所 20:備考
+# 21:終了時間 22:実施者 23:登録日時間 24:ID
+      delf 8 11 14 17  | 
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【主食容量】 8:value 9:【主食形態】 10:value
+# 11:【副食容量】 12:value 13:【副食形態】 14:value  15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      awk '{gsub(/+++/," ",$15);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【主食容量】 8:value 9:【主食形態】 10:value
+# 11:【副食容量】 12:value 13:【副食形態】 14:value  15:介助場所 16:介助場所value 17:備考 18:終了時間 19:実施者 20:登録日時間
+# 21:ID
+      delf 15                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【主食容量】 8:value 9:【主食形態】 10:value
+# 11:【副食容量】 12:value 13:【副食形態】 14:value  15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10$11$12$13$14,$15,$16,$17,$18,$19,$20}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi                                       
+## おやつ摂取の処理
+  if [ -n "${shokuji_checked2}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_oyatsu}" ] && houmon_oyatsu="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_oyatsu}" "1" ${shokuji_kaigo_kounmoku2} ${start_time2} "shushoku_yoryo2+++【容量】+++""${shushoku_yoryo2}""+++shushoku_shurui2+++【種類】+++""${shushoku_shurui2}" ${kaijo_place2} ${biko2} ${shoyo_time2} ${jisshisha2} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_oyatsu}" "1" ${shokuji_kaigo_kounmoku2} ${start_time2} "【容量】+++""${shushoku_yoryo2}""+++【種類】+++""${shushoku_shurui2}" ${kaijo_place2} ${biko2} ${shoyo_time2} ${jisshisha2} ${current_time} ${new_num}  |
+       awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量】 8:option 9:value 10:【種類】
+# 11:option 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+       delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量】 8:value 9:【種類】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量】 8:value 9:【種類】10:value
+# 11:介助場所 12:介助場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量】 8:value 9:【種類】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+       awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi                                       
+## 水分摂取の処理
+  if [ -n "${shokuji_checked3}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_suibun}" ] && houmon_suibun="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_suibun}" "1" ${shokuji_kaigo_kounmoku3} ${start_time3} "suibun_yoryo+++【容量(cc)】+++""${suibun_yoryo}""+++suibun_shurui+++【種類】+++""${suibun_shurui}" ${kaijo_place3} ${biko3} ${shoyo_time3} ${jisshisha3} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_suibun}" "1" ${shokuji_kaigo_kounmoku3} ${start_time3} "【容量(cc)】+++""${suibun_yoryo}""+++【種類】+++""${suibun_shurui}" ${kaijo_place3} ${biko3} ${shoyo_time3} ${jisshisha3} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量(cc)】 8:value 9:種>類】 10:option
+# 11:value 12:介助場所 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 10                               |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量(cc)】 8:value 9:種>類】 10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【容量(cc)】 8:value 9:種>類】 10:value
+# 11:介助場所 12:場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                                |
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi  
+else
+ :
+fi                                         
+# 排泄関係にチェックが入っているときの処理
+if [ "${haisetsu}" = "on" ];then
+## 排泄介助の処理
+  if [ -n "${haisetsu_checked}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_hainyo}" ] && houmon_hainyo="off"
+    if [ "${hainyo_shurui}" = "6+++バルーンチューブ" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_hainyo}" "2" ${haisetsu_kankei} ${haiben_start} "haiben_ryo+++【尿量】+++0+++""${tube_ryo}""+++hainyo_kubun+++【介助区分】+++""${hainyo_kubun}""+++hainyo_keijou+++【形状】""+++""${hainyo_keijou}""+++hainyo_shurui+++【排泄種類】+++""${hainyo_shurui}" "_" ${haiben_biko} ${haiben_shoyo_time} ${haiben_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_hainyo}" "2" ${haisetsu_kankei} ${haiben_start} "【尿量】+++0+++""${tube_ryo}cc""+++【介助区分】+++""${hainyo_kubun}""+++【形状】""+++""${hainyo_keijou}""+++【排泄種類】+++""${hainyo_shurui}" "_" ${haiben_biko} ${haiben_shoyo_time} ${haiben_jisshisha} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【尿量】 8:option 9:value 10:【介助区分】
+# 11:option 12:value 13:【形状】 14:option 15:value 16:【排泄種類】 17:option 18:value 19:介助場所 20:備考
+# 21:終了時間 22:実施者 23:登録日時間 24:ID
+      delf 8 11 14 17                       |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【尿量】 8:value 9:【介助区分】10:value
+# 11:【形状】 12:value 13:【排泄種類】 14:value 15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10$11$12$13$14,$15,$16,$17,$18,$19,$20}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    else
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_hainyo}" "2" ${haisetsu_kankei} ${haiben_start} "haiben_ryo+++【尿量】+++""${haiben_ryo}""+++hainyo_kubun+++【介助区分】+++""${hainyo_kubun}""+++hainyo_keijou+++【形状】""+++""${hainyo_keijou}""+++hainyo_shurui+++【排泄種類】+++""${hainyo_shurui}" "_" ${haiben_biko} ${haiben_shoyo_time} ${haiben_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_hainyo}" "2" ${haisetsu_kankei} ${haiben_start} "【尿量】+++""${haiben_ryo}""+++【介助区分】+++""${hainyo_kubun}""+++【形状】""+++""${hainyo_keijou}""+++【排泄種類】+++""${hainyo_shurui}" "_" ${haiben_biko} ${haiben_shoyo_time} ${haiben_jisshisha} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【尿量】 8:option 9:value 10:【介助区分】
+# 11:option 12:value 13:【形状】 14:option 15:value 16:【排泄種類】 17:option 18:value 19:介助場所 20:備考
+# 21:終了時間 22:実施者 23:登録日時間 24:ID
+      delf 8 11 14 17                       |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【尿量】 8:value 9:【介助区分】10:value
+# 11:【形状】 12:value 13:【排泄種類】 14:value 15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10$11$12$13$14,$15,$16,$17,$18,$19,$20}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    fi
+  else
+    :
+  fi                                       
+## 排便介助の処理
+  if [ -n "${haisetsu_checked2}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_haiben}" ] && houmon_haiben="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_haiben}" "2" ${haisetsu_kankei2} ${haiben_start2} "haiben_ryo2+++【量】+++""${haiben_ryo2}""+++hainyo_kubun2+++【介助区分】+++""${hainyo_kubun2}""+++haiben_keijou+++【形状】+++""${haiben_keijou}""+++hainyo_shurui2+++【排泄種類】+++""${hainyo_shurui2}" "_" ${haiben_biko2} ${haiben_shoyo_time2} ${haiben_jisshisha2} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_haiben}" "2" ${haisetsu_kankei2} ${haiben_start2} "【量】+++""${haiben_ryo2}""+++【介助区分】+++""${hainyo_kubun2}""+++【形状】+++""${haiben_keijou}""+++【排泄種類】+++""${hainyo_shurui2}" "_" ${haiben_biko2} ${haiben_shoyo_time2} ${haiben_jisshisha2} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【量】 8:option 9:value 10:【介助区分】
+# 11:option 12:value 13:【形状】 14:option 15:value 16:【排泄種類】 17:option 18:value 19:介助場所 20:備考
+# 21:終了時間 22:実施者 23:登録日時間 24:ID
+      delf 8 11 14 17                       |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【量】 8:value 9:【介助区分】10:value
+# 11:【形状】 12:value 13:【排泄種類】 14:value 15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10$11$12$13$14,$15,$16,$17,$18,$19,$20}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi                                       
+## 下剤与薬の処理
+  if [ -n "${haisetsu_checked3}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_gezai}" ] && houmon_gezai="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_gezai}" "2" ${haisetsu_kankei3} ${haiben_start3} "haiben_ryo3+++【薬種】""+++""${haiben_ryo3}""+++""touyaku_ryo+++【量】""+++""${touyaku_ryo}" "_" ${haiben_biko3} ${haiben_shoyo_time3} ${haiben_jisshisha3} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_gezai}" "2" ${haisetsu_kankei3} ${haiben_start3} "【薬種】""+++""${haiben_ryo3}""+++""【量】""+++""${touyaku_ryo}" "_" ${haiben_biko3} ${haiben_shoyo_time3} ${haiben_jisshisha3} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【薬種】 8:option 9:value 10:【量】
+# 11:value 12:介助場所 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【薬種】 8:value 9:【量】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi                                       
+else
+  :
+fi                                         
+# 入浴・清拭にチェックが入っているときの処理
+if [ "${nyuyoku}" = "on" ];then
+## 入浴の処理
+  if [ -n "${nyuyoku_checked}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_nyuyoku}" ] && houmon_nyuyoku="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_nyuyoku}" "3" ${nyuyoku_koumoku} ${nyuyoku_start} "nyuyoku_sonota+++【入浴その他】""+++""${nyuyoku_sonota}""+++""nyuyoku_kubun+++【入浴区分】""+++""${nyuyoku_kubun}" "_" ${nyuyoku_biko} ${nyuyoku_shoyo_time} ${nyuyoku_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_nyuyoku}" "3" ${nyuyoku_koumoku} ${nyuyoku_start} "【入浴その他】""+++""${nyuyoku_sonota}""+++【入浴区分】""+++""${nyuyoku_kubun}" "_" ${nyuyoku_biko} ${nyuyoku_shoyo_time} ${nyuyoku_jisshisha} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【入浴その他】 8:option 9:value 10:【入浴区分】
+# 11:option 12:value  13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【入浴その他】 8:value 9:【入浴区分】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi                                      
+## 洗髪ほかの処理
+  if [ -n "${nyuyoku_checked2}" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+    [ ! -n "${houmon_senpatsuhoka}" ] && houmon_senpatsuhoka="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_senpatsuhoka}" "3" ${nyuyoku_koumoku2} ${nyuyoku_start2} "nyuyoku_kubun2+++【入浴区分】""+++""${nyuyoku_kubun2}" "_" ${nyuyoku_biko2} ${nyuyoku_shoyo_time2} ${nyuyoku_jisshisha2} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_senpatsuhoka}" "3" ${nyuyoku_koumoku2} ${nyuyoku_start2} "【入浴区分】""+++""${nyuyoku_kubun2}" "_" ${nyuyoku_biko2} ${nyuyoku_shoyo_time2} ${nyuyoku_jisshisha2} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【入浴区分】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【入浴区分】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$5);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:介護項目value 7:開始時間 8:【入浴区分】 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 5                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【入浴区分】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi
+else
+  :
+fi                                         
+# 洗面・整容にチェックが入っているときの処理
+if [ "${senmen}" = "on" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+  if [ -n "${senmen_checked}" ];then
+    [ ! -n "${houmon_senmen}" ] && houmon_senmen="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_senmen}" "4" ${senmen_koumoku} ${senmen_start} "senmen_shosai+++【詳細】""+++""${senmen_shosai}" "_" ${senmen_biko} ${senmen_shoyo_time} ${senmen_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_senmen}" "4" ${senmen_koumoku} ${senmen_start} "【詳細】""+++""${senmen_shosai}" "_" ${senmen_biko} ${senmen_shoyo_time} ${senmen_jisshisha} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【詳細】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【詳細】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$5);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:介護項目value 7:開始時間 8:【詳細】 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 5                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【詳細】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi
+else
+  :
+fi                                         
+# 基本動作・リハビリにチェックが入ったときの処理
+if [ "${kihon_dousa}" = "on" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+  if [ -n "${kihon_checked}" ];then
+    [ ! -n "${houmon_kihon}" ] && houmon_kihon="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_kihon}" "5" ${kihon_koumoku} ${kihon_start} "kihon_riha_shumoku+++【種目】""+++""${kihon_riha_shumoku}" "${kihon_kaijo_place}" ${kihon_biko} ${kihon_shoyo_time} ${kihonriha_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_kihon}" "5" ${kihon_koumoku} ${kihon_start} "【種目】""+++""${kihon_riha_shumoku}" "${kihon_kaijo_place}" ${kihon_biko} ${kihon_shoyo_time} ${kihonriha_jisshisha} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【種目】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【種目】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$5);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:介護項目value 7:開始時間 8:【種目】 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 5                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【種目】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$9);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【種目】 8:value 9:介助場所 10:介助場所value
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 9                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【種目】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi
+else
+  :
+fi                                        
+# 医療・健康にチェックが入っているときの処理
+if [ "${iryo_kenkou}" = "on" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+  if [ -n "${iryo_kenkou_checked}" ];then
+    if [ "${area_select}" = "all" ];then
+      :
+
+## 内服薬の処理
+    elif [ "${area_select}" = "naifuku" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "内服薬" ${iryo_start} "naifuku_select+++【用法】""+++""${naifuku_select}""+++""naifuku_yoryo+++【容量】""+++""${naifuku_yoryo}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time}i ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "内服薬" ${iryo_start} "【用法】""+++""${naifuku_select}""+++【容量】""+++""${naifuku_yoryo}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time}i ${new_num}  |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:option 9:value 10:【容量】
+# 11:option 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:介助場所 12:介助場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 処置等の処理
+    elif [ "${area_select}" = "shotitou" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "処置等" ${iryo_start} "shotitou+++【用法】""+++""${shotitou}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "処置等" ${iryo_start} "【用法】""+++""${shotitou}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$9);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:介助場所value
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 9                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 医等の処理
+    elif [ "${area_select}" = "iryo_iryo" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "医療" ${iryo_start} "iryo_iryo_select+++【用法】""+++""${iryo_iryo_select}""+++""iryo_iryo_shoti+++【容量】""+++""${iryo_iryo_shoti}""+++""iryo_shotiryo+++【処置量】""+++""${iryo_shotiryo}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "医療" ${iryo_start} "【用法】""+++""${iryo_iryo_select}""+++【容量】""+++""${iryo_iryo_shoti}""+++【処置量】""+++""${iryo_shotiryo}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:option 9:value 10:【容量】
+# 11:option 12:value 13:【処置量】 14:value 15:介助場所 16:備考 17:終了時間 18:実施者 19:登録日時間 20:ID
+      delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:【処置量】 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      awk '{gsub(/+++/," ",$13);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:【処置量】 12:value 13:介助場所 14:value 15:備考 16:終了時間 17:実施者 18:登録日時間 19:ID
+      delf 13                               |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【容量】10:value
+# 11:【処置量】 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10$11$12,$13,$14,$15,$16,$17,$18}' >> ${tmp}-display
+
+## 口腔ケアの処理
+    elif [ "${area_select}" = "koukuu" ];then
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "口腔ケア" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "口腔ケア" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}  |
+      awk '{gsub(/+++/," ",$8);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:介助場所value 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      delf 8                                >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 頓用の処理
+    elif [ "${area_select}" = "tonyou" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "頓用" ${iryo_start} "tonyou_select+++【使用目的】""+++""${tonyou_select}""+++""tonyou_shoti+++【薬種】""+++""${tonyou_shoti}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "頓用" ${iryo_start} "【使用目的】""+++""${tonyou_select}""+++【薬種】""+++""${tonyou_shoti}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【使用目的】 8:option 9:value 10:【薬種】
+# 11:option 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【使用目的】 8:value 9:【薬種】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【使用目的】 8:value 9:【薬種】10:value
+# 11:介助場所 12:介助場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【使用目的】 8:value 9:【薬種】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 外用薬の処理
+    elif [ "${area_select}" = "gaiyouyaku" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "外用薬" ${iryo_start} "gaiyouyaku_select+++【用法】""+++""${gaiyouyaku_select}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "外用薬" ${iryo_start} "【用法】""+++""${gaiyouyaku_select}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}  |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+       awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+       delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+       awk '{gsub(/+++/," ",$9);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:介助場所value 
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+       delf 9                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+       awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 測定・観察の処理
+    elif [ "${area_select}" = "sokutei" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "測定・観察" ${iryo_start} "sokutei_select+++【用法】""+++""${sokutei_select}""+++""sekutei_select+++【処置量】""+++""${sekutei_select}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "測定・観察" ${iryo_start} "【用法】""+++""${sokutei_select}""+++【処置量】""+++""${sekutei_select}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}  |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:option 9:value 10:【処置量】
+# 11:value 12:介助場所 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【処置量】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【処置量】10:value
+# 11:介助場所 12:介助場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                               |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【用法】 8:value 9:【処置量】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 通院介助の処理
+    elif [ "${area_select}" = "tuuin_kaijo" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "通院介助" ${iryo_start} "tuuin_kaijo_select+++【病院名】""+++""${tuuin_kaijo_select}""+++""tuuin_kaijo_shoti+++【診療科】""+++""${tuuin_kaijo_shoti}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "通院介助" ${iryo_start} "【病院名】""+++""${tuuin_kaijo_select}""+++【診療科】""+++""${tuuin_kaijo_shoti}" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:option 9:value 10:【診療科】
+# 11:option 12:value 13:介助場所 14:備考 15:終了時間 16:実施者 17:登録日時間 18:ID
+      delf 8 11                             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:【診療科】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{gsub(/+++/," ",$11);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:【診療科】10:value
+# 11:介助場所 12:介助場所value 13:備考 14:終了時間 15:実施者 16:登録日時間 17:ID
+      delf 11                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:【診療科】10:value
+# 11:介助場所 12:備考 13:終了時間 14:実施者 15:登録日時間 16:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8$9$10,$11,$12,$13,$14,$15,$16}'  >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 健康診断の処理
+    elif [ "${area_select}" = "kenkou_shindan" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "健康診断" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "健康診断" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+       awk '{gsub(/+++/," ",$8);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:介助場所value 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+       delf 8                                >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 入院中の面会の処理
+    elif [ "${area_select}" = "menkai" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "入院中の面会" ${iryo_start} "menkai_select+++【病院名】+++"${menkai_select} "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "入院中の面会" ${iryo_start} "【病院名】+++"${menkai_select} "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+       awk '{gsub(/+++/," ",$9);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:介助場所 10:介助場所value
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+       delf 9                                 |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【病院名】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+       awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 往診の面会の処理
+    elif [ "${area_select}" = "oushin" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "往診" ${iryo_start} "oushin_select+++【診療科】+++"${oushin_select} "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "往診" ${iryo_start} "【診療科】+++"${oushin_select} "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      awk '{gsub(/+++/," ",$7);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【診療科】 8:option 9:value 10:介助場所
+# 11:備考 12:終了時間 13:実施者 14:登録日時間 15:ID
+      delf 8                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【診療科】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{gsub(/+++/," ",$9);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【診療科】 8:value 9:介助場所 10:介助場所value
+# 11:備考 12::終了時間 13:実施者 14:登録日時間 15:ID
+      delf 9                                |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:【診療科】 8:value 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7$8,$9,$10,$11,$12,$13,$14}' >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+
+## 健康相談の面会の処理
+    elif [ "${area_select}" = "kenkou_soudan" ];then
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "健康相談" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "_" "6" "健康相談" ${iryo_start} "_" "${iryo_kaijo_place}" ${iryo_biko} ${iryo_shoyo_time} ${iryo_jisshisha} ${current_time} ${new_num}   |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+      awk '{gsub(/+++/," ",$8);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:介助場所value 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      delf 8                                >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    fi
+  else
+    :
+  fi                                      
+else
+  :
+fi                                           
+
+# 心理・社会面にチェックが入ったときの処理
+if [ "${shinri_shakai}" = "on" ];then
+    # IDを取得
+    if [ -e "${idkanri_dir}/${save_month}/KAIGO_JISSEKI" ];then
+      new_num="$(getno -s 1 ${idkanri_dir}/${save_month}/KAIGO_JISSEKI)"
+      echo ${new_num} > ${tmp}-new_num
+      mv ${tmp}-new_num ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num="$(echo "0000001")"
+      echo ${new_num} > ${idkanri_dir}/${save_month}/KAIGO_JISSEKI
+    fi
+
+    # データを保存
+  if [ -n "${shinri_checked}" ];then
+    [ ! -n "${houmon_shinri}" ] && houmon_shinri="off"
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_shinri}" "7" ${shinri_koumoku} ${shinri_start} "_" "_" ${shinri_biko} ${shinri_shoyo_time} ${shinri_jisshisha} ${current_time} ${new_num} >> ${tmp}-input
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+    # ディスプレイ用データを作成
+      echo ${riyosha_name} ${hd_sakuseibi} "${houmon_shinri}" "7" ${shinri_koumoku} ${shinri_start} "_" "_" ${shinri_biko} ${shinri_shoyo_time} ${shinri_jisshisha} ${current_time} ${new_num}  | 
+      awk '{gsub(/+++/," ",$5);print}'      |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:介護項目value 7:開始時間 8:内容 9:介助場所 10:備考
+# 11:終了時間 12:実施者 13:登録日時間 14:ID
+      delf 5                              >> ${tmp}-display
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間 11:実施者 12:登録日時間 13:ID
+  else
+    :
+  fi
+else
+  :
+fi                                        
+
+
+# 介護実績の【仮】INPUTデータを作成
+if [ $(gyo $tmp-input) -ne 0 ];then
+  cat ${tmp}-input               |
+  sed 's/\\n/<br>/g'             > $tmp-input_kari
+  # 1:対象者   2:実施日      3:訪問介護共有フラグ 4:介護分類 5:介護項目
+  # 6:開始時間 7:内容        8:介助場所           9:備考     10:終了時間
+  # 11:実施者  12:登録日時間 13:ID
+else
+  :
+fi
+
+# バイタルの処理
+echo "${vital_taion}" "${vital_ketsuatsu_ue}" "${vital_ketsuatsu_shita}" "${vital_myakuhaku}" "${vital_kokyu}" "${vital_sat}" "${vital_taijyu}" "${vital_time}" "${vital_shoyo_time}" "${vital_biko}" "${vital_jisshisha}" > ${tmp}-vital
+
+cat ${tmp}-vital               |
+tarr                           |
+head -n 10                     |
+uniq                           |
+awk '$1!="_"{print}'           > ${tmp}-vital_check
+
+# IDを発番
+if [ -e "${idkanri_dir}/${save_month}/VITAL" ];then
+  new_num_v="$(getno -s 1 ${idkanri_dir}/${save_month}/VITAL)"
+  echo ${new_num_v}            > ${tmp}-new_num_v
+  mv ${tmp}-new_num_v ${idkanri_dir}/${save_month}/VITAL
+else
+  mkdir -p ${idkanri_dir}/${save_month}
+  new_num_v="$(echo "0000001")"
+  echo ${new_num_v}            > ${idkanri_dir}/${save_month}/VITAL
+fi
+
+if [ "$(gyo ${tmp}-vital_check)" != 0 ];then
+  # バイタルのデータを保存
+  echo ${riyosha_name} ${hd_sakuseibi} ${current_time} ${new_num_v}    |
+  ycat ${tmp}-vital -                                                  |
+  # 1:体温 2:血圧(上) 3:血圧(下) 4:脈拍 5:呼吸 6:SAT 7:体重 8:時刻 9:所要時間 10:備考 11:実施者 12:利用者 13:作成日 14:登録時間 15:ID
+  self 12 13 1/11 14 15                                                |
+  sed 's/\\n/<br>/g'                                                   > ${tmp}-input_vital_kari
+  # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻 11:所要時間 12:備考 13:実施者 14:登録時間 15:ID
+else
+  :
+fi
+
+
+# 申し送りの処理
+
+# IDを発番
+if [ -e "${idkanri_dir}/${save_month}/MOUSHIOKURI" ];then
+  new_num_m="$(getno -s 1 ${idkanri_dir}/${save_month}/MOUSHIOKURI)"
+  echo ${new_num_m}            > ${tmp}-new_num_m
+  mv ${tmp}-new_num_m ${idkanri_dir}/${save_month}/MOUSHIOKURI
+else
+  mkdir -p ${idkanri_dir}/${save_month}
+  new_num_m="$(echo "0000001")"
+  echo ${new_num_m}            > ${idkanri_dir}/${save_month}/MOUSHIOKURI
+fi
+
+if [ "${moushiokuri}" != "_" ];then
+  echo "${riyosha_name}" "${hd_sakuseibi}" "${moushiokuri_select}" "${moushiokuri_time}" "${moushiokuri_taisho}" "${moushiokuri_koumoku}" "${moushiokuri_jisshisha}" "${moushiokuri}" "${moushiokuri_color}" "${current_time}" |
+  sed 's/\\n/<br>/g'    > ${tmp}-moushiokuri_kari
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時
+  # 日誌・支援経過に同期するかどうか
+  if [ -n "${moushiokuri_kyoyu}" ];then
+    if [ -n "${shienkeika_kyoyu}" ];then
+    awk '{print $0,"on","on"}' ${tmp}-moushiokuri_kari  |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10                                 |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    awk '{print $0,"'$new_num_m'"}'
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    else
+    awk '{print $0,"on","off"}' ${tmp}-moushiokuri_kari |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10                                 |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    awk '{print $0,"'$new_num_m'"}'
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    fi
+  else
+    if [ -n "${shienkeika_kyoyu}" ];then
+    awk '{print $0,"off","on"}' ${tmp}-moushiokuri_kari |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10                                 |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    awk '{print $0,"'$new_num_m'"}'
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    else
+    awk '{print $0,"off","off"}' ${tmp}-moushiokuri_kari |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:内容 9:色 10:登録日時 11:日誌共有 12:支援経過共有
+    self 1/7 11 12 8/10                                 |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+    awk '{print $0,"'$new_num_m'"}'
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    fi
+  fi                               > ${tmp}-input_moushiokuri_kari
+else
+  :
+fi
+
+
+# INPUTとPOMPAを作成
+
+# ロック
+lock_file=${pompa_dir}/${shisetsu}/KAIGOJISSEKI_IKKATSU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+# 介護実績を保存
+if [ -e ${tmp}-input_kari ];then
+  # データを保存
+  cat ${tmp}-input_kari |
+  # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+  # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+  # 11:実施者  12:12登録日時間 13:ID
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"J""'${save_month}'"$13}' > $tmp-input
+  # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+  # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+  # 11:実施者  12:12登録日時間 13:ID
+
+  # 列数がおかしかったらストップ
+  if [ "$(retu $tmp-input)" = 13 ];then
+    cp -p $tmp-input ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+  else
+    echo "error" "登録エラー" && exit 1
+  fi
+
+  cat $tmp-input                                                    |
+  self 13                                                           >> $tmp-search_id
+
+else
+  :
+fi
+
+# バイタルを保存
+if [ -e  ${tmp}-input_vital_kari ];then
+  # データを保存
+  cat ${tmp}-input_vital_kari |
+  # 1:利用者    2:作成日 3:体温    4:血圧(上)  5:血圧(下)
+  # 6:脈拍      7:呼吸   8:SAT     9:体重      10:時刻
+  # 11:所要時間 12:備考  13:実施者 14:登録時間 15:ID
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,"V""'${save_month}'"$15}' > ${tmp}-input_vital
+  # 1:利用者    2:作成日 3:体温    4:血圧(上)  5:血圧(下)
+  # 6:脈拍      7:呼吸   8:SAT     9:体重      10:時刻
+  # 11:所要時間 12:備考  13:実施者 14:登録時間 15:ID
+
+  # 列数がおかしかったらストップ
+  if [ "$(retu $tmp-input_vital)" = 15 ];then
+    cp -p ${tmp}-input_vital ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU_VITAL.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+  else
+    echo "error" "登録エラー" && exit 1
+  fi
+  cat $tmp-input_vital                                              |
+  self 15                                                           >> $tmp-search_id
+else
+  :
+fi
+
+# 申送りを保存
+if [ -e ${tmp}-input_moushiokuri_kari ];then
+  # データを保存
+  cat ${tmp}-input_moushiokuri_kari |
+  # 1:利用者 2:作成日    3:申送り種別 4:時刻         5:対象
+  # 6:項目   7:記入者    8:日誌共有   9:支援経過共有 10:内容
+  # 11:色    12:登録日時 13:ID
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"M""'${save_month}'"$13}' > ${tmp}-input_moushiokuri
+
+  # 列数がおかしかったらストップ
+  if [ "$(retu $tmp-input_moushiokuri)" = 13 ];then
+    cp -p ${tmp}-input_moushiokuri ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU_MOUSHIOKURI.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+  else
+    echo "error" "登録エラー" && exit 1
+  fi
+  cat $tmp-input_moushiokuri                                        |
+  self 13                                                           >> $tmp-search_id
+else
+  :
+fi
+
+# ディスプレイ用を保存
+mv ${tmp}-display ${tmp}-display_kari
+if [ -e ${tmp}-display_kari ];then
+  # データを保存
+  cat ${tmp}-display_kari                                                        |
+  # 1:対象者   2:実施日      3:訪問介護共有フラグ 4:介護分類 5:介護項目
+  # 6:開始時間 7:内容        8:介助場所           9:備考     10:終了時間
+  # 11:実施者  12:登録日時間 13:ID
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"J""'${save_month}'"$13}'   > ${tmp}-display
+  # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+  # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+  # 11:実施者  12:12登録日時間 13:ID
+
+  # 列数がおかしかったらストップ
+  if [ "$(retu $tmp-display)" = 13 ];then
+    cp -p ${tmp}-display ${input_dir}/${today}/DISPLAY_KAIGOJISSEKI_IKKATSU.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+  else
+    echo "error" "登録エラー" && exit 1
+  fi
+fi
+
+# -------------------------------------
+# POMPA作成
+# -------------------------------------
+# 介護実績を保存
+if [ -e ${tmp}-input ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU $tmp-input |
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    LANG=C sort -k1,1n -k12,12n  > ${tmp}-pompa_new
+    cp ${tmp}-pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU
+    else
+    cat ${tmp}-input             > ${tmp}-pompa_new
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    cp ${tmp}-pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU
+  fi
+fi
+
+# バイタルを保存
+if [ -e ${tmp}-input_vital ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_VITAL ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_VITAL ${tmp}-input_vital |
+    # 1:利用者    2:作成日 3:体温    4:血圧(上)  5:血圧(下)
+    # 6:脈拍      7:呼吸   8:SAT     9:体重      10:時刻
+    # 11:所要時間 12:備考  13:実施者 14:登録時間 15:ID
+    LANG=C sort -k1,1n -k14,14n  > ${tmp}-vital_pompa_new
+    cp ${tmp}-vital_pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_VITAL
+  else
+    cat ${tmp}-input_vital       > ${tmp}-vital_pompa_new
+     cp ${tmp}-vital_pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_VITAL
+  fi
+fi
+
+# 申し送りを保存
+if [ -e ${tmp}-input_moushiokuri ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ${tmp}-input_moushiokuri |
+    # 1:利用者 2:作成日    3:申送り種別 4:時刻         5:対象
+    # 6:項目   7:記入者    8:日誌共有   9:支援経過共有 10:内容
+    # 11:色    12:登録日時 13:ID
+    LANG=C sort -k1,1n -k12,12n  > ${tmp}-moushiokuri_pompa_new
+    cp ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+  else
+    cat ${tmp}-input_moushiokuri > ${tmp}-moushiokuri_pompa_new
+    cp ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+  fi
+fi
+
+# ディスプレイ用データを保存
+if [ -e ${tmp}-display ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.DISPLAY_KAIGOJISSEKI_IKKATSU ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.DISPLAY_KAIGOJISSEKI_IKKATSU ${tmp}-display  |
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    LANG=C sort -k1,1n -k12,12n   > ${tmp}-display_new
+    mv ${tmp}-display_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.DISPLAY_KAIGOJISSEKI_IKKATSU
+  else
+    cat ${tmp}-display  > ${tmp}-display_new
+    mv ${tmp}-display_new ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.DISPLAY_KAIGOJISSEKI_IKKATSU
+  fi
+fi
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+cat $tmp-search_id
+# 終了
+rm -f $tmp-*
+
+exit 0

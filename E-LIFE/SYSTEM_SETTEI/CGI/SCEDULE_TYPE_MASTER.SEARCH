@@ -1,0 +1,78 @@
+#!/bin/bash
+#
+# SCEDULE_TYPE_MASTER.DISPLAY
+# スケジュールタイプマスタ　表示用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+# 施設のチェック ケア棟あるかどうか
+awk '$1=="'${shisetsu}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR |
+self 2 | LANG=C sort -u > $tmp-tateya_check
+
+
+if [ -z "$schedule_shurui" -o "$schedule_shurui" = "_" ];then
+  schedule_shurui="01"
+  [ "$(awk '$1=="02"' $tmp-tateya_check | gyo)" -eq 0 ] && schedule_shurui="02"
+else
+ :
+fi
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCEDULE_TYPE_MASTER |
+awk '$(NF-2)!="9"'                                      |
+awk '$4=="'$schedule_shurui'"&&$5=="'${shisetsu}'"{print $0}'                |
+# 1:スケジュールタイプID 2:スケジュールタイプ 3:色 4:有効フラグ 5:処理時間
+# 6:ユーザID
+#--------------------------------------------------------------
+delf NF-2/NF  > ${tmp}-scheduletype_master
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュールタイプマスタ取得エラー"
+
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-scheduletype_master
+
+
+## 終了
+rm -f $tmp-*
+exit 0

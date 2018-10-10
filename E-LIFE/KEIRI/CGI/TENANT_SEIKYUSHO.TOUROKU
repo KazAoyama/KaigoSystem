@@ -1,0 +1,175 @@
+#!/bin/bash
+#
+# TENANT_TENANT_TOUROKU.TOUROKU :
+#
+# Usage : TENANT_TENANT_TOUROKU.TOUROKU
+#
+# Written by aoyagi
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/KEIRI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+tinryo="@"
+kyoekihi="@"
+denkidai="@"
+suidodai="@"
+parking="@"
+tyurin="@"
+kutyo="@"
+internet="@"
+park24="@"
+jihanki="@"
+kureru="@"
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+# データ作成
+echo ${tenant_name} ${yuubin} ${address} ${company} ${atena} ${tinryo} ${kyoekihi} ${denkidai} ${suidodai} ${parking} ${tyurin} ${kutyo} ${internet} ${kureru} ${park24} ${jihanki} |
+awk '{print $0,"1","'${sdaytime}'","'${userid}'"}'  > $tmp-seikyusho_input
+# 1:マスタid 2:郵便番号    3:住所            4:社名            5:宛名
+# 6:賃料     7:公益費      8:電気代          9:水道代          10:駐車場
+# 11:駐輪場  12:空調       13:インターネット 14:クレールホール 15:park24
+# 16:自販機  17:有効フラグ 18:処理時間       19:userid
+cp $tmp-seikyusho_input ${work_dir}/seikyusho_input
+
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+TENANT_SEIKYUSHO TENANT_SEIKYUSHO
+FIN
+
+input_detail_dir=TENANT_MASTER/${shisetsu}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+seikyusho TENANT_SEIKYUSHO 1 18 19 ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 3 -l 10 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_exit "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SEIKYUSHO |
+awk '{if($1=="'${tenant_name}'"){$(NF-2)=9};print}'            |
+cat - $tmp-seikyusho_input                                                            |
+LANG=C sort -k1,1 -k18,18                                                           |
+getlast 1 1                                                                         > $tmp-pompa_new
+#--------------------------------------------------------------
+
+# 列数チェック
+[ $(retu $tmp-pompa_new) -ne 19 ] && : > $tmp-err
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-pompa_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

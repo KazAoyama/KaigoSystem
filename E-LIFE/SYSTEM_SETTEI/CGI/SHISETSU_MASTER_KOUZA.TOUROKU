@@ -1,0 +1,275 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KOUZA.TOUROKU : 施設マスタ口座
+#
+# Written by S.Otsubo
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# 変数の定義
+namedata=$1
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+sdaytime=$(date +%Y%m%d%H%M%S)
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo -e 'Content-type:text/plain; \n\n' |
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# disabledしているときはパラメータこない
+
+[ ! -n "${Meisyou}" ] && Meisyou="_"
+[ ! -n "${Post}" ] && Post="_"
+[ ! -n "${Adr}" ] && Adr="_"
+[ ! -n "${Tel}" ] && Tel="_"
+[ ! -n "${Fax}" ] && Fax="_"
+#--------------------------------------------------------------
+KouzaName=$(nameread  "KouzaName"  $namedata | han)
+#--------------------------------------------------------------
+# チェックする
+
+# チェックテーブル
+cat << FIN | self 1/NF > ${tmp}-check_list
+_ 1 30 _               領収書表示名称   ${Hyoujimei}         
+1 1 10 _               口座番号         ${KouzaNumber}       
+_ 1 30 _               口座名           ${KouzaName}         
+1 1 30 _               委託者番号       ${Itaku_no01}          
+_ 1 30 _               委託者名         ${Itaku_name}        
+_ 1 30 _               委託者カナ       ${Itaku_name}        
+_ 0 30 _               代表者役職       ${Daihyou_yaku}      
+_ 0 30 _               代表者名         ${Daihyou_name}      
+a 0 30 ${Meisyou_type} 問合せ先名称     ${Meisyou}           
+b 0 7  ${Post_type}    問合せ先郵便番号 ${Post}              
+a 0 50 ${Post_type}    問合せ先住所     ${Adr}               
+b 0 15 ${Tel_type}     問合せ先電話番号 ${Tel}               
+b 0 15 ${Fax_type}     問合せ先FAX番号  ${Fax}               
+c _ _  _               金融機関         ${KinyuuKikan}       
+c _ _  _               支店             ${KinyuuKikan_Shiten}
+FIN
+# 1:チェックタイプ 2:最小文字数 3:最大文字数 4:タイプが英字のときのみ対応のフラグ 5:項目名
+# 6:チェック内容
+
+cat ${tmp}-check_list |
+while read Type min_moji max_moji Flg Meisyou Check_taisyou ; do
+  case "${Type}" in
+    # -------------
+    # 半角数字
+    1 )
+      # 内容
+      [[ "${#Check_taisyou}" =~ [^0-9] ]] && echo "${Meisyou}は半角数字で入力してください" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+      # 文字
+      [ "${#Check_taisyou}" -lt "${min_moji}" ] && echo "${Meisyou}は${min_moji}文字以上入力してください" > ${tmp}-err
+      [ "${Check_taisyou}" == "_" ] && [ "${min_moji}" != "0" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+      [ "${Flg}" == "2" ] && [ "${Check_taisyou}" == "_" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+      [ "${max_moji}" -lt "${#Check_taisyou}" ] && echo "${Meisyou}は${max_moji}文字以内で入力してください" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+    ;;
+    # -------------
+    # -------------
+    # 別のフラグ参照
+    # とりあえずなんでもいい
+    a )
+      # フラグが直接入力時のみチェックいれる
+      if [ "${Flg}" != "2" ] ; then
+        # 文字
+        [ "${#Check_taisyou}" -lt "${min_moji}" ] && echo "${Meisyou}は${min_moji}文字以上入力してください" > ${tmp}-err
+        [ "${Check_taisyou}" == "_" ] && [ "${min_moji}" != "0" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+        [ "${Flg}" == "2" ] && [ "${Check_taisyou}" == "_" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+        [ "${max_moji}" -lt ${#Check_taisyou} ] && echo "${Meisyou}は${max_moji}文字以内で入力してください" > ${tmp}-err
+        [ -s ${tmp}-err ] && break;
+      fi
+    ;;
+    # -------------
+    # -------------
+    # 別のフラグ参照
+    # 半角数字のみ
+    b )
+      # フラグが直接入力時のみチェックいれる
+      if [ "${Flg}" != "2" ] ; then
+        # 内容
+        [[ "${#Check_taisyou}" =~ [^0-9] ]] && echo "${Meisyou}は半角数字で入力してください" > ${tmp}-err
+        [ -s ${tmp}-err ] && break;
+        # 文字
+        [ "${#Check_taisyou}" -lt "${min_moji}" ] && echo "${Meisyou}は${min_moji}文字以上で入力してください" > ${tmp}-err
+        [ "${Check_taisyou}" == "_" ] && [ "${min_moji}" != "0" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+        [ "${Flg}" == "2" ] && [ "${Check_taisyou}" == "_" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+        [ "${max_moji}" -lt ${#Check_taisyou} ] && echo "${Meisyou}は${max_moji}文字以内で入力してください" > ${tmp}-err
+        [ -s ${tmp}-err ] && break;
+      fi
+    ;;
+    # -------------
+    # -------------
+    c )
+      # 値が空かアンスコならエラー
+      [ "${Check_taisyou}" == "" -o "${Check_taisyou}" == "_" ] && echo "${Meisyou}は必須入力項目です" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+    ;;
+    # -------------
+    # -------------
+    # 種別はチェックしない
+    _ )
+      # 文字
+      [ "${#Check_taisyou}" -lt "${min_moji}" ] && echo "${Meisyou}は${min_moji}文字以上で入力してください" > ${tmp}-err
+      [ "${Check_taisyou}" == "_" ] && [ "${min_moji}" != "0" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+      [ "${Flg}" == "2" ] && [ "${Check_taisyou}" == "_" ] && echo "${Meisyou}は入力必須項目です" > ${tmp}-err
+      [ "${max_moji}" -lt ${#Check_taisyou} ] && echo "${Meisyou}は${max_moji}文字以内で入力してください" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+    ;;
+    # -------------
+  esac
+done
+[ -s ${tmp}-err ] && error_exit "$(cat ${tmp}-err)"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新対象の設定
+cat << FIN | self 1/NF > ${tmp}-taisyou
+SHISETSU_KOUZA 8  9  1 1 10
+SHISETSU_FACT  17 18 1 2 19
+FIN
+# 1:テーブル名 2:削除フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# 6:列数
+
+# SHISETSU_KOUZA
+# 1:施設ID   2:領収書表示名称 3:金融機関コード 4:支店コード 5:口座種別
+# 6:口座番号 7:名前           8:削除フラグ     9:更新日時   10:ユーザーID
+# -
+# SHISETSU_FACT
+# 1:施設ID                2:委託者番号                          3:委託者名                      4:委託者カナ                         5:代表者役職
+# 6:代表者名              7:（問い合わせ先）施設名称フラグ      8:（問い合わせ先）施設名称      9:（問い合わせ先）施設住所フラグ     10:（問い合わせ先）郵便番号
+# 11:（問い合わせ先）住所 12:（問い合わせ先）施設電話番号フラグ 13:（問い合わせ先）施設電話番号 14:（問い合わせ先）施設FAX番号フラグ 15:（問い合わせ先）施設FAX番号
+# 16:削除フラグ           17:更新日時                           18:ユーザーID
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 本日のinputディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+# ------------------------------------------
+# 更新データの作成
+
+# ロックファイル作成
+cat ${tmp}-taisyou |
+self 1 |
+while read File ; do
+  lockfile -1 -r 3 -l 10 ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "再度登録してください"
+
+
+# データの作成
+tateya_01=01
+tateya_02=02
+# input
+echo "${shisetsu_key} ${Hyoujimei} ${KinyuuKikan} ${KinyuuKikan_Shiten} \
+      ${Kouza_syurui} ${KouzaNumber} ${KouzaName} 1 ${sdaytime} ${userid}" |
+self 1/NF > ${tmp}-input_SHISETSU_KOUZA
+
+  echo "${shisetsu_key} 01 ${Itaku_no01} ${Itaku_name} ${Itaku_name_kana} ${Daihyou_yaku} \
+        ${Daihyou_name} ${Meisyou_type} ${Meisyou} ${Post_type} ${Post} \
+        ${Adr} ${Tel_type} ${Tel} ${Fax_type} ${Fax} \
+        1 ${sdaytime} ${userid}" |
+  self 1/NF                                        > ${tmp}-input_SHISETSU_FACT
+if [ -n "${Itaku_no02}" ];then
+  echo "${shisetsu_key} 02 ${Itaku_no02} ${Itaku_name} ${Itaku_name_kana} ${Daihyou_yaku} \
+        ${Daihyou_name} ${Meisyou_type} ${Meisyou} ${Post_type} ${Post} \
+        ${Adr} ${Tel_type} ${Tel} ${Fax_type} ${Fax} \
+        1 ${sdaytime} ${userid}" |
+  self 1/NF                                       >> ${tmp}-input_SHISETSU_FACT
+else
+  :
+fi
+
+
+
+
+# pompa
+cat ${tmp}-taisyou |
+delf 6 |
+while read File d_flg u_flg s_flg_from s_flg_to ; do
+  cat ${home_dir}/TBL/SHISETSU_MASTER/${File} ${tmp}-input_${File} |
+  LANG=C sort -k${s_flg_from},${s_flg_to} -k${u_flg},${u_flg} |
+  getlast ${s_flg_from} ${s_flg_to} > ${tmp}-pompa_${File}
+done
+
+# 列チェック
+cat  ${tmp}-taisyou |
+self 1 6 |
+while read File retu_no; do
+  [ "$(retu ${tmp}-input_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-input_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-input_${File} | gyo)" != "0" ] && : > $tmp-err
+  [ -e $tmp-err ] && break 
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+
+
+# 更新
+cat ${tmp}-taisyou |
+self 1 |
+while read Name ; do
+  # input
+  cp -p ${tmp}-input_${Name} ${input_dir}/${today}/$(basename ${0}).$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  # pompa
+  cp -p ${tmp}-pompa_${Name} ${home_dir}/TBL/SHISETSU_MASTER/${Name}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "更新に失敗しました"
+
+
+# ロックファイル削除
+cat ${tmp}-taisyou |
+self 1 |
+while read File; do
+  rm ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+done
+# ------------------------------------------
+
+# ここまできたらokかえす
+echo "result ok"
+cp ${tmp}-* /home/hands/work/mikami/TMP/
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KIHON_SHINKI.UPDATE_IMAGE
+#
+# 個人情報、顔写真登録処理
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+no="$2"
+mime="$3"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  echo "result error ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep EDIT_IMAGE1_SELECT - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-image_name
+
+mime-read "EDIT_IMAGE1_SELECT" $mime > $tmp-image
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/EDIT_IMAGE'${no}'_SELECT/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/jpg/ || $1~/JPG/ || $1~/png/ || $1~/PNG/ || $1~/gif/ || $1~/GIF/' > $tmp-filemark
+
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "MST_UPIMG002"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# アップロードされた画像をJAN-数字.jpgにして、TMP_IMAGEに置く
+mkdir -p ${image_dir}/${RIYOUSHAID}
+
+# 画像をキャッシュさせないための設定
+if [ ! -e ${image_dir}/${RIYOUSHAID}/.htaccess ]; then
+cat << FIN >> $tmp-htaccess
+<Files ~ "\.(png|jpg|gif)$">
+Header set Cache-Control "no-cache"
+Header set Pragma "no-cache"
+</Files>
+FIN
+mv -f $tmp-htaccess ${image_dir}/${RIYOUSHAID}/.htaccess
+fi
+
+cp -p $tmp-image ${image_dir}/${RIYOUSHAID}/$RIYOUSHAID-$no.jpg
+[ ${?} != "0" ] && error_exit "MST_TRK002"
+
+
+# 画面表示用データ
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER |
+awk '$1=="'${RIYOUSHAID}'"{print "GAIJI",$4}'        > $tmp-gaiji
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON  |
+awk '$1=="'${RIYOUSHAID}'"{print "KIHON",$0}'     |
+cat $tmp-gaiji -
+
+
+#echo "result ok"
+#-------------------------------------------------------------
+
+
+# 終了
+rm -f $tmp-*
+exit 0

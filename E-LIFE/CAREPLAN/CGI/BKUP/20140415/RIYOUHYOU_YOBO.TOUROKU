@@ -1,0 +1,496 @@
+#!/bin/bash
+#
+# RIYOUHYOU_YOBO.TOUROKU : 利用票登録
+#
+# Usage : RIYOUHYOU_YOBO.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+YoteiKakuteiFlg="_"
+JissekiKakuteiFlg="_"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 基準年
+[ -z "${RiyouhyouYear}" -o "${RiyouhyouYear}" = "_" ] && error_exit "対象年が不明です"
+# 基準月
+[ -z "${RiyouhyouMonth}" -o "${RiyouhyouMonth}" = "_" ] && error_exit "対象月が不明です"
+
+#--------------------------------------------------------------
+
+# 日付設定
+riyoumonth=$(echo ${RiyouhyouMonth} | maezero 1.2)
+curday=${RiyouhyouYear}${riyoumonth}"01"
+teisyutunengetu=$(mdate month/+1)
+
+##############################################################
+#### マスタ取得
+##############################################################
+##  地域単価
+cat ${home_dir}/TBL/CONFIG/KAIGOHOKEN_TIIKI_TANKA          |
+awk '$4<="'$curday'"&&$5>="'$curday'"{print $1,$2,$3}'    |
+LANG=C sort -k1,2                                         > ${tmp}-master_tiikitanka
+##  事業者マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER       |
+self 1 4 7                                           |
+LANG=C sort -k2,3                                    |
+join1 key=2/3 $tmp-master_tiikitanka                 |
+LANG=C sort -k1,1                                    |
+self 1 4                                             > $tmp-master_jigyousho_tanka
+
+
+# 利用票全体データ
+# 基本情報
+# 1:利用者ID   2:対象年   3:対象月   4:サービス予定確定 5:サービス実績確定
+# 6:有効フラグ 7:処理時間 8:ユーザID
+echo "$Riyoushaid" "$RiyouhyouYear" "$RiyouhyouMonth" "$YoteiKakuteiFlg" "$JissekiKakuteiFlg" \
+"$CareManager" "1" "${sdaytime}" "${USER_ID}" > ${tmp}-riyouhyou_base_yobo_input
+
+
+:> $tmp-houmonkaigo_data_tmp
+# 利用票レコード
+seq $numRecord  |
+while read riyouhyounum ; do
+   rnum=$((riyouhyounum-1))
+   rstart=$(nameread start$rnum $namedata | head -1)
+   rend=$(nameread end$rnum $namedata | head -1)
+   # 時間帯チェック
+   rstart_kakunin=$(echo $rstart | awk '{print substr($1,1,2)substr($1,4,2)}')
+   rend_kakunin=$(echo $rend | awk '{print substr($1,1,2)substr($1,4,2)}')
+   if [ "$rstart_kakunin" -gt "$rend_kakunin" ] ; then
+     : > $tmp-err
+     break;
+   fi
+
+   kyokyusha=$(nameread Kyokyusha$rnum $namedata | head -1)
+   servicenaiyou=$(nameread ServiceNaiyou$rnum $namedata | head -1)
+   hoken=$(nameread hoken$rnum $namedata | head -1)
+   [ -z "${hoken}" -o "${hoken}" = "_" ] && hoken="_"
+   sshurui=$(nameread ServiceType$rnum $namedata | head -1)
+   jissekikakuteicheck=$(nameread jissekikakuteicheck$rnum $namedata | head -1)
+   [ -z "${jissekikakuteicheck}" -o "${jissekikakuteicheck}" = "_" ] && jissekikakuteicheck="_"
+   # 数値チェック
+   riyouyoteival=$(nameread RiyouYoteiVal$rnum $namedata | head -1)
+   riyouyoteival_kakunin=$(echo $riyouyoteival | sed 's/,//g')
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $riyouyoteival_kakunin 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi  
+   yoteikaisu=$(nameread hdYoteiGoukei$rnum $namedata | head -1)
+   [ -z "$yoteikaisu" ] && yoteikaisu="_" 
+   # 数値チェック
+   riyoujissekival=$(nameread RiyouJissekiVal$rnum $namedata | head -1)
+   riyoujissekival_kakunin=$(echo $riyoujissekival | sed 's/,//g')
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $riyoujissekival_kakunin 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi
+   jissekikaisu=$(nameread hdJissekiGoukei$rnum $namedata | head -1)
+   [ -z "$jissekikaisu" ] && jissekikaisu="_"
+   # 数値チェック
+   rtani=$(nameread ServiceTani$rnum $namedata | head -1)
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $rtani 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi
+   hiwaristart=$(nameread HiwariStart$rnum $namedata | head -1)
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $hiwaristart 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi
+   hiwariend=$(nameread HiwariEnd$rnum $namedata | head -1)
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $hiwariend 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi
+   fuzuihiyou=$(nameread FuzuiHiyou$rnum $namedata | head -1)
+   input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $fuzuihiyou 9)
+   if [ "${input_res}" != "OK" ] ; then
+     : > $tmp-number_err
+     break;
+   fi
+   # 訪問介護への実績確定はずしの反映
+   if [ "$jissekikakuteicheck" = "_" ] ; then
+       echo "$Riyoushaid" "$kyokyusha" "$RiyouhyouYear" "$RiyouhyouMonth"  >> $tmp-houmonkaigo_data_tmp
+   fi
+   
+   #####供給者がセットされていない場合は削除扱いとする。
+   [ -z "$kyokyusha" -o "$kyokyusha" = "_" ] || {
+# 1:利用者ID          2:対象年             3:対象月             4:サービスコード種類 5:サービスコード項目
+# 6:実績確定フラグ    7:サービス予定日回数 8:サービス予定月回数 9:サービス実績日回数 10:サービス実績月回数
+# 11:サービス開始時間 12:サービス終了時間  13:供給者コード      14:介護保険フラグ    15:サービス単位
+# 16:付随費用         17:日割り開始日      18:日割り終了日      19:予定確定フラグ    20:有効フラグ
+# 21:処理時間         22:ユーザID
+   echo "$Riyoushaid" "$RiyouhyouYear" "$RiyouhyouMonth" "$sshurui" "$servicenaiyou" "$jissekikakuteicheck" "$riyouyoteival" \
+"$yoteikaisu" "$riyoujissekival" "$jissekikaisu" "$rstart" "$rend" "$kyokyusha" "$hoken" "$rtani" "$fuzuihiyou" \
+"$hiwaristart" "$hiwariend" "$YoteiKakuteiFlg" "1" "${sdaytime}" "${USER_ID}" >> ${tmp}-riyouhyou_records
+   }
+done
+
+[ -e $tmp-err ] && error_exit "時間帯を確認して下さい"
+[ -e $tmp-number_err ] && error_exit "数値以外の値が入っています"
+
+cat ${tmp}-riyouhyou_records |
+awk '$5!="_"'                |
+# 1:固有番号            2:利用者ID           3:対象年             4:対象月             5:サービスコード種類
+# 6:サービスコード項目  7:実績確定>フラグ    8:サービス予定日回数 9:サービス予定月回数 10:サービス実績日回数
+# 11:サービス実績月回数 12:サービス開始時>間 13:サービス終了時間  14:供給者コード      15:介護保険フラグ
+# 16:サービス単位       17:付随費用          18:日割り開始日      19:日割り終了日      20:予定確定フラグ
+# 21:有効フラグ         22:処理時間          23:ユーザID
+rank                         >  ${tmp}-riyouhyou_record_yobo_input
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "サービス利用票レコード作成エラー"
+cp ${tmp}-riyouhyou_record_yobo_input ${work_dir}/riyouhyou_record_yobo_input
+cp ${tmp}-riyouhyou_record_yobo_input $tmp-riyouhyou_kyoutsu_yobo_input
+
+
+# 予定サービスレコード
+cat ${tmp}-riyouhyou_record_yobo_input  |
+tee ${tmp}-yotei_base                    |
+# 1:固有番号            2:利用者ID          3:対象年             4:対象月             5:サービスコード種類
+# 6:サービスコード項目  7:実績確定フラグ    8:サービス予定日回数 9:サービス予定月回数 10:サービス実績日回数
+# 11:サービス実績月回数 12:サービス開始時間 13:サービス終了時間  14:供給者コード      15:介護保険フラグ
+# 16:サービス単位       17:付随費用         18:日割り開始日      19:日割り終了日      20:予定確定フラグ
+# サービス予定日回数のみ抽出
+self 1 8 |
+# カンマ区切りをフィールドに
+sed 's/,/ /g' |
+tarr num=1    |
+# 日付順に並んでいるので、juniコマンドで日付を設定
+juni 1 1      >  ${tmp}-hiduke_yotei_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "予定サービスレコード作成エラー"
+
+[ "$(gyo $tmp-hiduke_yotei_record)" = "0" ] && error_exit "予定データがありません"
+
+cp ${tmp}-yotei_base ${work_dir}/yotei_base
+
+cp ${tmp}-hiduke_yotei_record ${work_dir}/hiduke_yotei_record
+
+# 1:日付                2:固有番号            3:利用者ID          4:対象年             5:対象月
+# 6:サービスコード種類  7:サービスコード項目  8:実績確定フラグ    9:サービス予定日回数 10:サービス予定月回数
+# 11:サービス実績日回数 12:サービス実績月回数 13:サービス開始時間 14:サービス終了時間  15:供給者コード
+# 16:介護保険フラグ     17:サービス単位       18:付随費用         19:日割り開始日      20:日割り終了日
+# 21:予定確定フラグ     22:有効フラグ         23:更新日           24:ユーザID          25:実施予定チェック
+cat ${tmp}-hiduke_yotei_record  |
+LANG=C sort -k2n,2n -k1n,1n     |
+join1 key=2 ${tmp}-yotei_base - |
+# 1:レコード別固有番号 2:利用者ID           3:対象年           4:対象月           5:日付
+# 6:サービスコード種類 7:サービスコード項目 8:サービス開始時間 9:サービス終了時間 10:供給者コード
+# 11:介護保険フラグ    12:サービス単位      13:付随費用        14:日割り開始日    15:日割り終了日
+# 16:予定確定フラグ    17:実施予定チェック
+self 2 3 4 5 1 6 7 13 14 15 16 17 18 19 20 21 25 |
+maezero 4.2 5.2                               |
+# 1:レコード別固有番号 2:利用者ID           3:対象年           4:対象月           5:日付
+# 6:サービスコード種類 7:サービスコード項目 8:サービス開始時間 9:サービス終了時間 10:供給者コード
+# 11:介護保険フラグ    12:サービス単位      13:付随費用        14:日割り開始日    15:日割り終了日
+# 16:予定確定フラグ    17:有効フラグ        18:処理時間        19:ユーザID
+awk '$17!="_" {print $2$3$4$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,"1",'${sdaytime}','${USER_ID}'}'  > ${tmp}-service_yotei_yobo_input
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "予定サービスレコード作成エラー"
+
+cp ${tmp}-service_yotei_yobo_input ${work_dir}/yotei_service
+cp ${tmp}-service_yotei_yobo_input $tmp-service_yotei_kyoutsu_input
+
+# 実績サービスレコード
+cat ${tmp}-riyouhyou_record_yobo_input  |
+tee ${tmp}-jisseki_base                    |
+# 1:固有番号            2:利用者ID          3:対象年             4:対象月             5:サービスコード種類
+# 6:サービスコード項目  7:実績確定フラグ    8:サービス予定日回数 9:サービス予定月回数 10:サービス実績日回数
+# 11:サービス実績月回数 12:サービス開始時間 13:サービス終了時間  14:供給者コード      15:介護保険フラグ
+# 16:サービス単位       17:付随費用         18:日割り開始日      19:日割り終了日
+# サービス予定日回数のみ抽出
+self 1 10 |
+# カンマ区切りをフィールドに
+sed 's/,/ /g' |
+tarr num=1    |
+# 日付順に並んでいるので、juniコマンドで日付を設定
+juni 1 1      >  ${tmp}-hiduke_jisseki_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "実績サービスレコード作成エラー"
+[ "$(gyo $tmp-hiduke_jisseki_record)" = "0" ] && error_exit "実績データがありません"
+
+cp ${tmp}-jisseki_base ${work_dir}/jisseki_base
+
+cp ${tmp}-hiduke_jisseki_record ${work_dir}/hiduke_jisseki_record
+
+# 1:日付                2:固有番号            3:利用者ID          4:対象年             5:対象月
+# 6:サービスコード種類  7:サービスコード項目  8:実績確定フラグ    9:サービス予定日回数 10:サービス予定月回数
+# 11:サービス実績日回数 12:サービス実績月回数 13:サービス開始時間 14:サービス終了時間  15:供給者コード
+# 16:介護保険フラグ     17:サービス単位       18:付随費用         19:日割り開始日      20:日割り終了日
+# 21:予定確定フラグ     22:有効フラグ         23:更新日           24:ユーザID          25:実施予定チェック
+cat ${tmp}-hiduke_jisseki_record  |
+LANG=C sort -k2n,2n -k1n,1n     |
+join1 key=2 ${tmp}-jisseki_base - |
+# 1:レコード別固有番号 2:利用者ID           3:対象年         4:対象月           5:日付
+# 6:サービスコード種類 7:サービスコード項目 8:実績確定フラグ 9:サービス開始時間 10:サービス終了時間
+# 11:供給者コード      12:介護保険フラグ    13:サービス単位  14:付随費用        15:日割り開始日
+# 16:日割り終了日      17:実施予定チェック
+self 2 3 4 5 1 6 7 8 13 14 15 16 17 18 19 20 25 |
+maezero 4.2 5.2                               |
+awk '$17!="_" {print $2$3$4$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,"1",'${sdaytime}','${USER_ID}'}'  > ${tmp}-service_jisseki_yobo_input
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "実績サービスレコード作成エラー"
+
+cp ${tmp}-service_jisseki_yobo_input ${work_dir}/jisseki_service
+cp ${tmp}-service_jisseki_yobo_input $tmp-service_jisseki_kyoutsu_input
+
+
+# 実績請求レコードの作製
+# 1:レコード別固有番号 2:利用者ID           3:対象年         4:対象月           5:日付
+# 6:サービスコード種類 7:サービスコード項目 8:実績確定フラグ 9:サービス開始時間 10:サービス終了時間
+# 11:供給者コード      12:介護保険フラグ    13:サービス単位  14:付随費用        15:日割り開始日
+# 16:日割り終了日
+cat ${tmp}-service_jisseki_yobo_input         |
+LANG=C sort -k11,11                            |
+join1 key=11 $tmp-master_jigyousho_tanka       |
+# 1:レコード別固有番号 2:利用者ID           3:対象年          4:対象月           5:日付
+# 6:サービスコード種類 7:サービスコード項目 8:実績確定フラグ  9:サービス開始時間 10:サービス終了時間
+# 11:供給者コード      12:地域単価          13:介護保険フラグ 14:サービス単位    15:付随費用
+# 16:日割り開始日      17:日割り終了日
+self 2/5 9 10 6 7 11/15                        |
+# 1:利用者ID         2:対象年             3:対象月             4:日付         5:サービス開始時間
+# 6:サービス終了時間 7:サービスコード種類 8:サービスコード項目 9:供給者コード 10:地域単価
+# 11:介護保険フラグ  12:サービス単位      13:付随費用          14:有効フラグ  15:処理時間
+# 16:ユーザＩＤ
+awk '{print $0,"1",'${sdaytime}','${USER_ID}'}' |
+LANG=C sort -k1,4                     > $tmp-jisseki_seikyu_input
+
+# 訪問介護反映処理
+cat $tmp-houmonkaigo_data_tmp        |
+LANG=C sort -k1,4 -u                 > $tmp-houmonkaigo_data
+# 訪問介護の実績確定ファイルを取得
+cat ${home_dir}/HOUMONKAIGO/POMPA/HOUMONKAIGO/${Riyoushaid}/JISSEKI_KAKUTEI  |
+LANG=C sort -k1,4                    |
+join1 key=1/4 $tmp-houmonkaigo_data  |
+awk '{print $1,$2,$3,$4,"_","1",'${sdaytime}','${USER_ID}'}' > $tmp-jisseki_houmonkaigo_input
+
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_BASE_YOBO   RIYOUHYOU_BASE_YOBO
+GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO   RIYOUHYOU_RECORD_YOBO
+GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_YOTEI_YOBO   SERVICE_YOTEI_YOBO
+GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_JISSEKI_YOBO   SERVICE_JISSEKI_YOBO
+GETSUGAKU_RIYOU_YOBO/${shisetsu}/KYOTAKU_JISSEKI_YOBO   KYOTAKU_JISSEKI_YOBO
+GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/JISSEKI_KAKUTEI   JISSEKI_KAKUTEI
+FIN
+
+input_detail_dir=RIYOUHYOU_YOBO/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+
+### 実績確定の場合は請求データを作成
+if [ ${JissekiKakuteiFlg} = "1" ] ; then
+cat <<- FIN > $tmp-koushin_pompa
+riyouhyou_base_yobo RIYOUHYOU_BASE_YOBO 3 8 9 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+jisseki_seikyu KYOTAKU_JISSEKI_YOBO 9 15 16 ${data_dir}/SEIKYU/KYOTAKU/${shisetsu}/${teisyutunengetu} ${input_dir}
+FIN
+else
+cat <<- FIN > $tmp-koushin_pompa
+riyouhyou_base_yobo RIYOUHYOU_BASE_YOBO 3 8 9 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+jisseki_houmonkaigo JISSEKI_KAKUTEI 4 7 8 ${home_dir}/HOUMONKAIGO/POMPA/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+if [ "$(gyo $tmp-service_jisseki_yobo_input)" = "0" ] ; then
+cat <<- FIN > $tmp-add_pompa
+riyouhyou_record_yobo RIYOUHYOU_RECORD_YOBO 4 22 23 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+riyouhyou_kyoutsu_yobo RIYOUHYOU_RECORD_YOBO 4 22 23 ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_yotei_yobo SERVICE_YOTEI_YOBO 9 18 19 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_yotei_kyoutsu SERVICE_YOTEI_YOBO 9 18 19 ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+FIN
+else
+cat <<- FIN > $tmp-add_pompa
+riyouhyou_record_yobo RIYOUHYOU_RECORD_YOBO 4 22 23 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+riyouhyou_kyoutsu_yobo RIYOUHYOU_RECORD_YOBO 4 22 23 ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_yotei_yobo SERVICE_YOTEI_YOBO 9 18 19 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_yotei_kyoutsu SERVICE_YOTEI_YOBO 9 18 19 ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_jisseki_yobo SERVICE_JISSEKI_YOBO 10 18 19 ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+service_jisseki_kyoutsu SERVICE_JISSEKI_YOBO 10 18 19 ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid} ${input_dir}
+FIN
+
+fi
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入替版作成
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$2!="'${Riyoushaid}'"||$3!="'${RiyouhyouYear}'"||$4!="'${RiyouhyouMonth}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ -s $tmp-${input_name}_new ] ; then
+     [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+     [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+     [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+  
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

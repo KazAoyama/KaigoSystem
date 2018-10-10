@@ -1,0 +1,118 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_ICHIRAN_HYOJI.SEARCH2 : 介護実績一覧表示修正画面用CGI
+#
+# Usage : KAIGOJISSEKI_ICHIRAN_HYOJI.SEARCH2 ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="shusei"
+fi
+
+# 年月日の取得
+echo ${hd_sakuseibi} > ${tmp}-sakuseibi
+echo ${riyosha_name} > ${tmp}-taishosha
+echo ${ShuseiId} > ${tmp}-shusei_id
+
+SEARCH_TYPE=$(echo ${ShuseiId} | awk '{print substr($1,1,1)}')
+SEARCH_MONTH=$(echo ${ShuseiId} | awk '{print substr($1,2,6)}')
+echo ${ShuseiId} > ${tmp}-search_id
+
+# 検索するデータを判別
+case "${SEARCH_TYPE}" in
+  # 介護実績
+  J )
+    cat ${pompa_dir}/${shisetsu}/${SEARCH_MONTH}/${SEARCH_MONTH}.KAIGOJISSEKI_IKKATSU   |
+    # 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+    # 11:実施者 12:登録日時間 13:ID
+    LANG=C sort -k13,13                                                     |
+    join0 key=13 ${tmp}-search_id                                           > ${tmp}-search
+    
+  ;;
+  # バイタル
+  V )
+    cat ${pompa_dir}/${shisetsu}/${SEARCH_MONTH}/${SEARCH_MONTH}.KAIGOJISSEKI_IKKATSU_VITAL |
+    # 1:利用者ID 2:年月日 3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAt 9:体重 10:時刻
+    # 11:所要時間 12:備考 13:実施者 14:登録年月日時間 15:ID  > ${tmp}-search
+    LANG=C sort -k15,15                                                         |
+    join0 key=15 ${tmp}-search_id                                               > ${tmp}-search
+  ;;
+  # 申し送り
+  * )
+    cat ${pompa_dir}/${shisetsu}/${SEARCH_MONTH}/${SEARCH_MONTH}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+    LANG=C sort -k13,13                                                               |
+    join0 key=13 ${tmp}-search_id                                                     > ${tmp}-search
+  ;;
+esac
+
+
+
+
+
+
+cat ${tmp}-search
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

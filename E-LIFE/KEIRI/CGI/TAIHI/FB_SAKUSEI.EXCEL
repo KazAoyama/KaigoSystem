@@ -1,0 +1,254 @@
+#!/bin/bash
+#
+# FB_SAKUSEI.EXCEL : EXCEL出力
+#
+# Usage : FB_SAKUSEI.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+  
+# 結果アップロードのファイルがあったら結果を、なければダウンロードしたファイルを使う
+if [ -e ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.UPLOAD.${year}${month}.${itakushaNo} ];then
+  cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.UPLOAD.${year}${month}.${itakushaNo}
+else
+  cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo}
+fi                 > $tmp-file
+# 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+# 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+# 16:振替結果コード
+
+# 金融機関名のマスタ
+awk '$5!="9"' $hometbl_dir/KINYUU_MASTER/KINYUUKIKAN_NAME |
+self 1 3                                                  |
+LANG=C sort                                               > ${tmp}-KINYUUKIKAN_NAME
+
+# 支店のマスタ
+# 支店
+awk '$5!="9"' $hometbl_dir/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME |
+self 1/2 4                                                       |
+LANG=C sort                                                      > ${tmp}-KINYUUKIKAN_SHITEN_NAME
+
+# 施設名マスタ
+cat <<- FIN > $tmp-RYAKUGO
+0001 AO2
+0002 UT
+0003 CM
+0004 AZ
+0005 AO
+0006 SD
+1004 YK
+1005 BJ
+FIN
+
+  # 引落結果のマスタ
+cat <<- FIN > $tmp-KEKKA
+0 振替済
+1 資金不足
+2 預金取引なし
+3 預金者の都合による振替停止
+4 預金口座振替依頼書なし
+8 委託者の都合による振替停止
+9 その他
+A 未
+FIN
+
+
+# MODEによって分岐
+if [ "${MODE}" = "excel" ];then
+  LANG=C sort -k3,3 $tmp-file                              |
+  # 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+  # 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+  # 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+  # 16:振替結果コード
+  join2 +"施設外" key=3 $tmp-RYAKUGO                       |
+  # 1::利用者ID   2:利用者名        3:施設コード    4:施設名    5:居室
+  # 6:居宅フラグ  7:顧客番号        8:銀行コード    9:銀行名ｶﾅ  10:支店コード
+  # 11:口座種別   12:口座番号       13:口座名義カナ 14:引落金額 15:新規コード
+  # 16:委託者番号 17:振替結果コード
+  self 8 10 1/7 9 11/NF                                    |
+  # 1:銀行コード  2:支店コード      3:利用者ID      4:利用者名  5:施設コード
+  # 6:施設名      7:居室            8:居宅フラグ    9:顧客番号  10:銀行名ｶﾅ
+  # 11:口座種別   12:口座番号       13:口座名義カナ 14:引落金額 15:新規コード
+  # 16:委託者番号 17:振替結果コード
+  LANG=C sort -k1,2                                         |
+  join2 +"マスタなし" key=1/2 $tmp-KINYUUKIKAN_SHITEN_NAME  |
+  # 1:銀行コード  2:支店コード  3:支店名          4:利用者ID      5:利用者名
+  # 6:施設コード  7:施設名      8:居室            9:居宅フラグ    10:顧客番号
+  # 11:銀行名ｶﾅ   12:口座種別   13:口座番号       14:口座名義カナ 15:引落金額
+  # 16:新規コード 17:委託者番号 18:振替結果コード
+  join2 +"マスタなし" key=1 $tmp-KINYUUKIKAN_NAME           |
+  # 1:銀行コード 2:銀行名      3:支店コード  4:支店名          5:利用者ID
+  # 6:利用者名   7:施設コード  8:施設名      9:居室            10:居宅フラグ
+  # 11:顧客番号  12:銀行名ｶﾅ   13:口座種別   14:口座番号       15:口座名義カナ
+  # 16:引落金額  17:新規コード 18:委託者番号 19:振替結果コード
+  LANG=C sort -k19,19                                        |
+  join2 key=19 $tmp-KEKKA                                    |
+  # 1:銀行コード 2:銀行名      3:支店コード  4:支店名          5:利用者ID
+  # 6:利用者名   7:施設コード  8:施設名      9:居室            10:居宅フラグ
+  # 11:顧客番号  12:銀行名ｶﾅ   13:口座種別   14:口座番号       15:口座名義カナ
+  # 16:引落金額  17:新規コード 18:委託者番号 19:振替結果コード 20:振替結果
+  self 10 8 9 6 11 16 2 4 13 14 15 19 20                     |
+  # 1:居宅フラグ    2:施設名          3:居室      4:利用者名 5:顧客番号
+  # 6:引落金額      7:銀行名          8:支店名    9:口座種別 10:口座番号
+  # 11:口座名義カナ 12:振替結果コード 13:振替結果
+  LANG=C sort -k12,12nr -k1,1 -k2,3 -k11,11                  |
+  awk '{if($1=="kyotaku"){$1="居"}else{$1="-"};print}'       |
+  awk '{if($9=="1"){$9="普通"}else if($9=="2"){$9="当座"}else{$9="@"};print}' |
+  self 2/3 1 4/11 13                                          > $tmp-search_data
+  
+  echo ${itakushaNo} > $tmp-itakushaNo
+  
+  
+  
+  TEMPLA=${temp_dir}/FB_SAKUSEI.xls
+  Ehexcel < ${TEMPLA} 1 b2 $tmp-itakushaNo                 \
+                      1 a5 ${tmp}-search_data              > ${download_dir}/${userid}_$$.download.xls
+else
+  # 入居・退去のチェックリストを出力
+  self 1 $tmp-file                                         |
+  LANG=C sort -u                                           > $tmp-riyosha_checklist
+  # 1::利用者ID
+
+  # 施設を取得
+  awk '$2=="'${itakushaNo}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_FACT |
+  self 1                                                    > $tmp-search_shisetsu
+  # 1:施設コード
+
+  # 請求のヘッダから処理月を取得する
+  for SHISETSU in $(yarr $tmp-search_shisetsu);do
+    LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${SHISETSU}/HEAD/SEIKYU_HEAD |
+    awk '$24!="9"' -
+  done                                      |
+  getlast 1 2                               |
+  cjoin0 key=3 <(echo "4 5 6 7" | tarr) -   |
+  cjoin0 key=14 <(echo "${year}${month}") - |
+  tee $tmp-head_kari_kari                   |
+  self 8 2 1                                > ${tmp}-head
+  # 1:居室番号 2:入居者ID 3:処理月
+cp ${tmp}-head ${work}/headhead
+
+  cat $tmp-head                             |
+  while read ROOM RIYOSHA NENGETSU ;do
+    awk '$1=="'${RIYOSHA}'"&&$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_KEIYAKU                   > $tmp-riyosha_keiyaku
+    # 1:利用者ID   2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+    # 6:ユニットID 7:居室        8:入居時年齢  9:契約種類ID 10:契約日
+    # 11:引渡し日  12:契約開始日 13:契約終了日 14:退去日    15:退去理由
+    # 16:備考      17:予備       18:予備       19:予備      20:予備
+    # 21:予備      22:有効フラグ 23:更新日     24:更新者
+
+    awk '$12<="'${NENGETSU}'31"&&$12>="'${NENGETSU}'"' $tmp-riyosha_keiyaku                > $tmp-nyukyo
+    [ $(gyo $tmp-nyukyo) -ne 0 ] && self 1 3 9 7 12 13 $tmp-nyukyo | awk '{print $0,"入居"}' >> $tmp-nyukyo_taikyo
+    awk '$13<="'${NENGETSU}'31"&&$13>="'${NENGETSU}'"' $tmp-riyosha_keiyaku                > $tmp-taikyo
+    [ $(gyo $tmp-taikyo) -ne 0 ] && self 1 3 9 7 12 13 $tmp-taikyo | awk '{print $0,"退去"}' >> $tmp-nyukyo_taikyo
+    # 1:利用者ID   2:施設ID 3:契約種類ID 4:居室 5:契約開始日
+    # 6:契約終了日 7:入退去の目印
+  done
+
+
+  LANG=C sort -k2,2 $tmp-nyukyo_taikyo                            |
+  join0 key=2 $tmp-search_shisetsu                                |
+  LANG=C sort -k3,3                                               |
+  join0 key=3 <(echo "003 004 005 006 007" | tarr | LANG=C sort)  |
+  LANG=C sort                                                     > $tmp-taisho_riyosha
+  # 1:利用者ID   2:施設ID 3:契約種類ID 4:居室 5:契約開始日
+  # 6:契約終了日 7:入退去の目印
+
+  # マスタ準備
+  awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER                 |
+  self 1 2                                                        > $tmp-riyosha_master
+
+  awk '$(NF-2)!=9{print $1,$2}' /home/hands/E-LIFE/TBL/KEIYAKU_MASTER/KEIYAKU_NAME > $tmp-keiyaku_master
+
+  join2 key=1 $tmp-riyosha_master $tmp-taisho_riyosha             |
+  # 1:利用者ID   2:利用者名   3:施設ID 4:契約種類ID 5:居室
+  # 6:契約開始日 7:契約終了日 8:入退去の目印
+  LANG=C sort -k3,3                                               |
+  join2 key=3 $tmp-RYAKUGO                                        |
+  # 1:利用者ID 2:利用者名   3:施設ID     4:施設略称 5:契約種類ID
+  # 6:居室     7:契約開始日 8:契約終了日 9:入退去の目印
+  LANG=C sort -k5,5                                               |
+  join2 key=5 $tmp-keiyaku_master                                 |
+  # 1:利用者ID 2:利用者名 3:施設ID     4:施設略称   5:契約種類ID
+  # 6:契約名   7:居室     8:契約開始日 9:契約終了日 10:入退去の目印
+tee ${work}/keiyaku_waga |
+  self 10 4 7 2 6 8 9                                             |
+  awk '{$6=substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2);$7=substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2);print}' |
+  LANG=C sort                                                     > $tmp-search_data
+  # 1:入退去の目印 2:施設略称   3:居室 4:利用者名 5:契約名
+  # 6:契約開始日   7:契約終了日
+
+  [ $(gyo $tmp-search_data) -eq 0 ] && echo "該当なし"            > $tmp-search_data
+
+  echo ${itakushaNo} > $tmp-itakushaNo
+  TEMPLA=${temp_dir}/FB_SAKUSEI_CHECK.xls
+  Ehexcel < ${TEMPLA} 1 b2 $tmp-itakushaNo                 \
+                      1 a5 ${tmp}-search_data              > ${download_dir}/${userid}_$$.download.xls
+fi
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

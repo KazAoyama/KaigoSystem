@@ -1,0 +1,776 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_ICHIRAN_HYOJI.DISPLAY : 介護実績一覧表示.DISPLAY
+#
+# Usage : KAIGOJISSEKI_ICHIRAN_HYOJI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work=${app_dir}/WORK
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+unit="_"
+hd_sakuseibi=$today
+hd_sakuseibi2=$today
+# eval
+eval $(name-source ${namefile})
+
+echo $shisetsu > $tmp-shisetsu
+
+
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KAIGOJISSEKI_KENSAKU.CGI"{print $1,$9}'                                                                |
+LANG=C sort -u -k2,2n                                                                       |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" -o "$(cat $tmp-btn_kengen)" = "1" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+elif [ $(cat ${downloadfile}) == "zero" ];then
+  FILE_NAME="null"
+  # 検索結果がゼロであればメッセージ表示
+cat <<- FIN > $tmp-html2
+  <script type="text/javascript" language="javascript">
+    alert('抽出データがありません');
+  </script>
+FIN
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" ];then
+  riyosha_name="_"
+  floor=""
+  unit=""
+  room_select=""
+  text_sakuseibi=""
+  text_sakuseibi2=""
+  hd_sakuseibi="$today"
+  hd_sakuseibi2="$today"
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+  text_sakuseibi2=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+  bunrui_select=""
+  hyojikomoku_kaigojisseki="on"
+  hyojikomoku_vital=""
+  hyojikomoku_keyword=""
+  hyojikomoku_moushiokuri=""
+  keyword=""
+  JISSHISHA=""
+  moushiokuri_select=""
+  moushiokuri_taisho=""
+  moushiokuri_koumoku=""
+  vital_taion="on"
+  vital_ketuatu_ue="on"
+  vital_ketuatu_shita="on"
+  vital_myakuhaku="on"
+  vital_kokyu="on"
+  vital_SAT="on"
+  vital_taijyu="on"
+  sort_name="sort_nichiji"
+  # デフォルトメッセージを作成
+  echo "###DEFAULT_MES###" "条件を設定して「検索」ボタンをクリックしてください" >> ${tmp}-calsed1
+else
+  if [ "$(gyo ${searchfile})" = "0" ];then
+    echo "###DEFAULT_MES###" "データがありません" >> ${tmp}-calsed1
+  else
+    echo "###DEFAULT_MES###" "" >> ${tmp}-calsed1
+  fi
+fi
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ $shisetsu = "0001" ];then
+  join0 key=2 <(echo "02")
+else
+  join0 key=2 <(echo "00")
+fi |
+awk '$7<="'${hd_sakuseibi2}'" && $8>="'${hd_sakuseibi}'"'    > $tmp-riyosha_status
+
+# ユニットマスタの準備
+awk '$(NF-2)!=9' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME        |
+self 1 2                                                     > $tmp-unit_master
+
+# 居室
+echo "000 全て" > $tmp-room_all
+cat $tmp-riyosha_status                                   |
+# 1:施設コード 2:建屋   3:フロア 4:ユニット   5:居室
+# 6:利用者ID   7:入居日 8:退去日 9:有効フラグ 10:更新日
+# 11:更新者
+#awk '$3=="'${floor}'"&&$4=="'${unit}'"{print $5}'         |
+self 5 5 |
+LANG=C sort -u                                            |
+cat $tmp-room_all - |
+awk '{print $0,"'${room_select}'"}'                          |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' > $tmp-room_select
+
+
+# 利用者マスタの準備
+echo "99999999" "利用者以外"                                 > $tmp-riyosha_igai
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     |
+cat - $tmp-riyosha_igai                                      > $tmp-riyosha_master
+
+# 利用者マスタの準備
+echo "99999999" "利用者以外" "ン"                            > $tmp-riyosha_igai_kana
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2 3                                                   |
+cat - $tmp-riyosha_igai_kana                                > $tmp-riyosha_master_kana
+
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                  > $tmp-all
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  self 6                                                            |
+  LANG=C sort -u -k1,1                                             |
+  join1 key=1 $tmp-riyosha_master_kana                             |
+  LANG=C sort -k3,3 |
+  delf 3 |
+  cat $tmp-all $tmp-riyosha_igai -                                  |
+  awk '{print $0,"'${riyosha_name}'"}'                              |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'    |
+  sed 's/###SPACE###/　/g'                                          > ${tmp}-riyosha_name
+else
+  echo "00" "全て"                                                  > $tmp-all 
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  self 6                                                            |
+  LANG=C sort -u -k1,1                                             |
+  join1 key=1 $tmp-riyosha_master_kana                              |
+  LANG=C sort -k3,3 |
+  delf 3 |
+  cat $tmp-all $tmp-riyosha_igai -                                  |
+  awk '{print $0,""}'                                               |
+  sed 's/###SPACE###/　/g'                                          > ${tmp}-riyosha_name
+fi
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_floor
+  cat $tmp-riyosha_status                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         |
+  awk '{print $0,"'${floor}'"}'                                |
+# 1:FLOOR_CODE 2:floor_name
+  awk '{if($1==$2){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-floor_name
+else
+  echo "0" "全て"                                              > $tmp-all_floor
+  cat $tmp-riyosha_status                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_unit
+  cat $tmp-riyosha_status                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  awk '$3=="'${floor}'"'                                       |
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  cat $tmp-all_unit -                                          |
+  awk '{print $0,"'${unit}'"}'                                 |
+# 1:UNTI_CODE 2:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+  echo "0" "全て"                                              > $tmp-all_unit
+  cat $tmp-riyosha_status                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  cat $tmp-all_unit -                                          > $tmp-unit_name
+fi
+
+# 実施者の取得
+# 介護スタッフのマスタ準備(建屋がケアの人を出す）
+awk '$(NF-2)!=9' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON         |
+# 1:従業員ID 2:従業員名 3:従業員名カナ 4:勤務期間from 5:勤務時間to
+# 6:ID 7:PASS 8:削除フラグ 9:更新日時 10:ユーザーID
+awk '$4<="'${hd_sakuseibi2}'" && $5>="'${hd_sakuseibi}'"' |
+self 1 2                                                       > $tmp-user_master
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${tbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU                |
+# 1:userid 2:施設id  3:建屋 4:フロア 5:ユニットid
+# 6:事業所詳細 7:役職（ケアマネかサ責） 8:介護支援専門員番号
+awk '$(NF-2)!=9' |
+LANG=C sort -k2,2                                             |
+join0 key=2 <(echo ${shisetsu})                                      |
+awk '$3=="02"'                                                 |
+self 1                                                         |
+LANG=C sort -k1,1                                             |
+join1 key=1 $tmp-user_master                                   |
+awk '{print $1"+++"$2,$2}'                                     |
+LANG=C sort -u                                                 > $tmp-jisshisha_master
+echo "0" "全て"                                                > $tmp-all_jisshisha
+if [ -n "${JISSHISHA}" -a "${JISSHISHA}" != "_" ];then
+  cat $tmp-all_jisshisha $tmp-jisshisha_master                 |
+# 1:JISSISHA_CODE 2:JISSHISHA_NAME
+  awk '{print $0,"'${JISSHISHA}'"}'                            |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-jisshisha
+else
+  cat $tmp-all_jisshisha $tmp-jisshisha_master                 |
+  awk '{print $1,$2,""}'                                       > ${tmp}-jisshisha
+fi
+
+# 申し送り項目の設定
+echo "0" "全て"                                                |
+cat - ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_SELECT                         |
+awk '{print $0,"'${moushiokuri_select}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_select
+echo "0" "全て"                                                |
+cat - ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_TAISHO                         |
+awk '{print $0,"'${moushiokuri_taisho}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_taisho
+echo "0" "全て"                                                |
+cat - ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_KOUMOKU                        |
+awk '{print $0,"'${moushiokuri_koumoku}'"}'                     |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-moushiokuri_koumoku
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d) 
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+if [ "${hd_sakuseibi2}" = "_" -o -z "${hd_sakuseibi2}" ];then
+  hd_sakuseibi2=$(date +%Y%m%d) 
+  text_sakuseibi2=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+
+# ソート項目
+[ "${sort_name}" = "sort_nichiji" ] && echo "###sort_nichiji###" "checked" >> $tmp-calsed1
+[ "${sort_name}" = "sort_namae" ] && echo "###sort_namae###" "checked" >> $tmp-calsed1
+[ "${sort_name}" = "sort_room" ] && echo "###sort_room###" "checked" >> $tmp-calsed1
+
+#######################################################################################
+# ページ分け
+ichi_page=100
+# MODEがsearchだったらページを表示
+if [ -n "${MODE}" -a "${MODE}" = "search" ];then
+  gyo=$(cat ${searchfile} | gyo)
+  GYO=$(echo ${gyo})
+  # 表示するページを確認 (1ページ当たり最大100)
+  start=$(expr \( ${PAGE} - 1 \) \* ${ichi_page} + 1)
+  START=$(echo ${start})
+  if [ ${gyo} -le $(expr ${PAGE} \* 100) ];then
+    end=${gyo}
+  else
+    end=$(expr ${ichi_page} \* ${PAGE})
+  fi
+  END=$(echo ${end})
+  echo ${GYO} ${START} ${END}                                              > ${tmp}-gyo_mes
+
+  #最終ページを確認
+  saishu=$(expr ${gyo} \/ 100 + 1)
+
+  #ページ数は何ページになるか
+  i=1
+  while true; do
+    echo ${i}
+    i=$((i + 1))
+    [ ${i} -gt ${saishu} ] && break
+  done                                                                     > ${tmp}-page_ichiran
+
+  # 表示ページの1ページ前を確認
+  expr ${PAGE} - 1                       |
+  # そのページがページ数の一覧にあるか確認
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-maehe
+
+  # 表示ページの1ページ後ろを確認
+  expr ${PAGE} + 1                                                         |
+  # そのページがページ数の一覧にあるか確認
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-tsugihe
+
+  # 表示ページの前4ページ分を抽出する
+  i=${PAGE}
+  while true; do
+    [ ${i} -le "1" ] && break
+    i=$((i - 1))
+    echo ${i}
+    [ ${i} -eq $(expr ${PAGE} - 4) ] && break
+  done                                                                     |
+  LANG=C sort -k1n                                                         |
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-pre
+  # 表示ページの後ろ4ページ分を抽出する
+  i=${PAGE}
+  while true; do
+    i=$((i + 1))
+    echo ${i}
+    [ ${i} -eq $(expr ${PAGE} + 4) ] && break
+  done                                                                     |
+  LANG=C sort -k1n                                                         |
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-after
+  echo ${PAGE}                                                             > ${tmp}-now
+
+  # 表示ページの5ページ前のデータを抽出する
+  expr ${PAGE} - 5                                                         |
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-sonomae
+
+  # 表示ページの5ページ後のデータを抽出する
+  expr ${PAGE} + 5                                                         |
+  cjoin0 key=1 - ${tmp}-page_ichiran                                       > ${tmp}-sonoato
+
+# MODEがsearch以外の場合はページ表示をしない
+else
+  touch ${tmp}-gyo_mes
+  touch ${tmp}-maehe
+  touch ${tmp}-tsugihe
+  touch ${tmp}-pre
+  touch ${tmp}-after
+  touch ${tmp}-now
+  touch ${tmp}-sonomae
+  touch ${tmp}-sonoato
+fi
+
+
+# searchfileの処理
+cat $tmp-riyosha_status |
+self 6 7 5 |
+# 1:利用者ID 2:開始日 3:居室
+LANG=C sort -k1,2 |
+getlast 1 1 |
+self 1 3 > $tmp-riyosha_room
+# 1:利用者ID 2:居室
+cp $tmp-riyosha_room ${work}/work_room
+
+if [ -e "${searchfile}" ];then
+  cat ${searchfile}   |
+  awk '$1=="JISSEKI"' |
+  # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+  LANG=C sort -k2,2  |
+  join1 key=2 $tmp-riyosha_master_kana               |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2              |
+  # 1:目印  2:居室     3:対象者   4:カナ     5:作成日
+  # 6:共有  7:開始時間 8:介護分類 9:介護項目 10:内容
+  # 11:備考 12:時間    13:実施者  14:色      15:ID
+  LANG=C sort -k8,8n  |
+  join1 key=8 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KAIGO_BUNRUI_MASTER |
+  delf 8              |
+  awk '{gsub(/+++/,"【場所】",$9);print}'            > ${tmp}-jisseki
+  # 1:目印     2:居室     3:対象者   4:作成日 5:共有
+  # 6:開始時間 7:介護分類 8:介護項目 9:内容   10:備考
+  # 11:時間    12:実施者  13:色      14:ID
+
+  cat ${searchfile} |
+  awk '$1=="VITAL"' |
+  LANG=C sort -k2,2  |
+  join1 key=2 $tmp-riyosha_master_kana               |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2 > ${tmp}-vital
+  # 1:目印  2:居室     3:対象者   4:カナ     5:作成日
+  # 6:共有  7:開始時間 8:介護分類 9:介護項目 10:内容
+  # 11:備考 12:時間    13:実施者  14:色      15:ID
+  
+  cat ${searchfile} |
+  awk '$1=="OKURI"' |
+  join1 key=2 $tmp-riyosha_master_kana               |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2 > ${tmp}-okuri
+  # 1:目印  2:居室     3:対象者   4:カナ     5:作成日
+  # 6:共有  7:開始時間 8:介護分類 9:介護項目 10:内容
+  # 11:備考 12:時間    13:実施者  14:色      15:ID
+  
+  cat  ${tmp}-jisseki ${tmp}-vital ${tmp}-okuri       |
+  delf 1    | awk '{gsub(/+++/,"",$6);print}'         |
+  # 1:居室     2:対象者   3:カナ     4:作成日 5:共有
+  # 6:開始時間 7:介護分類 8:介護項目 9:内容   10:備考
+  # 11:時間    12:実施者  13:色      14:ID
+  case ${sort_name} in
+    sort_nichiji )
+      LANG=C sort -k4,4nr -k6,6r
+    ;;
+    sort_room )
+      LANG=C sort -k1,1 -k4,4nr -k6,6r
+    ;;
+    * )
+      LANG=C sort -k3,3 -k4,4nr -k6,6r
+    ;;
+  esac                                          |
+  if [ "${start}" -eq "1" ];then
+    cat -
+  else
+    if [ "${MODE}" = "init" ];then
+      cat
+    else
+      tail -n +${start}
+    fi
+  fi                                            |
+  delf 3                                        |
+  head -${ichi_page}                                  > ${tmp}-search
+  # 1:目印 2:共有 3:開始時間 4:介護分類 5:介護項目 6:内容 7:備考 8:時間 9:実施者
+else
+  :
+fi
+
+#######################################################################################
+# formhame前の実態参照変換
+calsed "&" "&amp;" ${namefile}                      |
+calsed "<" "&lt;"                                   |
+calsed ">" "&gt;"                                   |
+calsed "\"" "&quot;"                                |
+# formhame前にキーワードが　"_"　のみの場合、消去
+awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+# formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+
+#######################################################################################
+
+#######################################################################################
+# namefileの再構成
+
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+FIN
+#######################################################################################
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE6### active
+###TEXT_SAKUSEIBI### ${text_sakuseibi}
+###TEXT_SAKUSEIBI2### ${text_sakuseibi2}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+###HD_SAKUSEIBI2### ${hd_sakuseibi2}
+###LI_KANGOKAIGOKIROKU6### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+case ${bunrui_select} in
+  shokuji )
+    echo "###shokuji_suibun###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_shokuji} in
+      1 )
+        echo "###食事摂取###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###おやつ摂取###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###水分摂取###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_shokujiALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  haisetsu )
+    echo "###haisetsu###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_haisetsu} in
+      1 )
+        echo "###排尿介助###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###排便介助###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###下剤与薬###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_haisetsuALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  nyuyoku )
+    echo "###nyuyoku###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_nyuyoku} in
+      1 )
+        echo "###入浴###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###洗髪###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###清拭###" "selected" >> ${tmp}-calsed1
+      ;;
+      4 )
+        echo "###足浴###" "selected" >> ${tmp}-calsed1
+      ;;
+      5 )
+        echo "###手浴###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_nyuyokuALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  senmen )
+    echo "###senmen###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_senmen} in
+      1 )
+        echo "###モーニングケア###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###ナイトケア###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###食後の口腔ケア###" "selected" >> ${tmp}-calsed1
+      ;;
+      4 )
+        echo "###リネンケア###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_senmenALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  kihon_dousa )
+    echo "###kihon_dousa###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_kihon_dousa} in
+      1 )
+        echo "###生活リハ###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###アクティビティー###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###マッサージ###" "selected" >> ${tmp}-calsed1
+      ;;
+      4 )
+        echo "###体位交換###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_kihon_dousaALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  iryo_kenkou )
+    echo "###iryo_kenkou###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_iryo_kenkou} in
+      1 )
+        echo "###内服薬###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###処置等###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###医療###" "selected" >> ${tmp}-calsed1
+      ;;
+      4 )
+        echo "###口腔ケア###" "selected" >> ${tmp}-calsed1
+      ;;
+      5 )
+        echo "###頓用###" "selected" >> ${tmp}-calsed1
+      ;;
+      6 )
+        echo "###外用薬###" "selected" >> ${tmp}-calsed1
+      ;;
+      7 )
+        echo "###測定・観察###" "selected" >> ${tmp}-calsed1
+      ;;
+      8 )
+        echo "###通院介助###" "selected" >> ${tmp}-calsed1
+      ;;
+      9 )
+        echo "###健康診断###" "selected" >> ${tmp}-calsed1
+      ;;
+      10 )
+        echo "###入院中の面会###" "selected" >> ${tmp}-calsed1
+      ;;
+      11 )
+        echo "###往診###" "selected" >> ${tmp}-calsed1
+      ;;
+      12 )
+        echo "###健康相談###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_iryo_kenkouALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  shinri_shakai )
+    echo "###shinri_shakai###" "selected" >> ${tmp}-calsed1
+    case ${bunrui_shinri_shakai} in
+      1 )
+        echo "###巡回・訪室###" "selected" >> ${tmp}-calsed1
+      ;;
+      2 )
+        echo "###理美容###" "selected" >> ${tmp}-calsed1
+      ;;
+      3 )
+        echo "###相談・助言等###" "selected" >> ${tmp}-calsed1
+      ;;
+      4 )
+        echo "###ご家族への連絡###" "selected" >> ${tmp}-calsed1
+      ;;
+      0 )
+        echo "###bunrui_shinri_shakaiALL###" "selected" >> ${tmp}-calsed1
+      ;;
+    esac
+  ;;
+  default )
+    echo "###default###" "selected" >> ${tmp}-calsed1
+  ;;
+esac
+[ "${hyojikomoku_kaigojisseki}" = "on" ] && echo "###hyojikomoku_kaigojisseki###" "checked" >> ${tmp}-calsed1
+[ "${hyojikomoku_vital}" = "on" ] && echo "###hyojikomoku_vital###" "checked" >> ${tmp}-calsed1
+[ "${vital_taion}" = "on" ] && echo "###vital_taion###" "checked" >> ${tmp}-calsed1
+[ "${vital_ketuatu_ue}" = "on" ] && echo "###vital_ketuatu_ue###" "checked" >> ${tmp}-calsed1
+[ "${vital_ketuatu_shita}" = "on" ] && echo "###vital_ketuatu_shita###" "checked" >> ${tmp}-calsed1
+[ "${vital_myakuhaku}" = "on" ] && echo "###vital_myakuhaku###" "checked" >> ${tmp}-calsed1
+[ "${vital_kokyu}" = "on" ] && echo "###vital_kokyu###" "checked" >> ${tmp}-calsed1
+[ "${vital_SAT}" = "on" ] && echo "###vital_SAT###" "checked" >> ${tmp}-calsed1
+[ "${vital_taijyu}" = "on" ] && echo "###vital_taijyu###" "checked" >> ${tmp}-calsed1
+[ "${hyojikomoku_moushiokuri}" = "on" ] && echo "###hyojikomoku_moushiokuri###" "checked" >> ${tmp}-calsed1
+[ "${hyojikomoku_keyword}" = "on" ] && echo "###hyojikomoku_keyword###" "checked" >> ${tmp}-calsed1
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/KAIGOJISSEKI_DATA_KENSAKU1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KAIGOJISSEKI_DATA_KENSAKU2.html   |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###UNIT_NAME### - ${tmp}-unit_name |
+mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+mojihame -l###ROOM_NAME### - ${tmp}-room_select |
+mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+mojihame -l###JISSHISHA_NAME### - ${tmp}-jisshisha |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###moushiokuri_select### - ${tmp}-moushiokuri_select |
+mojihame -l###moushiokuri_taisho### - ${tmp}-moushiokuri_taisho |
+mojihame -l###moushiokuri_koumoku### - ${tmp}-moushiokuri_koumoku |
+mojihame -l###RESULT_GYO### - ${tmp}-gyo_mes |
+mojihame -l###MAEHE### - ${tmp}-maehe                    |
+mojihame -l###SONOMAEHE### - ${tmp}-sonomae              |
+mojihame -l###PRE_SELECT### - ${tmp}-pre                 |
+mojihame -l###NOW_SELECT### - ${tmp}-now                 |
+mojihame -l###AFTER_SELECT### - ${tmp}-after             |
+mojihame -l###SONOATO### - ${tmp}-sonoato                |
+mojihame -l###TSUGIHE### - ${tmp}-tsugihe                |
+mojihame -h###SEARCH_KEKKA### - ${tmp}-search |
+calsed -f ${tmp}-calsed - |
+sed 's/\\n/<br>/g'        |
+formhame -d"_" - ${tmp}-namefile |
+tee $tmp-html                                          |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi                                                  |
+cat -
+
+
+
+rm -f ${tmp}-*
+exit 0

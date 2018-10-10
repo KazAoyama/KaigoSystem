@@ -1,0 +1,233 @@
+#!/bin/bash
+#
+# TATEKAEKIN.PRINT : 立替金印刷
+#
+# Usage : TATEKAEKIN.PRINT namefile datafile
+#
+# Written by j.aoyagi(HandsLab.inc)
+
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+domain="http://e-life.hands-lab.com/"
+current_time="$(date "+%Y%m%d%H%M%S")"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+#--------------------------------------------------------------
+# 対象者を決める
+
+# 立替対象が入居者以外だったときは終了
+if [ "${tatekae_taisho}" = "sonota" ];then
+  exit 1
+else
+  cat ${searchfile}            |
+  awk '$2!="sonota"'           > $tmp-search_file
+fi
+
+# 出力順は居室番号順
+taikyogo=$(mdate ${today}/-31)
+awk '$1=="'${shisetsu}'" && $7<="'${hd_kensaku_hiduke_from}'" && $8>="'${taikyogo}'" && $(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS        |
+self 6 5 7                       |
+LANG=C sort -k1,1 -k3,3 |
+getlast 1 1 |
+self 1 2 > $tmp-riyosha_status
+
+cat $tmp-search_file           |
+awk 'NR!=1'                    |
+self 3                         |
+LANG=C sort -u -k1,1           |
+join2 key=1 $tmp-riyosha_status |
+LANG=C sort -k2,2 |
+self 1 > $tmp-member
+
+# search結果が空だったら終了
+if [ "$(gyo $tmp-search_file)" = 0 ];then
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+cat ${tmp}-html.html
+  exit 1
+else
+  :
+fi
+
+# 施設名
+echo ${shisetsu}               |
+join1 key=1 ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 2                         > $tmp-shisetsu_name
+shisetsu_name=$(cat $tmp-shisetsu_name)
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+
+cat ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU    |
+1bai 1                                           |
+LANG=C sort -k1,1                                |
+self 1 2 3                                       > $tmp-shukkin_koumoku_master
+
+for member in $(cat $tmp-member);do
+  cat $tmp-search_file         |
+  awk 'NR!=1'                  |
+  LANG=C sort -k3,3            |
+  join0 key=3 <(echo ${member}) > $tmp-taisho_data
+
+  cat $tmp-taisho_data         |
+  awk '{nen=substr($1,1,4);getu=substr($1,5,2);niti=substr($1,7,2);print nen"/"getu"/"niti,$0}' |
+  delf 2 3                     |
+  # 1:立替日付 2:対象者ID 3:入出金フラグ 4:立替方法 5:立替項目フラグ
+  # 6:立替項目 7:摘要 8:入金額 9:出金額 10:所属建屋
+  # 11:所属フロア 12:所属ユニット 13:ID 14:登録時間
+
+  # 出金に絞る
+  awk '$3==2'                  |
+  # 項目ごとの合計
+  self 2 6 1 7 9                 |
+  LANG=C sort -k1,2            |
+  # 1:対象者ID 2:立替項目 3:立替日付 4:摘要 5:出金額
+  sm4 1 2 3 4 5 5              |
+  self 3 2 4 5                 |
+
+  1bai 2                      |
+  LANG=C sort -k2,2           |
+  join1 key=2 $tmp-shukkin_koumoku_master |
+  LANG=C sort -k4,4n  |
+  delf 4              |
+#  ####### 暫定順番変更対応(2014/6/3))
+#  awk '{if($2=="2"||$2=="14"){print $0,"1"}else{print $0,"2"}}' |
+#  self NF 1/NF-1               |
+#  LANG=C sort -k1,1n -k3,3n    |
+#  delf 1                       |
+#  ####### 暫定順番変更対応(2014/6/3))
+  self 1 3 4 5                    > $tmp-meisai_mae
+  cat $tmp-meisai_mae             |
+  awk '{if($1~/@/){$1="---";$2=$2"計"};print}'      |
+  awk '{gsub(/_/,"　",$3);print}' |
+
+#  # 医療費を一番上に
+#  cat $tmp-meisai_all          |
+#  awk '$2~/医療費/'            > $tmp-iryohi
+#
+#  cat $tmp-meisai_all          |
+#  awk '$2~/薬代/'              > $tmp-kusuri
+#
+#  cat $tmp-meisai_all          |
+#  awk '$2!~/医療費/ && $2!~/薬代/' |
+#  cat $tmp-iryohi $tmp-kusuri -    |
+  awk '{if($3~/@/){back="#e6e6fa";keisen="bordertop";$3="&nbsp;"}else{back="@";keisen="@"};print $0,back,keisen}' |
+  comma 4                               > $tmp-meisai
+  # 合計金額
+  goukei=$(cat $tmp-meisai_mae |
+  awk '$1!~/@/'                |
+  self 4                       |
+  awk '{print "'${member}'",$1}' |
+  sm2 1 1 2 2                  |
+  self 2                       |
+  comma 1)
+
+  # 入居者名
+  echo ${member}                  |
+  join1 key=1 $tmp-riyosha_master |
+  self 2                          |
+  awk '{print $1"　様"}'          > $tmp-riyoshamei
+  riyoshamei=$(cat $tmp-riyoshamei)
+  
+  # 居室
+  room=$(awk '$1=="'${member}'"{print $2}' $tmp-riyosha_status)
+
+# calsedするfile
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/_/," ",$2);print}' >> ${tmp}-calsed
+###GOSEIKYUGAKU### ${goukei}
+###DOMAIN### ${domain}
+###SEIKYU_SHISETSU### ${shisetsu_name}
+###RIYOSHAMEI### ${riyoshamei}
+###ROOM### ${room}
+FIN
+  
+cat ${html_dir}/TATEKAEKIN_MEISAISHO.html  |
+mojihame -l###MEISAI### - ${tmp}-meisai    |
+calsed -f ${tmp}-calsed -                  |
+sed 's/\\n/<br>/g'                         >> $tmp-base_pdf.html
+
+# データをクリア
+rm $tmp-meisai $tmp-calsed
+  
+done
+
+#######################################################################################
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Portrait $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.TATEKAEKIN.pdf
+#gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sPAPERSIZE=a4 -dNOPLATFONTS -sOutputFile=${home_dir}/E-LIFE/TATEKAEKIN/DOWNLOAD/${current_time}.TATEKAEKIN.pdf ${home_dir}/E-LIFE/TATEKAEKIN/DOWNLOAD/${today}/${userid}/${current_time}/*.pdf
+
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/TATEKAEKIN/DOWNLOAD/${current_time}.TATEKAEKIN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,237 @@
+#!/bin/bash
+#
+# RESTAURANT_CHUMON_ICHIRAN.DISPLAY : レストラン注文一覧画面表示
+#
+# Usage : RESTAURANT_CHUMON_ICHIRAN.DISPLAY 
+#
+# Written by R.Ssuzuki Date:2015/05/18 ※表示するだけ
+
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+
+# ディレクトリ設定
+#test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+#checkfile=$2
+#cgi_from=$3
+#koushin_data=$4
+
+#20150803del 使ってない
+#today="$(date +%Y%m%d)"
+#month="$(date +%Y%m)"
+#current_time="$(date +%H%M)"
+#cur_time="$(date +%Y%m%d%H%M%S)"
+
+
+#施設　ひとまずセンター南で固定
+#20150907 複数施設対応に伴い、クッキーからの取得(ここではＰＯＳＴから取得)に変更
+#shisetsu="0003"
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+result_data="$2"
+
+
+#更新系処理CGIの結果をチェック(エラーメッセージ表示制御)
+result=$(awk '$1=="result"{print $2}' ${result_data})
+if [ "${result}" = "ng" ] ; then
+  message=$(awk '$1=="message"{print $2}' ${result_data})
+
+  next_page=""
+  if [ "$message" = "ロック処理失敗"  ] ; then
+    message="アクセスが集中したため処理を実行できませんでした。再度実行しても状況が変わらない場合はスタッフへご連絡ください。"
+    if [ "$MODE" = "delete" ] ; then
+      #削除(注文消去)の場合、注文確認画面から処理されてるので注文確認画面にもどる
+      next_page="RESTAURANT_CHUMON_KAKUNIN.CGI"
+      MODE="display"
+    else 
+      next_page="RESTAURANT_CHUMON_ICHIRAN.CGI"
+
+#      MODE="init"
+      MODE="display"
+
+    fi
+
+    #ロックエラーのときはカート削除しない。（注文消去のときは確認画面に戻るため残す必要あり。
+    #食事実績反映のときはカート作ってないのでそもそも不要）
+
+  else
+    #メッセージはそのまま
+    next_page="RESTAURANT_CHUMON_ICHIRAN.CGI"
+#20150819
+#    MODE="init"
+    MODE="display"
+    #カートファイルが存在している場合、削除
+    if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+      rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+    fi
+
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" "kanriuser" >> $tmp-calsed_result
+  echo "###NEXT_PAGE###" $next_page >> $tmp-calsed_result
+  echo "###MODE###" $MODE      >> $tmp-calsed_result
+  echo "###NYUKYOSHA_ID###" $nyukyosha_id   >> $tmp-calsed_result
+
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+  cat  ${tmp}-html
+  exit 1
+fi
+
+#注文一覧初期表示の場合、処理対象の注文日付、食事時間帯は空にしておく。
+   # RESTAURANT_CHUMON_ICHIRAN.CGIはキャッシュされたままでHTMLの内容が固定で保持され
+   # （manifest更新時しか更新されない）
+   # hiddenにセットした値は固定値として保持される。よってここではなにもセットしない
+   # 例：8月3日をhiddenにセットするとmanifestを更新しない限りアプリ起動時は8月3日分のデータがずっと表示される。
+   # クライアントアプリ側をでキャッシュクリアできるかもしれないけど。。そこは保留。
+   # ajax（AJAX_RESTAURANT_CHUMON_ICHIRAN.CGI）の中でからだったら当日分を取得するようにした。
+
+if [ "$MODE" = "init" ] ; then
+  target_day=""
+  target_shokuji_jikantai=""
+fi
+
+
+#注文確人画面で削除してきた場合
+if [ "$MODE" = "delete" ] ; then
+  head -n 1 $result_data  |
+  awk 'BEGIN{ print "target_day","target_shokuji_jikantai" } \
+  {print $2,$3}' |  tateyoko > $tmp-name_kihon
+
+  #取得結果を変数に変換
+  eval $(name-source $tmp-name_kihon)
+fi
+
+
+#リストはHTMLからAJAX呼び出しをするためここでは空にしておく
+: >  $tmp-restaurant-chumon-ichiran_${shisetsu}
+
+#検索結果HTML表示制御（検索時の条件指定内容保持のため）
+html_checked_order=""
+html_checked_name=""
+html_checked_room=""
+# モードが検索の場合
+if [ "${search_mode}" = "on"  ] ; then
+
+  if [ "$search_type_str" = "order"  ] ; then
+    #注文番号での検索
+    html_checked_order='checked="checked"'
+  elif [ "$search_type_str" = "name"  ] ; then
+    #入居者名前での検索
+    html_checked_name='checked="checked"'
+  elif [ "$search_type_str" = "room"  ] ; then
+    #部屋番号での検索
+    html_checked_room='checked="checked"'
+  elif [ "$search_type_str" = "haizenzumi"  ] ; then
+    #部屋番号での検索
+    html_checked_haizenzumi='checked="checked"'
+
+  else
+    #デフォルト
+    #注文番号での検索
+    html_checked_order='checked="checked"'
+  fi
+else
+  #デフォルト
+  #注文番号での検索
+  html_checked_order='checked="checked"'
+fi
+
+#検索ワードが空だとユニケージにより"_"に変換されるので空に戻す。
+if [ "$search_word" = "_" ] ; then
+  search_word=""
+fi
+
+#施設名称取得 20150907
+shisetsu_name=$(awk '$1=="'$shisetsu'" && $(NF-2)!="9" {print $2}' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON)
+
+
+#はめ込み文字データまとめファイル作成
+echo "###SHISETSU_ID###"   ${shisetsu}             >  $tmp-calsed_result
+echo "###SHISETSU_NAME###" ${shisetsu_name}        >> $tmp-calsed_result
+echo "###KENSAKU_WORD###"  ${search_word}          >> $tmp-calsed_result
+echo "###CHECKED_ORDER###" ${html_checked_order}   >> $tmp-calsed_result
+echo "###CHECKED_NAME###"  ${html_checked_name}    >> $tmp-calsed_result
+echo "###CHECKED_ROOM###"  ${html_checked_room}    >> $tmp-calsed_result
+echo "###CHECKED_HAIZENZUMI###"  ${html_checked_haizenzumi}  >> $tmp-calsed_result
+echo "###KENSAKU_MODE###"   ${search_mode}          >> $tmp-calsed_result
+echo "###MODE###" $MODE      >> $tmp-calsed_result
+
+
+#ユーザ種別（エンドユーザor管理ユーザ）:画面遷移を制御する
+#TOPメニューまたは予約確認画面、から開始した場合はエンドユーザとする。
+#注文一覧から開始した場合は管理ユーザとする。
+#それ以外はPOSTされるuser_typeの内容で判定
+echo "###USER_TYPE###"   "kanriuser"    >> ${tmp}-calsed_result
+
+#20150803 add
+echo "###TARGET_DAY###"     $target_day   >> ${tmp}-calsed_result
+echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> ${tmp}-calsed_result
+
+
+
+#はめ込みまとめデータのはめ込み
+calsed -f $tmp-calsed_result ${html_dir}/RESTAURANT_CHUMON_ICHIRAN.html |
+
+#リストデータはめ込み
+mojihame -l###CHUMON_ICHIRAN### -  $tmp-restaurant-chumon-ichiran_${shisetsu} > $tmp-html
+
+
+#--------------------------------------------------------------
+
+if [ "${message}" != "" ] ; then
+
+  #カートファイルが存在している場合、削除
+  if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" "kanriuser" >> $tmp-calsed_result
+
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+
+fi
+# HTMLファイルを表示する
+cat  ${tmp}-html
+
+#--------------------------------------------------------------
+
+
+
+
+rm -f ${tmp}-*
+exit 0

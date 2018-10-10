@@ -1,0 +1,246 @@
+#!/bin/bash
+#
+# WEEKPLAN_KAIGO.SEARCH
+# 週間サービス計画　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%H%M%S).$$ ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && ${hdTaishouYear}=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && ${taishoumonth}=$curmonth
+# 利用者ID
+echo "${Riyoushaid}" "${hdKeikakuSakuseiDate}" > $tmp-riyoushaid_careplan 
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+
+if [ ${MODE} = "search" -o ${MODE} = "print" ] ; then
+# 週間計画データの取得
+# ウィークリーサービス取得
+  cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/WEEKPLAN_WEEKLYSERVICE   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# 有効分
+# --------------------------
+  awk '$9!="9"'                 |
+#---------------------------
+# 対象年月
+  awk '$2=="'${hdTaishouYear}'"&&$3=="'${taishoumonth}'"'                |
+# 
+# --------------------------
+#--------------------------------------------------------------
+# 1:利用者ID 2:データID     3:曜日区分 4:サービス開始時刻 5:サービス終了時刻
+# 6:内容
+  self 1 4/8 |
+# 1:データ区分       2:ID               3:表示サービス名 4:週間チェック 5:曜日区分
+# 6:サービス開始時刻 7:サービス終了時刻
+  awk '{print "w",$2,$6,"1",$3,$4,$5}'                  |
+  LANG=C sort -k1,2n    >  ${tmp}-weekly_service
+
+# デイリーサービス取得
+  cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/WEEKPLAN_DAILYSERVICE   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# 有効分
+# --------------------------
+  awk '$7!="9"'                 |
+# --------------------------
+# 対象年月
+  awk '$2=="'${hdTaishouYear}'"&&$3=="'${taishoumonth}'"'                |
+#--------------------------------------------------------------
+# 1:利用者ID 2:データID 3:サービス開始時刻 4:内容
+  self 1 4/6 |
+  awk '{print "d",$2,$4,$3}'    |
+# 1:データ区分 2:ID 3:表示サービス名 4:サービス開始時刻
+  LANG=C sort -k1,2n    >  ${tmp}-assessment_daily_service
+elif [ ${MODE} = "tenkai" ] ; then
+# 展開情報の取得
+# データの最新日付を取得
+  cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+  LANG=C sort -k1n,2n                                                                  |
+  getlast 1 1                                                                          |
+  awk '{print $2}' > ${tmp}-latest_date
+
+  cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+  LANG=C sort -k1n,2n                                                                  |
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'                                                          |
+# 展開情報対象日付がある場合
+  if [ -z "${tenkaidate}" -o "${tenkaidate}" = "_" ] ; then
+    join1 key=2 ${tmp}-latest_date -
+  else
+    awk '$2=="'${tenkaidate}'"'
+  fi |
+# 1:利用者ID          2:作成日付         3:サービスコード種類 4:サービスコード項目 5:表示順
+# 6:サービス内容      7:介護保険対象区分 8:供給者ID           9:サービス実施週曜日 10:サービス開始時刻
+# 11:サービス終了時刻 12:加算            13:サービス回数      14:単位              15:単位総数
+# 16:利用者負担額     17:総請求額        18:付随費用
+  self 5 3 4 9 10 11 |
+# 1:表示順           2:サービスコード種類 3:サービスコード項目 4:サービス実施週曜日 5:サービス開始時刻
+# 6:サービス終了時刻
+  LANG=C sort -k1n,1n          > ${tmp}-tenkai_record
+
+  cp ${tmp}-tenkai_record ${work_dir}/tenkai_record
+
+  cat ${home_dir}/TBL/SERVICECODE/SERVICECODE_HOUMONKAIGO |
+  self 2 3 4 14    > ${tmp}-servicecode_houmonkaigo
+
+  cat ${home_dir}/TBL/SERVICECODE/SERVICECODE_HOUMONKANGO |
+  self 2 3 4 15    > ${tmp}-servicecode_houmonkango
+
+  cat ${home_dir}/TBL/SERVICECODE/SERVICECODE_HOUMONRIHABIRI   |
+  self 2 3 4 3    > ${tmp}-servicecode_houmonrihabiri
+
+  cat ${home_dir}/TBL/SERVICECODE/SERVICECODE_TSUSHOKAIGO   |
+  self 2 3 4 3     > ${tmp}-servicecode_tsushokaigo
+
+
+  cat ${tmp}-servicecode_houmonkaigo ${tmp}-servicecode_houmonkango ${tmp}-servicecode_houmonrihabiri ${tmp}-servicecode_tsushokaigo |
+  LANG=C sort -k1,2  > ${tmp}-servicecode_base
+
+  cat ${tmp}-tenkai_record  |
+  LANG=C sort -k2,3         |
+  join1 key=2/3 ${tmp}-servicecode_base - |
+  self 2 5 0                |
+  LANG=C sort -k1,2         |
+  join1 key=1/2 ${tmp}-servicecode_base - |
+  delf 1 2                 |
+# 1:表示用サービス名     2:サービスコード 3:表示順             4:サービスコード種類 5:サービスコード
+# 6:オリジナルサービス名 7:サービスコード 8:サービス実施週曜日 9:サービス開始時刻   10:サービス終了時刻
+  awk '{print $3,$1,$8,$9,$10}'            |
+# 1:ID 2:表示サービス名 3:サービス実施週曜日 4:サービス開始時刻 5:サービス終了時刻
+  LANG=C sort -k1,1          > ${tmp}-work1
+  [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "展開情報データ取得エラー"
+
+  cp -p ${tmp}-work1 ${work_dir}/work1
+
+# 毎週のサービスかどうかの判断を行う。
+# 各サービスのIDを振る。
+  rank ${tmp}-work1 |
+  tee ${tmp}-tenkai_base |
+# IDとデータのみを抽出
+  self 1 4 |
+# カンマデータをフィールドに変更
+  sed 's/,/ /g' |
+  tarr num=1 |
+# 週項目と曜日項目を分ける
+  awk '{print $1,substr($2,1,1),substr($2,2,1)}' |
+  tee ${tmp}-work2 |
+  self 1 3 2 |
+  LANG=C sort -k1,3 |
+# 月あたり同じ曜日の同じサービスが何回あったか
+  count 1 2 |
+# 5回セットされていれば毎週と判断
+  awk '{if($3==5){$4='1'}else{$4='0'};print}' |
+  self 1 4 |
+LANG=C sort -k1,2 |
+  getlast 1 2       > ${tmp}-weekly_check
+
+# 曜日フォーマット
+  cat ${tmp}-work2 |
+  self 1 3   |
+  LANG=C sort -k1,1  |
+  getlast 1 2   |
+  yarr num=1 |
+  sed 's/ /,/g' |
+  sed 's/,/ /1' |
+  LANG=C sort -k1,1  > ${tmp}-format
+
+  cat ${tmp}-tenkai_base |
+  join1 key=1 ${tmp}-weekly_check - |
+# 1:ID               2:ウィークリーサービスチェック 3:表示順 4:表示サービス名 5:サービス実施週曜日
+# 6:サービス開始時刻 7:サービス終了時刻
+  join1 key=1 ${tmp}-format - |
+# 1:ID                 2:曜日フォーマット 3:ウィークリーサービスチェック 4:表示順 5:表示サービス名
+# 6:サービス実施週曜日 7:サービス開始時刻 8:サービス終了時刻
+  self 1 5 3 2 7 8 |
+  awk '{print "_",$2,$3,$4,$5,$6} '   |
+  awk '{print "w",$0}'   > ${tmp}-weekly_service
+#  [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "展開情報データ取得エラー"
+
+  cp ${tmp}-weekly_service ${work_dir}/weekly_service
+
+  : > $tmp-assessment_date
+
+  if [ -e ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_ASSESSMENT ] ; then
+     cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_ASSESSMENT  |
+     join0 key=1/2 $tmp-riyoushaid_careplan |
+     self 3 > $tmp-assessment_date
+  fi
+
+
+# 介護アセスメントより１日活動取得
+  if [ -e ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/ASSESSMENT_KAIGO ] ; then
+     # ヘッダー作成処理
+     echo "6:00" "7:00" "8:00" "9:00" "10:00" "11:00" "12:00" "13:00" "14:00" "15:00" "16:00" "17:00" "18:00" "19:00" "20:00" "21:00" "22:00" "23:00" "0:00" "1:00" "2:00" "3:00" "4:00" "5:00" > $tmp-assessment_header
+     cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/ASSESSMENT_KAIGO   |
+     awk '$1=="'${Riyoushaid}'"'        |
+     LANG=C sort -k2,2                  |
+     if [ "$(gyo $tmp-assessment_date)" = "1" ] ; then
+         join0 key=2 $tmp-assessment_date
+     else
+         getlast 1 1
+     fi |
+# 9:00-8:00まで
+     self 68/91 > $tmp-assessment_value
+     cat $tmp-assessment_header $tmp-assessment_value |
+     tateyoko |
+     rank     |
+     awk '$3!="_" {print "d","_",$3,$2}'    > ${tmp}-assessment_daily_service
+  else
+     : > ${tmp}-assessment_daily_service
+  fi
+fi
+
+
+cat ${tmp}-weekly_service ${tmp}-assessment_daily_service
+
+## 終了
+#rm -f $tmp-*
+exit 0

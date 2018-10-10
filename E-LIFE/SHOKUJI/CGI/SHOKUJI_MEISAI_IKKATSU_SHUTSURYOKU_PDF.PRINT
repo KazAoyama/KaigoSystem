@@ -1,0 +1,389 @@
+#!/bin/bash
+#
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# DENWAKAKIN_RIYOU_JYOUHOU.PDF : 電話課金利用情報マスタ
+#
+# Written by S.Otsubo
+
+# 画面から直接よびだし
+# HTML作成したのちPDFに変換
+
+# 日次でも同じ月内しか集計できない仕様に(税計算めんどくさい)
+
+# ログ
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+data=$2
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+data_dir="/DATA/E-LIFE"
+
+keiri_dir="${home_dir}/KEIRI"
+# 帳票のテーブル部分ページブレイク行数
+syuukei_break="45"
+meisai_break="30"
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#------------------------------------------------------------
+# 処理モードの決定
+eval $(name-source ${tmp}-cookie)
+[ -z "${MODE}" ] && MODE="init"
+#------------------------------------------------------------
+#------------------------------------------------------------
+# エラー
+
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+  rm -f $tmp-*
+  exit 1
+}
+#------------------------------------------------------------
+#--------------------------------------------------------------
+# 年月日の準備
+# -------------------------------------------------------------
+SHISETSUID="$(nameread  "shisetsu"  $namedata)"
+SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+Shisetsu="$(nameread  "shisetsu"  $namedata)"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア　
+# 従業員マスタからの処理
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+#------------------------------------------------------------
+#------------------------------------------------------------
+# 検索対象者の絞込み
+#----------------------
+TaishouYear=$(nameread   "TaishouYear"    $namedata )
+TaishouMonth=$(nameread  "TaishouMonth"   $namedata | maezero 1.2)
+search_month=$(echo "${TaishouYear}""${TaishouMonth}")
+this_month=$(date +%Y%m)
+month_number=$(mdate ${this_month}m ${search_month}m)
+
+# 現在の居室を取得
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 対象日よりﾀｲｷｮ日が後で2行以上あったら
+awk '$8>="'${Taishoubi}'"{print $6,$0}' |
+LANG=C sort -k1,1 -k8,9                 |
+rank ref=1                 |
+awk '$1=="1"'              |
+self 8 7                   > $tmp-riyousha_kyoshitsu
+# 1:利用者ID 2: 居室No
+#------------------------------------------------------------
+#対象者確認
+[ ${Taishousha} != "meisai" ] && error_exit "対象者が「食事明細有り」ではありません"
+# チェックされたリスト
+
+cat ${namedata}    |
+awk '$1~/^Nyuukyosha/{gsub("Nyuukyosha","");print $1}' |
+LANG=C sort -u     > $tmp-nyuukyosha_list
+# 1:利用者ID 
+
+# 帳票用データには支払う人のIDが入っている
+# -
+
+# メニュー命の準備
+#cat ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU              |
+#awk '$4=="'${Shisetsu}'"&&$5=="'${Tateya}'"{print $0}' |
+#self 1 2 > $tmp-shokuji_menu
+# 1:メニューID 2:メニュー名 
+
+
+#データ整形
+# 1:利用者ID            2:利用者名    3:施設ID  　              4:建屋         5: 居室
+# 6:入居者ゲストフラグ  7:日付        8:食事（朝昼夜おやつ他）  9:食事ID      10:食事メニューID
+#11:食事メニュー名称   12:食事種類ID 13:税区分                 14:税率        15:単価（税抜）
+#16:税額               17:税込み価格 18:数量                   19:合計金額(税抜) 20:合計金額(税額のみ)
+#21:合計金額(税込み) #22～26　予備
+#27:削除フラグ  28:更新時間  29:更新者
+
+#対象者データに限定
+cat ${data}          |
+awk '{if($6!="1"){print $0,$11"(ゲスト)"}else{print $0,$11}}'  |
+self 1/10 NF 12/NF-1 |
+cjoin0 +ng key=1 $tmp-nyuukyosha_list -   |
+tee $tmp-nyuukyosha_list_and_data |
+	#LANG=C sort -k9,9                               |
+	#join2 key=9 $tmp-shokuji_menu -                 |
+	# 1:利用者ID      2:利用者名               3:施設ID 4:建屋           5:居室
+	# 6:日付          7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニューID 10:メニュー名
+	# 11:単価(税抜き) 12:税区分                13:税率  14:税額          15:数量
+
+#食事区分名入れる
+LANG=C sort -k8,8                        |
+join2 key=8 ${tbl_dir}/CONFIG/SHOKUJI_MASTER - |
+delf 8                                   |
+# 1:利用者ID            2:利用者名    3:施設ID  　              4:建屋         5: 居室
+# 6:入居者ゲストフラグ  7:日付        8:食事（朝昼夜おやつ他）  9:食事ID      10:食事メニューID
+#11:食事メニュー名称   12:食事種類ID 13:税区分                 14:税率        15:単価（税抜）
+#16:税額               17:税込み価格 18:数量                   19:合計金額(税抜) 20:合計金額(税額のみ)
+#21:合計金額(税込み) #22～26　予備
+#27:削除フラグ  28:更新時間  29:更新者
+self 1/5 \
+     7/11 \
+     17 13 14 21 18 | 
+        # 1:利用者ID      2:利用者名               3:施設ID 4:建屋               5:居室
+        # 6:日付          7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニューID    10:メニュー名
+        # 11:単価(税抜き) 12:税区分                13:税率  14:合計金額(税込み) 15:数量
+LANG=C sort -k1,1  -k6,9                       > ${tmp}-kihon
+# =====================================================================
+# もしデータがなければここで終了
+[ ! -s ${tmp}-kihon ] && error_exit "条件に一致したデータはありません"
+# =====================================================================
+
+# 入居者ごとにファイル分割
+keycut ${tmp}-%1_meisai < ${tmp}-kihon
+# 1:利用者ID      2:利用者名               3:施設ID 4:建屋           5:居室
+# 6:日付          7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニューID 10:メニュー名
+# 11:単価(税込み) 12:税区分                13:税率  14:合計金額      15:数量
+
+  # ------------------------
+
+
+###################利用者ごとの処理###################################################################################
+
+     self 1 5 $tmp-nyuukyosha_list_and_data |
+     getlast 1 1                            |
+     LANG=C sort -k2,2         |
+     delf 2                    > $tmp-riyoushaid_kyoshitsu_jyun
+
+    cat $tmp-riyoushaid_kyoshitsu_jyun |
+#    cat $tmp-nyuukyosha_list  |
+    while read ID ; do
+
+#    zeikonukikingaku=$(cat ${tmp}-${ID}_meisai | lcalc '$11 * $15')
+#    zeikomikingaku=$(cat ${tmp}-${ID}_meisai | lcalc '$11 * $15 + $14 * $15')
+#    zeigaku=$(cat ${tmp}-${ID}_meisai | lcalc '$14 * $15')
+      # 合計行から合計値を変数へ入れ、税額も
+      awk '{zeinukikei=( $11 * $15); zeikomikei=$14;print $1,$2,$5,$6,$7,$10,$15,$11,zeinukikei,zeikomikei}' ${tmp}-${ID}_meisai > ${tmp}-${ID}_goukei
+#      awk '{zeinukikei=( $11 * $15); zeikomikei=($11 * $15 + $14 * $1);zeigaku=($14 * $15); print $1,$2,$5,$6,$7,$10,$15,$11,zeinukikei,zeikomikei,zeigaku}' ${tmp}-${ID}_meisai > ${tmp}-${ID}_goukei
+# 1:利用者ID 2:利用者名 3:居室 4:日付     5:区分
+# 6:品目     7:数量     8:単価 9:金額税抜 10:金額税込
+# 11:税額
+#      KYOSHITSU="$(self 3 ${tmp}-${ID}_goukei | head -1)"
+      NYUUKYOSYAID="$(self 1 ${tmp}-${ID}_goukei | head -1)"
+      cat ${tmp}-${ID}_goukei |
+      self 3                  |
+      LANG=C sort -u          > $tmp-kyoshitsu
+      # 居室が2つ以上ある人
+      if [ "$(gyo $tmp-kyoshitsu)" = "1" ] ; then
+        KYOSHITSU="$(cat $tmp-kyoshitsu)"
+      else
+        KYOSHITSU="$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-9)!="9"{print $5}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS | cjoin1 key=1 $tmp-kyoshitsu - | head -1)"
+      fi
+      [ -z "${KYOSHITSU}" -o "${KYOSHITSU}" = "_" ] && KYOSHITSU="$(self 3 ${tmp}-${ID}_goukei | head -1)"
+      NYUUKYOSYA="$(self 2 ${tmp}-${ID}_goukei | head -1)"
+#いらない      KUBUN="$(self 5 ${tmp}-${ID}_goukei)"
+#いらない      HINMOKU="$(self 6 ${tmp}-${ID}_goukei)"
+#いらない      SUURYOU="$(self 7 ${tmp}-${ID}_goukei)"
+#いらない      TANKA="$(self 8 ${tmp}-${ID}_goukei)"
+      GOUKEI_ZEIKOMI1="￥$(self 10 ${tmp}-${ID}_goukei |sm2 0 0 1 1 | comma 1)(消費税込)" #合計の円マークつき
+      GOUKEI_ZEIKOMI2="$(self 10 ${tmp}-${ID}_goukei | sm2 0 0 1 1 | comma 1)" #合計のみ
+      GOUKEI="$(self 9 ${tmp}-${ID}_goukei | sm2 0 0 1 1 | comma 1)" #合計税抜き
+      MONTH="$(echo "${TaishouMonth}")" #月
+#      ZEIGAKU="$(self NF ${tmp}-${ID}_goukei |sm2 0 0 1 1| comma 1)"
+      # calsedの準備
+      cat << FIN | self 1/NF > ${tmp}-calsed
+      ###KYOSHITSU### ${KYOSHITSU}
+      ###NYUUKYOSYA### ${NYUUKYOSYA}
+      ###GOUKEI_ZEIKOMI1### ${GOUKEI_ZEIKOMI1}
+      ###GOUKEI_ZEIKOMI2### ${GOUKEI_ZEIKOMI2}
+      ###GOUKEI### ${GOUKEI}
+      ###MONTH### ${MONTH}
+FIN
+#      cat << FIN | self 1/NF > ${tmp}-calsed
+#      ###KYOSHITSU### ${KYOSHITSU}
+#      ###NYUUKYOSYA### ${NYUUKYOSYA}
+#      ###GOUKEI_ZEIKOMI1### ${GOUKEI_ZEIKOMI1}
+#      ###GOUKEI_ZEIKOMI2### ${GOUKEI_ZEIKOMI2}
+#      ###GOUKEI### ${GOUKEI}
+#      ###MONTH### ${MONTH}
+#      ###ZEIGAKU### ${ZEIGAKU}
+#FIN
+
+      # 明細行を必要な情報に分割する
+      cat ${tmp}-${ID}_goukei |
+      self 4/10 |
+      awk '{if($2=="朝食"){print "1",$0}
+            else if($2=="昼食"){print "2",$0}
+            else{print "3",$0}
+           }'     |
+      self 2 1 2/NF |
+      LANG=C sort   |
+      delf 1 2      |
+      rank |
+# 1:NO   2:日付     3:区分     4:品目 5:数量
+# 6:単価 7:金額税抜 8:金額税込
+      comma 5 6 7 8 |
+      awk '{$2=substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2); print}' |
+      awk '{if(NR%2==0){color="#e0e0e0"}
+            else{color="#ffffff"}; print color,$0}'  > ${tmp}-${ID}_meisai_kansei
+# 1:行の色 2:NO   3:日付     4:区分     5:品目
+# 6:数量   7:単価 8:金額税抜 9:金額税込
+
+      # ブレイク条件に応じてファイル分割する
+      split -l "${meisai_break}" ${tmp}-${ID}_meisai_kansei ${tmp}-${ID}_meisai_kansei_
+
+      # 分割したファイル数取得
+      file_gyo="$(ls -l ${tmp}-${ID}_meisai_kansei_* | gyo)"
+      
+      #----------------------------ここはあとで-------------------------------------------------------------------------------
+      # 明細表ヘッダ部分を取得
+      awk '/\<head_start\>/,/\<head_end\>/' ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_PDF.html |
+      calsed -f ${tmp}-calsed - > ${tmp}-html_head
+      
+      # 明細票フッタ部分を取得
+      awk '/\<fut_start\>/,/\<fut_end\>/' ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_PDF.html > ${tmp}-html_fut
+
+      # 明細票合計部分を取得
+      awk '/\<goukei_start\>/,/\<goukei_end\>/' ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_PDF.html |
+      calsed -f ${tmp}-calsed - > ${tmp}-html_goukei
+      #------------------------------------------------------------------------------------------------------------------
+
+      # 分割ファイルごとにもじはめしながらページ数をふる
+      # もし現在処理している利用者IDが${tmp}-kihonの最終行ならば###pagebreak###にはなにもいれない
+#      last_id="$(tail -1 ${tmp}-kihon | self 1)"
+      last_id="$(self 1 5 $tmp-nyuukyosha_list_and_data | getlast 1 1 | LANG=C sort -k2,2 | delf 2 | tail -1)"
+      ls -l ${tmp}-${ID}_meisai_kansei_* |
+      tr "_" " "                         |
+      self NF                            |
+      LANG=C sort                        |
+      rank                               |
+      # 1:ナンバー 2:「aa」とか
+      # 現在処理している利用者のページ数（さっき３０行ごと分けたやつ）だけ繰り返し処理
+      # ページ数==${file_gyo}
+      while read Number Name ; do
+        if [ "${Number}" -eq "${file_gyo}" ] ; then
+          # 現在処理している利用者の最終処理回ならフッターつける
+          awk '/\<table_start\>/,/\<table_end\>/' ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_PDF.html |
+          mojihame -l"table_body" - ${tmp}-${ID}_meisai_kansei_${Name} |
+          cat ${tmp}-html_head - ${tmp}-html_goukei ${tmp}-html_fut    |
+          calsed "###MESSAGE###" "&nbsp;" -                                                       |
+          calsed "###PAGE###" "$(echo "${Number}/${file_gyo}ページ")" - |
+             #これが最終利用者の最終ページの場合には###pagebreak###にはなにもいれない
+          if [ "${ID}" -eq "${last_id}" ] ; then
+            calsed "###pagebreak###" ""
+          else
+            calsed "###pagebreak###" "$(echo "page-break-after:always;")"
+          fi
+        else
+          # 現在処理している利用者の途中回
+          awk '/\<table_start\>/,/\<table_end\>/' ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_PDF.html |
+          mojihame -l"table_body" - ${tmp}-${ID}_meisai_kansei_${Name} |
+          cat ${tmp}-html_head - ${tmp}-html_fut |
+          calsed "###MESSAGE###" "次ページに続きます" - |
+          calsed "###PAGE###" "$(echo "${Number}/${file_gyo}ページ")" - |
+          calsed "###pagebreak###" "$(echo "page-break-after:always;")"
+        fi
+      done > ${tmp}-${ID}_meisaihyou_kansei
+    done
+   ###################利用者ごとの処理終了#########################################################################
+
+
+
+    # 明細票テーブルを全てcatして、ヘッダフッタにはめる
+#    cat ${tmp}-kihon  |
+#    LANG=C sort -k5,5 |
+#    self 1            |
+#    uniq              |
+    cat $tmp-riyoushaid_kyoshitsu_jyun |
+#    LANG=C sort -u    |
+    while read ID ; do
+      cat ${tmp}-${ID}_meisaihyou_kansei >> ${tmp}-tougou_data
+    done            
+    filehame -l"meisai_table_filehame" ${html_dir}/SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU_INSATSU.html ${tmp}-tougou_data > ${tmp}-html_kansei.html
+
+    # PDF作成
+    ${home_dir}/TOOL/wkhtmltopdf-amd64 ${tmp}-html_kansei.html ${app_dir}/DOWNLOAD/${cur_time}.SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU.pdf
+  # ------------------------
+####-----------------------------------------------------------------------------------------------------
+
+#    # 作ったhtmlの数＝ページ数
+#    PAGE=""
+#    # calsedファイル
+#    cat << FIN | self 1/NF > ${tmp}-calsed
+#    ###KIKAN### ${KIKAN}
+#    ###GOUKEI### ${GOUKEI}
+#    ###PAGE### ${PAGE}
+#FIN
+#
+#   # ヘッダ部(共通)
+#    awk '/\<head_start\>/,/\<head_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+#    calsed -f ${tmp}-calsed - > ${tmp}-html_head
+    
+    # テーブル本体＋フッダ部
+    # -
+    # 作成したテーブル全ての数を取得
+#    zentai_table="$(ls -l ${tmp}-meisai_*_html | gyo)"
+    # 現在処理中の利用者の分割作成したhtml識別名取得
+#    ls -l ${tmp}-meisai_*_html |
+#    tr "_" " " |
+#    self NF-1 |
+#    LANG=C sort |
+#    rank |
+#    while read Number Name ; do
+      # フッタの選択
+#      if [ "${zentai_table}" -eq "1" ] ; then
+        # テーブルがひとつならば改行しない
+#        awk '/\<fut_start_3\>/,/\<fut_end_3\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+#        cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+#      else
+        # テーブルがひとつ以上なので最終以外は「次ページに続きます」と改ページ
+#        if [ "${Number}" -eq "${zentai_table}" ] ; then
+#          awk '/\<fut_start_3\>/,/\<fut_end_3\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+#          cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+#        else
+#          awk '/\<fut_start_1\>/,/\<fut_end_1\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+#          cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+#        fi
+#      fi
+#    done > ${tmp}-filehame_file
+
+    # htmlの完成
+#    cat ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.html |
+#    filehame -l"table_body_filehame" - ${tmp}-filehame_file > ${tmp}-html_kansei.html
+
+    # PDF作成
+#    ${home_dir}/TOOL/wkhtmltopdf-amd64 --footer-right '[page]/[topage]ページ' ${tmp}-html_kansei.html ${keiri_dir}/DOWNLOAD/${cur_time}.DENWAKAKIN.pdf
+  # ------------------------
+#------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+# 出力
+cat << FIN > ${tmp}-html.html
+  <html>
+    <head>
+      <script type="text/javascript" language="Javascript">
+        window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${cur_time}.SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU.pdf","pdfprint");
+      </script>
+    </head>
+  </html>
+FIN
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-html.html
+
+## 終了
+rm -f ${tmp}-*
+exit 0
+

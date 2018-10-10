@@ -1,0 +1,322 @@
+#!/bin/bash
+#
+# CARE_WEEKPLAN_PATTERN.TOUROKU : 週間サービス計画パターン登録
+#
+# Usage : CARE_WEEKPLAN_PATTERN.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+# 新ロック処理
+source /home/hands/E-LIFE/COMMON/COMMON_001.func &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d).$$ ; set -xv
+
+rm -f$tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+# 新ロック処理対応
+  unlock_func  $tmp-target-table
+#  cat $tmp-target-table |
+#  while read table base ;do
+#    rm -f $tmplock_dir/$table/$base.lock
+#  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+# 週間計画データ
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# 計画作成日
+#[ -z "${KeikakuSakuseiDate}" -o "${KeikakuSakuseiDate}" = "_" ] && error_exit "ケアプラン作成日が不明です"
+#hdKeikakuSakuseiDate=$(cat $tmp-hdKeikakuSakuseiDate)
+[ -z "${hdKeikakuSakuseiPattern}" -o "${hdKeikakuSakuseiPattern}" = "_" -o "${hdKeikakuSakuseiPattern}" = "--" ] && error_exit "パターン名が不明です"
+
+# 週間サービス
+echo $WeeklyId |
+sed 's/,/ /g'  > $tmp-weekly_id
+echo $WeeklyService |
+sed 's/,/ /g'  > $tmp-weekly_service
+echo $WeeklyEveryweek |
+sed 's/,/ /g'  > $tmp-weekly_everyweek
+echo $WeeklyYoubi |
+sed 's/,/ /g'  > $tmp-weekly_youbi
+echo $WeeklyStart |
+sed 's/,/ /g'  > $tmp-weekly_start
+echo $WeeklyEnd |
+sed 's/,/ /g'  > $tmp-weekly_end
+
+cat $tmp-weekly_id $tmp-weekly_service $tmp-weekly_everyweek $tmp-weekly_youbi $tmp-weekly_start $tmp-weekly_end |
+tee ${work_dir}/weekly_record_tmp1   |
+tateyoko       |
+awk '$1!="_"||$2!="_"||$3!="_"||$4!="_"||$5!="_"||$6!="_"' > $tmp-weekly_record
+
+# 曜日、時間が重複した場合はエラーで返す
+# 曜日、時間で整形
+cat $tmp-weekly_record |
+awk '$1=="_"'          |
+# 1:ID       2:サービス名 3:毎週 4:曜日 5:開始時刻
+# 6:終了時刻
+self 1 2 3 5 6 4     |
+# 複数曜日は/で区切っているため、フィールドに変更する
+sed 's/\// /g'         |
+# それぞれの曜日ごとに１レコードにする
+tarr num=5            |
+self 4 5 6            > $tmp-inputweekly_record
+
+cp -p $tmp-weekly_record ${work_dir}/weekly_record
+
+awk '$1=="_"' $tmp-weekly_record > $tmp-new_weekly
+
+awk '$1!="_"' $tmp-weekly_record > $tmp-upd_weekly
+
+weekly_service_num=$(gyo $tmp-new_weekly)
+daily_service_num=$(gyo $tmp-new_daily)
+
+
+:> $tmp-id_weeklyall
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $weekly_service_num -gt 0 ] ; then
+last_no="${weekly_service_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/CARE_WEEKPLAN_PATTERN/${shisetsu}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/WEEKPLAN/${shisetsu}/WEEKLYSERVICE_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/CARE_WEEKPLAN_PATTERN/${shisetsu}/WEEKLYSERVICE_ID ] || echo "00001" > ${kanri_dir}/CARE_WEEKPLAN_PATTERN/${shisetsu}/WEEKLYSERVICE_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/CARE_WEEKPLAN_PATTERN/${shisetsu}/WEEKLYSERVICE_ID
+get_no ${last_no} ${kanri_dir}/CARE_WEEKPLAN_PATTERN/${shisetsu}/WEEKLYSERVICE_ID > $tmp-id_weeklyall
+
+fi
+#---------------------------------------------------------------
+
+
+
+ycat $tmp-id_weeklyall $tmp-new_weekly > $tmp-weekly_record0
+# 有効フラグ
+yukoflg="1"
+[ "${MODE}" = "delete" ] && yukoflg="9"
+
+self 1 3/7 $tmp-weekly_record0       |
+cat $tmp-upd_weekly -                |
+# 1:ID 2:内容 3:週間フラグ 4:曜日フラグ 5:サービス開始時刻 6:サービス終了時刻
+awk '$3=="1"{sub("/",",",$4);print $1,$2,$3,$4,$5,$6,"'${yukoflg}'","'${sdaytime}'","'${USER_ID}'"}' |
+# 1:施設ID         2:パターン名 3:データID 4:曜日 5:サービス開始時刻
+# 6:サービス終了時刻 7:内容
+#awk '{print "'$Riyoushaid'","'$TaishouYearPlan'","'$TaishouMonthPlan'",$1,$4,$5,$6,$2,$7,$8,$9}' > $tmp-weekly_record_input
+awk '{print "'${shisetsu}'","'$hdKeikakuSakuseiPattern'",$1,$4,$5,$6,$2,$7,$8,$9}' > $tmp-weekly_record_input
+
+cp -p $tmp-weekly_record_input $work_dir/weekly_record_input
+
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名 3:ディレクトリ有無
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+SHISETSU_CAREPLAN/${shisetsu}/WEEKPLAN_WEEKLYSERVICE_PATTERN   WEEKPLAN_WEEKLYSERVICE_PATTERN 1
+FIN
+
+input_detail_dir=CARE_WEEKPLAN_PATTERN/${shisetsu}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+weekly_record WEEKPLAN_WEEKLYSERVICE_PATTERN 3 9 10 ${pompa_dir}/SHISETSU_CAREPLAN/PATTERN/${shisetsu} ${input_dir}
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+# 新ロック処理対応
+filelock_func $tmp-target-table 1 3 10
+if [ $? -ne 0 ]; then
+   #エラー時処理　※ロックファイル未作成なのでここではロック解除しない。
+   error_exit "ロック処理失敗"
+fi
+#cat $tmp-target-table |
+#while read table base ;do
+#   mkdir -p $tmplock_dir/$table
+#   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+#   [ $? -ne 0 ] && :> $tmp-err
+#   [ -e $tmp-err ] && break;
+#: ; done
+
+#[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  : > $tmp-${input_name}_new
+  if [ "$(gyo $tmp-${input_name}_input)" != "0" ] ; then
+    cat $tmp-${input_name}_input |
+    if [ -e ${pompa_dir_name}/${file_name} ] ; then
+      cat <(gawk '$1!="'$Riyoushaid'"||$2!="'$hdKeikakuSakuseiDate'"' ${pompa_dir_name}/${file_name}) -
+    else
+      cat -
+    fi |
+    LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+  fi
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+# 新ロック処理対応
+unlock_func  $tmp-target-table
+
+#cat $tmp-target-table |
+#while read table base ;do
+#  rm -f $tmplock_dir/$table/$base.lock
+#: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

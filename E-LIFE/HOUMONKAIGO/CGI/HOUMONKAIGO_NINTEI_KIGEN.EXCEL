@@ -1,0 +1,117 @@
+#!/bin/bash
+#
+# HOUMONKAIGO_NINTEI_KIGEN.EXCEL : 当月認定切れ一覧EXCEL出力
+#
+# Usage : HOUMONKAIGO_NINTEI_KIGEN.EXCEL namefile datafile
+#
+# Written by J.mikmai(hands lab.inc)
+
+#exec 2> /home/hands/E-LIFE/HOUMONKAIGO/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/HOUMONKAIGO"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+# 抽出期間//////////////////////////////////////////////////////////
+# 本日から２ヶ月間
+cat ${tmp}-print_day >$tmp-kigenmae
+kigenbi="$(date --date "${day} + 1month" +"%F";)"
+echo 平成 ${kigenbi}  |
+self 1 2.1.4 2.6.2 2.9 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-kigen
+
+cat ${tmp}-kigen >>${tmp}-kigenmae
+cat ${tmp}-kigenmae |
+tateyoko |
+awk '{print $1"～"$2}'  >${tmp}-kikan_day
+
+# ２ヵ月後の月末が認定期限の対象者を出力する
+month2="$(mdate MONTH1 |tateyoko |tail -1)"
+echo 平成 $month2 |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}'  >$tmp-2manth_day
+cat $pompa_dir/HOUMONKAIGO_NINTEI_KIGEN/NINTEI_DUMMY_DATA  |
+sed s/_/　/g |
+LANG=C sort -k8 |
+join1 key=8 $tmp-2manth_day    >${tmp}-dummy_data
+
+
+cat ${tmp}-dummy_data
+# 1:対象者コード 2:空白     3:空白   4:氏名 5:介護度
+# 6:空白         7:期限FROM 8:期限TO
+
+
+
+
+
+#///////////////////////////////////////////////////////////////////
+# eval
+#eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+#echo "000023" >${tmp}-user
+#echo ${password} > ${tmp}-pass
+#echo ${shisetsu} > ${tmp}-shisetsu
+# ダミー領域、あとで書き直す部分//////////////////////////////////
+#userid="000023"
+#echo "グランクレール青葉台二丁目" >${tmp}-shisetu_name
+
+#//////////////////////////////////////////////////////////////////
+
+#TEMPLA=${temp_dir}/HOUMONKAIGO_NINTEI_KIGEN_TEMPLATE.xls
+#Ehexcel < ${TEMPLA} 1 b4 ${tmp}-shisetu_name     \
+#                    1 h4 ${tmp}-print_day        \
+#                    1 b5 ${tmp}-kikan_day        \
+#                    1 a8 ${tmp}-dummy_data       > ${download_dir}/${userid}_$$.download.xls
+
+#cat << EOF > ${tmp}-html.html
+#<HTML>
+#  <HEAD>
+#    <SCRIPT type="text/javascript" language="Javascript">
+#      //<![CDATA[
+#      window.onload=init
+#      function init(){
+#        $ON_LOAD
+#          window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${userid}_$$.download.xls","_self");
+#      }
+#      //]]>
+#    </SCRIPT>
+#  </HEAD>
+#</HTML>
+#EOF
+
+# ファイル名をはく
+#cat $tmp-html.html
+#echo "${userid}_$$.download.xls"
+rm -f ${tmp}-*
+exit 0
+

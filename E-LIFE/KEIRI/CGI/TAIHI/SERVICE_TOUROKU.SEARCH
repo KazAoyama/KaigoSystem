@@ -1,0 +1,177 @@
+#!/bin/bash
+#
+# SERVICE_TOUROKU.SEARCH : サービス利用料金サーチ
+#
+# Usage : SERVICE_TOUROKU.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/SERVICE_TOUROKU"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# unitが渡って来なかったら0をセット
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  :
+else
+  unit="0"
+fi
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    > $tmp-riyosha_status
+#awk '$7<="'${hd_kensaku_hiduke_to}'" && $8>="'${hd_kensaku_hiduke_from}'"'   > $tmp-riyosha_status
+
+# searchする施設と年月を取得してデータを呼び出す
+from_month="$(echo ${hd_kensaku_hiduke_from} | awk '{print substr($1,1,6)}')"
+to_month="$(echo ${hd_kensaku_hiduke_to} | awk '{print substr($1,1,6)}')"
+keisan=$(mdate ${from_month}m ${to_month}m)
+if [ "${keisan}" -ne "0" ];then
+  mdate -e ${to_month}m/${keisan} > ${tmp}-searchmonth
+else
+  echo ${to_month}                > ${tmp}-searchmonth
+fi
+
+# データを一旦サーチする
+for month in $(cat ${tmp}-searchmonth);do
+  cat ${pompa_dir}/${shisetsu}/${month}/${month}.SERVICE_TOUROKU  |
+  awk '$2>="'${hd_kensaku_hiduke_from}'" && $2<="'${hd_kensaku_hiduke_to}'"'  >> ${tmp}-month_data
+done
+
+# サービス項目で絞り
+cat ${tmp}-month_data                |
+# 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+# 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+LANG=C sort -k3,3n                   |
+awk '$12=="'${tateya}'"'             |
+case ${serch_service_koumoku} in
+  0 )
+    cat -
+  ;;
+  * )
+    join0 key=3 <(echo ${serch_service_koumoku})
+  ;;
+esac                                 > ${tmp}-koumoku_shibori
+# 従業員で絞込み
+case ${riyosha_name} in
+  00 )
+    if [ "${floor}" = 0 ];then
+      if [ "${unit}" = 0 ];then
+        cat ${tmp}-koumoku_shibori
+      else
+        cat $tmp-riyosha_status           |
+        LANG=C sort -k4,4n                |
+        join0 key=4 <(echo ${unit})       |
+        LANG=C sort -k6,6n                |
+        self 6                            > ${tmp}-riyosha
+
+        cat ${tmp}-koumoku_shibori        |
+        LANG=C sort 1,1n                  |
+        join0 key=1 ${tmp}-riyosha        
+      fi
+    else
+      if [ "${unit}" = 0 ];then
+        cat $tmp-riyosha_status           |
+        LANG=C sort -k3,3n                |
+        join0 key=3 <(echo ${floor}) |
+        LANG=C sort -k6,6n                |
+        self 6                            > ${tmp}-riyosha
+
+        cat ${tmp}-koumoku_shibori        |
+        LANG=C sort -k1,1n                |
+        join0 key=1 ${tmp}-riyosha
+      else
+        cat $tmp-riyosha_status           |
+        LANG=C sort -k3,3n                |
+        join0 key=3 <(echo ${floor})      |
+        LANG=C sort -k4,4n                |
+        join0 key=2 <(echo ${unit})       |
+        LANG=C sort -k6,6n                |
+        self 6                            > ${tmp}-riyosha
+
+        cat ${tmp}-koumoku_shibori        |
+        LANG=C sort -k1,1n                  |
+        join0 key=1 ${tmp}-riyosha        
+      fi
+    fi
+  ;;
+  * )
+    cat ${tmp}-koumoku_shibori            |
+    LANG=C sort -k1,1n                    |
+    join0 key=1 <(echo ${riyosha_name})
+  ;;
+esac                                      |
+# 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+# 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+case ${MODE} in
+  print )
+    cat -
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+    # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+    # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+  ;;
+  * )
+    self 1 2 3 4 5 6 7 14                     
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+    # 6:合計額 7:備考 8:ID
+  ;;
+esac
+
+rm -f ${tmp}-*
+exit 0
+

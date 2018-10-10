@@ -1,0 +1,453 @@
+#!/bin/bash
+#
+# RIYOUHYOU_BEPPYOU_YOBO.SEARCH
+# 利用票別表（予防）　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+kyufuwariai=90
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && ${hdTaishouYear}=$curseirekiyear
+# 対象月
+[ -z "${hdTaishouMonth}" -o "${hdTaishouMonth}" = "_" ] && ${hdTaishouMonth}=$curmonth
+# 介護度
+[ -z "${kaigodo}" -o "${kaigodo}" = "_" ] && error_exit "介護度が不明です"
+
+# 本日の日付
+curday=$(mdate ${hdTaishouYear}${hdTaishouYear}"01" | self 1)
+
+# 今月の最初の日付
+firstday=$(mdate ${hdTaishouYear}${hdTaishouYear}m | tateyoko | head -1)
+# 今月の最後の日付
+lastday=$(mdate ${hdTaishouYear}${hdTaishouYear}m | tateyoko | tail -1)
+
+#--------------------------------------------------------------
+# マスター取得
+#--------------------------------------------------------------
+# 介護保険情報
+# 1:利用者ID            2:介護度              3:保険者名                    4:認定年和暦              5:認定年
+# 6:認定月              7:認定日              8:認定年月日西暦              9:認定有効期間開始年和暦  10:認定有効期間開始年
+# 11:認定有効期間開始月 12:認定有効期間開始日 13:認定有効期間開始年月日西暦     14:認定有効期間>終了年和暦 15:認定有効期間終了年
+# 16:認定有効期間終了月 17:認定有効期間終了日 18:認定有効期間終了年月日西暦
+#self 1 3 5 14/28 ${home_dir}/CAREPLAN/TMP/RIYOUSHA_KAIGOHOKEN   |
+self 1 3 5 14/28 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN   |
+join1 key=1 ${tmp}-riyoushaid   >     $tmp-riyousha_kaigohoken_master
+
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${curday}'"&&$18>="'${curday}'"'                  |
+# 1:利用者ID               2:介護度 3:保険者名 4:認定年月日 5:有効期間開始年月日
+# 6:認定有効期間終了年月日
+self 1/3 8 13 18                        > $tmp-cur_riyousha_kaigohoken
+
+# 月初めの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${firstday}'"&&$18>="'${firstday}'"'              |
+self 1/3 8 13 18                        > $tmp-first_riyousha_kaigohoken
+
+# 月終わりの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${lastday}'"&&$18>="'${lastday}'"'              |
+self 1/3 8 13 18                        > $tmp-last_riyousha_kaigohoken
+
+prekaigodo=$(self 2 $tmp-first_riyousha_kaigohoken)
+curkaigodo=$(self 2 $tmp-cur_riyousha_kaigohoken)
+postkaigodo=$(self 2 $tmp-last_riyousha_kaigohoken)
+
+
+if [ ${prekaigodo} -eq ${postkaigodo} ] ; then
+   kaigodo=$curkaigodo
+elif [ ${prekaigodo} -gt ${postkaigodo}  ] ; then
+   kaigodo=$prekaigodo
+else
+   kaigodo=$postkaigodo
+fi
+# 介護度マスタを抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGODO_MASTER                  |
+awk '$4<="'$curday'"&&$5>"'$curday'"{print $1,$2,$3}'     |
+LANG=C sort -k1,1                                         > ${tmp}-base_kaigodo
+
+kaigokijungendogaku=$(awk '$1=="'${kaigodo}'"{print $3}' ${tmp}-base_kaigodo)
+
+# 地域単価を抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGOHOKEN_TIIKI_TANKA          |
+awk '$3<="'$curday'"&&$4>="'$curday'"{print $1,$2,$3}'    |
+LANG=C sort -k1,2                                         > ${tmp}-base_tiikitanka
+
+# 事業所マスタを抽出
+cat ${KYOUTSU_TBL}/JIGYOUSHO/JIGYOUSHO_MASTER             |
+# 1:事業者コード 2:サービス事業者タイプ 3:地域区分 4:事業所名 5:割引率
+self 1 4 7 3 9                                               |
+LANG=C sort -k2,3 > ${tmp}-jigyousho_base
+
+cat ${tmp}-jigyousho_base                                 |
+# 1:事業者コード 2:サービス事業者タイプ	3:地域区分 4:地域単価 5:事業所名 6:割引率
+join1 key=2/3 ${tmp}-base_tiikitanka -                    |
+LANG=C sort -k1,3  |
+self 1 4 5 6  > ${tmp}-jigyousho_master
+
+cp -p ${tmp}-jigyousho_master ${work_dir}/jigyousho_master
+
+# 各サービスコードマスタを抽出
+# 訪問介護
+cat ${KYOUTSU_TBL}/SERVICECODE/SERVICECODE_HOUMONKAIGO_YOBO     |
+self 2 3 4 NF-1 > ${tmp}-servicecode_houmonkaigo
+
+# 訪問看護
+cat ${KYOUTSU_TBL}/SERVICECODE/SERVICECODE_HOUMONKANGO_YOBO     |
+self 2 3 4 NF-1 > ${tmp}-servicecode_houmonkango
+
+# 通所介護
+cat ${KYOUTSU_TBL}/SERVICECODE/SERVICECODE_TSUSHOKAIGO_YOBO     |
+self 2 3 4 NF-1 > ${tmp}-servicecode_tsushokaigo
+
+# 訪問リハビリ
+cat ${KYOUTSU_TBL}/SERVICECODE/SERVICECODE_HOUMONRIHABIRI_YOBO  |
+self 2 3 4 NF-1 > ${tmp}-servicecode_houmonrihabiri
+
+cat ${tmp}-servicecode_houmonkaigo  ${tmp}-servicecode_houmonkango ${tmp}-servicecode_tsushokaigo ${tmp}-servicecode_houmonrihabiri |
+LANG=C sort -k1,2   > ${tmp}-servicecode
+
+cp -p ${tmp}-servicecode ${work_dir}/servicecode
+
+: > $tmp-service_add_master_daily
+# サービス加算マスタ（予防）抽出
+cat ${KYOUTSU_TBL}/JIGYOUSHO/JIGYOUSHO_ADD |
+LANG=C sort -k1,1                          |
+# 1:事業所ＩＤ 2:加算サービスコード 3:加算サービス名 4:集計単位 5:計算単位
+# 6:単位数 7:介護度
+delf NF-2/NF                               > $tmp-service_add_master
+# 集計単位によって分ける
+cat $tmp-service_add_master                |
+awk '$4=="m"'                              > $tmp-service_add_master_monthly
+cat $tmp-service_add_master                |
+awk '$4=="d"'                              > $tmp-service_add_master_daily
+
+cp $tmp-service_add_master_daily $work_dir/add_master_daily
+cp $tmp-service_add_master_monthly $work_dir/add_master_monthly_y
+
+#########テスト##########
+kyufuritsu=90;
+
+# 月の前ゼロ付与
+matchTaishouMonth=$(echo $hdTaishouMonth | maezero 1.2)
+
+riyouhyou_timestamp=0
+if [ -s ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_YOTEI_YOBO ] ; then
+  riyouhyou_timestamp=$(ls --full-time ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_YOTEI_YOBO | awk '{gsub(/-/,"",$6);gsub(/:/,"",$7);print $6substr($7,1,6)}')
+fi
+
+
+# 空ファイルの作成
+: > ${tmp}-riyouhyoubeppyou_record
+
+# 利用票別表ファイルの取得
+if [ -s ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOUBEPPYOU_RECORD_YOBO ] ; then
+
+# 利用票が更新が最近の場合そちらを優先させるため、タイムスタンプを取得
+beppyou_timestamp=$(ls --full-time ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOUBEPPYOU_RECORD_YOBO | awk '{gsub(/-/,"",$6);gsub(/:/,"",$7);print $6substr($7,1,6)}')
+
+if [ $beppyou_timestamp -gt $riyouhyou_timestamp ] ; then
+
+cat ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOUBEPPYOU_RECORD_YOBO   |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$2=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 日付
+# --------------------------
+#
+awk '$3=="'${hdTaishouYear}'"&&$4=="'$hdTaishouMonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 表示順番を整える
+LANG=C sort -k1n,1n     |
+# 表示順番項目を除く
+delf 1                  |
+self 24 1/23 25/27      |
+#awk '{print "n",$0}'    |
+# 1:明細表示コード    2:利用者ID          3:対象年                4:対象月                5:事業者タイプ
+# 6:事業者コード      7:事業者名          8:サービスコード        9:サービス名            10:サービス単位
+# 11:割引パーセント   12:割引後単位       13:サービス回数         14:単位数*回数          15:種類限度額超単位
+# 16:種類限度額内単位 17:区分基準限度額超 18:区分基準限度額内     19:地域単価             20:費用総額
+# 21:給付率           22:介護保険内費用   23:介護保険内利用者負担 24:介護保険外利用者負担 25:有効フラグ
+# 26:処理時刻         27:ユーザID
+awk '{print $1,$2,$3,$4,$5,$6,$19,$7,$11,$8,$9,$10,$12,$13,$14,"_",$18,$17,$20,$22,$23,$24,$15,$16}'    |
+# 1:明細表示コード                2:利用者ID              3:利用年          4:利用月  5:事業者サービス区分
+# 6:事業者ID                  7:地域単価              8:事業所名        9:割引率  10:サービスコード
+# 11:サービスコード名         12:単位                 13:単位（割引後） 14:回数   15:単位合計
+# 16:付随費用                 17:基準内限度額対象単位 18:基準外対象単位 19:請求額 20:介護保険給付額
+# 21:個人負担額（保険対象内） 22:個人負担額（全額） 23:種類限度額超 24:種類限度額内 25:給付率
+tee $work_dir/riyouhyoubeppyou_record0   |
+sm5 1 13 14 24          |
+awk '{print $0,"1","'${kyufuritsu}'"}'   |
+tee $work_dir/riyouhyoubeppyou_record1   |
+self 2/26 1             |
+awk '{print "l",$0}'    >  ${tmp}-riyouhyoubeppyou_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード作成エラー１"
+
+fi
+
+fi
+
+if [ $(gyo ${tmp}-riyouhyoubeppyou_record) -eq 0 ] ; then
+
+# 利用票別表ファイルが既に存在する場合はそちらを優先して取得
+# 利用票ファイルの取得
+cat ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_YOTEI_YOBO   |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$2=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 日付
+# --------------------------
+# 
+awk '$3=="'${hdTaishouYear}'"&&$4=="'$matchTaishouMonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 1:利用者ID       2:利用年 3:利用月 4:事業者サービス区分 5:事業者ID
+# 6:サービスコード 7:単位   8:回数   9:単位合計           10:付随費用
+self 2 3 4 6 10 7 12 12 13 11 |
+self 4 6 0                    |
+LANG=C sort -k1,2             |
+tee ${work_dir}/beppyou0      |
+join1 key=1/2 ${tmp}-servicecode -  |
+delf 1 2                      |
+# 予防サービスは月毎に単位数を計算するサービスがあるため、その対応
+# 1:サービスコード名   2:集計単位区分 3:利用者ID       4:利用年 5:利用月
+# 6:事業者サービス区分 7:事業者ID     8:サービスコード 9:単位数 10:回数
+# 11:単位合計          12:付随費用
+self 3 4 5 6 7 8 1 2 9 10 11 12  |
+tee ${work_dir}/beppyou1 |
+LANG=C sort -k5,5 |
+join1 key=5 ${tmp}-jigyousho_master -   |
+LANG=C sort -k1,5 |
+awk '{if($8=="_"){$8=0};$13=$12*(100-$8)/100;print $0}'      |
+marume 13.0       > $tmp-beppyou_work1
+
+cp $tmp-beppyou_work1 $work_dir/beppyou_work1_yobo
+
+cat $tmp-beppyou_work1 |
+# 集計単位が回数、日数分のもの
+awk '$11!="m"'         |
+# 1:利用者ID 2:利用年   3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名 8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位    12:回数    13:単位合計 14:付随費用 15:介護保険区分
+sm2 +count 1 12 13 15 |
+delf 11               >      $tmp-beppyou_add_work0
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード作成エラー２"
+
+cat $tmp-beppyou_work1 |
+# 集計単位が月ごとのもの
+awk '$11=="m"'         |
+# 1:利用者ID 2:利用年   3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名 8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位    12:回数    13:単位合計 14:付随費用 15:介護保険区分
+sm2 +count 1 13 14 15  |
+self 1/12 14 13 15 16    |
+delf 11               >  $tmp-beppyou_add2_work0
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード２作成エラー２"
+
+cat $tmp-beppyou_add_work0 $tmp-beppyou_add2_work0 > $tmp-beppyou_add3_work0
+
+# 加算レコードの追加（回数単位）
+cat $tmp-beppyou_add3_work0    |
+# 1:利用者ID 2:利用年   3:利用月 4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名 8:割引率 9:単位               10:回数
+self 1 2 3 4 5 6 7 8 11 12         |
+sm2 1 8 9 10                   |
+LANG=C sort -k5,5             |
+# 1:利用者ID           2:利用年         3:利用月   4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位 9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:単位    14:回数
+tee $work_dir/kasan_daily_tmp1   |
+self 5 1/NF                      |
+join1 key=1 - $tmp-service_add_master_daily       |
+# 1:利用者ID            2:利用年          3:利用月     4:事業者サービス区分 5:事業者ID
+# 6:地域単価            7:事業所名        8:割引率 9:単位               10:回数
+# 11:加算サービスコード 12:加算サービス名 13:集計単位  14:計算単位          15:単位数
+delf 1                                            |
+self 1/5 11/15 6/10                               |
+# 1:利用者ID           2:利用年         3:利用月      4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位    9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:割り引き率 14:単位              15:回数
+# 16:新合計単位数
+tee $work_dir/monthly_check                       |
+awk '{if($9=="p"){$10=$10*$14};print $0}'   |
+marume 10.0                      |
+awk '{$16=$10*(100-$13)/100;print $0}'   |
+tee $work_dir/kasan_check0       |
+marume 16.0        |
+tee $work_dir/kasan_check1       |
+awk '{$17=$16*$15; print $0}'    |
+delf 16            |
+marume 16.0        |
+self 1/5 11/13 6 7 10 15 16 |
+awk '{print $0,"0","1"}'    > $tmp-kasan_numly_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー
+"
+
+
+cat $tmp-beppyou_add3_work0 $tmp-kasan_numly_record  |
+LANG=C sort -k6nr,6nr    |
+# 1:利用者ID              2:利用年          3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価              7:事業所名        8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位                 12:回数           13:単位合計 14:付随費用          15:介護保険区分
+# 16:基準内限度額対象単位 17:基準外対象単位
+# 区分基準限度単位数を超えた場合、地域単価が高いサービスから単位数を割り振る
+awk 'BEGIN {gendogaku='${kaigokijungendogaku}'}{if($15>0){gendogaku=gendogaku-$13;if(gendogaku>0){kijunnaigendogaku=$13;kijungaigendogaku=0}else{kijunnaigendogaku=$13+gendogaku;if(kijunnaigendogaku<0){kijunnaigendogaku=0};kijungaigendogaku=$13-kijunnaigendogaku}}else{kijunnaigendogaku="0";kijungaigendogaku=$13};print $0,kijunnaigendogaku,kijungaigendogaku}'    |
+# 1:利用者ID        2:利用年   3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価        7:事業所名 8:割引率    9:サービスコード     10:サービスコード>名
+# 11:単位           12:回数    13:単位合計 14:付随費用          15:基準内限度額対>象単位
+# 16:基準外対象単位
+self 1/14 16/NF               |
+tee ${work_dir}/beppyou_gendo |
+LANG=C sort -k1,7  |
+# 介護保険対象は区分限度額内、利用者負担は10%＋区分限度額超の対象分。
+##awk '{$17=int($13*$6);kaigotaisho=int($15*$6*(100-'${kyufuwariai}')/100);$18=int($15*$6)-kaigotaisho;if($18-int($18)>0){$18=$18+1};$19=kaigotaisho;$20=kaigotaisho+int($16*$6);$21=int($11*(100-$8)/100);print $0}'  |
+awk '{$17=int($13*$6);kaigotaisho=int($15*$6*(100-'${kyufuwariai}')/100);$18=int($15*$6)-kaigotaisho;if($18-int($18)>0){$18=$18+1};$19=kaigotaisho;$20=int($16*$6);$21=$11*(100-$8)/100;print $0,"n"}'  |
+marume 21.0              |
+tee ${work_dir}/beppyou4 |
+self 22 1/11 21 12/20   |
+sm4 2 9 10 13 14 22 |
+awk '{if(NF==21){print "j",$0}else{print $0}}'  |
+tee ${work_dir}/beppyou5 |
+# 1:明細表示コード                2:利用者ID              3:利用年          4:利用月  5:事業者サービス区分
+# 6:事業者ID                  7:地域単価              8:事業所名        9:割引率  10:サービスコード
+# 11:サービスコード名         12:単位                 13:単位（割引後） 14:回数   15:単位合計
+# 16:付随費用                 17:基準内限度額対象単位 18:基準外対象単位 19:請求額 20:介護保険給付額
+# 21:個人負担額（保険対象内） 22:個人負担額（全額） 23:種類限度額超 24:種類限度額内 25:パーセント
+#########  種類限度額内単位は単位合計をセット
+awk '{print $0,"0",$15,"1"}'  > $tmp-beppyou_add_work1
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード作成エラー２"
+
+
+# 加算レコードの追加（月単位）
+cat $tmp-beppyou_add_work1    |
+getlast 2 6                   |
+self 6 1/NF                   |
+LANG=C sort -k1,1             |
+tee $work_dir/monthly_add1    |
+# 1:事業者コード       2:明細表示コード            3:利用者ID              4:利用年          5:利用月
+# 6:事業者サービス区分 7:事業者ID                  8:地域単価              9:事業所名        10:割引率
+# 11:サービスコード    12:サービスコード名         13:単位                 14:単位（割引後） 15:回数
+# 16:単位合計          17:付随費用                 18:基準内限度額対象単位 19:基準外対象単位 20:請求額
+# 21:介護保険給付額    22:個人負担額（保険対象内） 23:個人負担額（全額）   24:種類限度額超   25:種類限度額内
+# 26:パーセント        27:加算サービスコード       28:加算サービス名       29:集計単位       30:計算単位
+# 31:単位数 32:介護度
+join1 key=1 - $tmp-service_add_master_monthly      |
+tee $work_dir/monthly_add2    |
+self 2/7 27/NF 8/26           |
+# 1:明細表示コード  2:利用者ID                  3:利用年                4:利用月          5:事業者サービス区分
+# 6:事業者ID        7:加算サービスコード        8:加算サービス名        9:集計単位        10:計算単位
+# 11:単位数         12:介護度                   13:地域単価             14:事業所名       15:割引率
+# 16:サービスコード 17:サービスコード名         18:単位                 19:単位（割引後） 20:回数
+# 21:単位合計       22:付随費用                 23:基準内限度額対象単位 24:基準外対象単位 25:請求額
+# 26:介護保険給付額 27:個人負担額（保険対象内） 28:個人負担額（全額）   29:種類限度額超   30:種類限度額内
+# 31:パーセント
+# パーセンテージの場合の四捨五入計算
+awk '{if($10=="p"){addtani=$21*$11;$31=$11;}else{addtani=$11};$18=addtani;$1="a";$16=$7;$17=$8;print $0}' |
+marume 18.0                   |
+# 介護度チェックをここでしたほうがいいかも
+delf 12                       |
+self 1/6 12/NF                |
+# 1:明細表示コード            2:利用者ID              3:利用年          4:利用月        5:事業者サービス区分
+# 6:事業者ID                  7:地域単価              8:事業所名        9:割引率        10:サービスコード
+# 11:サービスコード名         12:単位                 13:単位（割引後） 14:回数         15:単位合計
+# 16:付随費用                 17:基準内限度額対象単位 18:基準外対象単位 19:請求額       20:介護保険給付額
+# 21:個人負担額（保険対象内） 22:個人負担額（全額）   23:種類限度額超   24:種類限度額内 25:パーセント
+# 加算レコードの計算、生成
+##########  種類限度額内単位は単位合計をセット
+awk '{$13=int($12*(100-$9)/100);$14="1";$15=$13*$14;$16="0";if(($17-$15)>0){$17=$15;$18="0"}else{$17="0";$18=$15};$19=int($15*$7);kaigotaisho=int($19*(100-'${kyufuwariai}')/100);$20=$19-kaigotaisho;$21=kaigotaisho;$22=int($18*$7);$23="0";$24=$15;print $0}'                     >  $tmp-kasan_monthly_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー"
+
+cp $tmp-kasan_monthly_record $work_dir/kasan_monthly_record
+
+cp $tmp-beppyou_add_work1 $work_dir/beppyou_add_work1
+
+cat $tmp-beppyou_add_work1 $tmp-kasan_monthly_record  |
+LANG=C sort -k7,7nr -k6,6 -k1,1r -k10,10    |
+sm5 1 13 14 24          |
+awk '{if(NF==24){print $0,"1"}else{print $0}}'    |
+awk '{print $0,"'${kyufuritsu}'"}'   |
+self 2/26 1             |
+awk '{print $0}'    >  ${tmp}-riyouhyoubeppyou_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード作成エラー２"
+
+fi
+
+cp ${tmp}-riyouhyoubeppyou_record ${work_dir}/riyouhyoubeppyou_record
+
+awk '{print "l",$0}' ${tmp}-riyouhyoubeppyou_record > ${tmp}-riyouhyoubeppyou_record_list
+
+
+# 利用票別表の単票項目の取得
+
+: > $tmp-riyouhyoubeppyou
+if [ -s ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOUBEPPYOU_YOBO ] ; then
+   # ヘッダ設定
+   echo "CareManager" > $tmp-header
+   cp -p $tmp-header $work_dir/header
+   cat ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOUBEPPYOU_YOBO  |
+#--------------------------------------------------------------
+# 利用者ID
+   awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 日付
+# --------------------------
+#
+   awk '$2=="'${hdTaishouYear}'"&&$3=="'$matchTaishouMonth'"'  |
+# --------------------------
+   self 4                        |
+   cat $tmp-header -             |
+   tateyoko                      |
+   awk '{print "b",$0}'          > $tmp-riyouhyoubeppyou
+fi
+
+cp -p $tmp-riyouhyoubeppyou $work_dir/riyouhyoubeppyou
+cp ${tmp}-riyouhyoubeppyou_record_list $work_dir/riyouhyoubeppyou_list
+
+cat ${tmp}-riyouhyoubeppyou_record_list $tmp-riyouhyoubeppyou
+
+## 終了
+rm -f $tmp-*
+exit 0

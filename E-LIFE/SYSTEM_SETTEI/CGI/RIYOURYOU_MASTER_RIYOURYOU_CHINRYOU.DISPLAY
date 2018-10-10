@@ -1,0 +1,352 @@
+#!/bin/bash
+#
+# RIYOURYOU_MASTER_RIYOURYOU_CHINRYOU.DISPLAY
+# 利用料_賃料マスタ
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/10
+
+#--------------------------------------------------------------
+# ログ
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata="$1"
+checkfile="$2"
+data="$3"
+tourokudata="$4"
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+if [ "$MODE" = "init" ]; then
+  RIREKIDISP="checked"
+  HENKOUDISP="@"
+  ETSURAN=""
+  HENKOUTOUROKU="none"
+  HENKOU="none"
+else
+  EtsuranNyuuryoku="$(nameread  "EtsuranNyuuryoku" $namedata)"
+
+  if [ "${EtsuranNyuuryoku}" = "1" ] ; then
+    RIREKIDISP="@"
+    HENKOUDISP="checked"
+    ETSURAN="none"
+    HENKOUTOUROKU=""
+    HENKOU=""
+  else
+    RIREKIDISP="checked"
+    HENKOUDISP="@"
+    ETSURAN=""
+    HENKOUTOUROKU="none"
+    HENKOU="none"
+  fi
+fi
+
+USERID="$(nameread  "userid" $namedata)"
+SHISETSUID="$(nameread  "Shisetsu" $namedata)"
+Shisetsu="$(nameread  "Shisetsu"  $namedata)"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+
+### モードによる表示の分岐
+#case "${MODE}" in
+
+  # 初期表示
+#  init | search)
+  
+  if [ -s "${data}" ] ; then
+    cat ${data}   |
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室NO
+# 6:期間From 7:期間To 8:金額
+    self 1/8 |
+    awk '{print $0,$6!="_"?$6:"99999999",$7!="_"?$7:"99999999"}' |
+    awk '{print $0,$9!="99999999"?substr($9,1,4)"/"substr($9,5,2)"/"substr($9,7,2):"_",$10!="99999999"?substr($10,1,4)"/"substr($10,5,2)"/"substr($10,7,2):"_"}'  |
+    self 1/5 NF-1 NF 8         |
+    sed 's/_/@/g'> $tmp-list_data
+
+    cp $data $work_dir/data_chinryou
+
+    cat ${data}   |
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室NO
+# 6:期間From 7:期間To 8:金額
+    LANG=C sort   |
+    getlast 1 5   |
+    awk '{print $5,$8,$6!="_"?$6:"99999999",$7!="_"?$7:"99999999"}' |
+    awk '{print $1,$2,$3!="99999999"?substr($3,1,4)"/"substr($3,5,2)"/"substr($3,7,2):"_",$4!="99999999"?substr($4,1,4)"/"substr($4,5,2)"/"substr($4,7,2):"_"}' |
+    sed 's/_/@/g'> $tmp-list_data2
+
+  fi
+#  ;;
+
+case "${MODE}" in
+  # 登録の場合
+  touroku)
+
+ : > $tmp-list_result
+
+  result=$(awk '$1=="result"{print $2}' ${tourokudata})
+
+    if [ "${result}" = "ng" ] ; then
+     message="$(awk '$1=="message"{print $2}' ${tourokudata})"
+
+    else
+     message="登録完了しました。"
+
+     RIREKIDISP="checked"
+     HENKOUDISP="@"
+     ETSURAN=""
+     HENKOUTOUROKU="none"
+     HENKOU="none"
+
+    fi
+
+  ;;
+esac
+
+#--------------------------------------------------------------
+# 共通処理
+
+#----------------------------------------------------------
+# プルダウンの用意
+#----------------------------------------------------------
+################################
+# 施設
+################################
+
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON   |
+  awk '$1=="'${Shisetsu}'"{print $1,$2,"selected"}'   >$tmp-shisetsu_name
+
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  awk '$1=="'${Shisetsu}'"{print $2}'                     |
+  sort  |
+  uniq  |
+  join1 key=1 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME -           |
+  self 1 3                                                |
+  awk '{if($1=="'${Tateya}'"){print $0,"selected"}
+       else {print $0,"@"}}'       > $tmp-tateya_name
+# 1:建屋ID 2:建屋名
+
+  # フロア一覧
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"{print $3,$3}'  |
+  LANG=C sort  |
+  uniq  > $tmp-floor_kari
+
+if [ "$(gyo $tmp-floor_kari)" -gt "1"  ]; then
+  cat $tmp-floor_kari | 
+  awk 'BEGIN{print "@","全て"}{print $0}' |
+  awk '{if($1=="'${Floor}'"){print $0,"selected"}
+     else {print $0,"@"}}'> $tmp-floor
+else
+  cat $tmp-floor_kari > $tmp-floor
+fi
+
+  # ユニットは建屋がケアのときのみ
+  if [ "${Tateya}" = "02" ] ; then
+    cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+    awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"{print $0}'  |
+    if [ -z "${Floor}" -o "${Floor}" = "_" ] ; then
+      awk 'BEGIN{print "@","全て"}'
+    else
+      awk '$3=="'${Floor}'"{print $4}' |
+#    fi |
+    LANG=C sort |
+    uniq |
+    join1 key=1 ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME -  |
+    self 1 2    |
+    awk '{if($1=="'${Unit}'"){print $0,"selected"}
+          else{print $0,"@"}}'
+   fi > $tmp-unit_name_kari
+
+
+  if [ "$(gyo $tmp-unit_name_kari)" -gt "1"  ]; then
+    cat $tmp-unit_name_kari |
+    awk 'BEGIN{print "@","全て"}{print $0}' |
+    awk '{if($1=="'${Unit}'"){print $0,"selected"}
+     else {print $0,"@"}}'> $tmp-unit_name
+   else
+    cat $tmp-unit_name_kari > $tmp-unit_name
+  fi
+  else
+    echo "@ @"
+  fi > $tmp-unit_name
+
+  # 居室取得
+ cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+if [ -n "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $0}'
+# 1:施設ＩＤ 2:建屋ＩＤ 3:フロア 4:ユニットＩＤ 5:居室Ｎｏ
+else
+  cat -
+fi |
+
+# 建屋の選択があった場合
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ] ; then
+  awk '$2=="'${Tateya}'"{print $0}'
+else
+  cat -
+fi |
+
+# フロアの選択があった場合
+if [ -n "${Floor}" -a "${Floor}" != "_" ] ; then
+  awk '$3=="'${Floor}'"{print $0}'
+else
+  cat -
+fi |
+
+# ユニットの選択があった場合
+if [ -n "${Unit}" -a "${Unit}" != "_" ] ; then
+  awk '$4=="'${Unit}'"{print $0}'
+else
+  cat -
+fi |
+
+# 居室の選択があった場合
+if [ -n "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ] ; then
+  awk '$5=="'${Kyoshitsu}'"{print $5}'
+else
+  self 5
+fi |
+LANG=C sort  |
+uniq          > $tmp-kyoshitsu_kari
+
+cp $tmp-kyoshitsu_kari $work_dir/kyoshitsu
+# 2人以上の場合のみ全てという選択をつける
+cat $tmp-kyoshitsu_kari  |
+awk 'BEGIN{print "@ 全て"}{print $1,$1}' |
+awk '{if($1=="'${Kyoshitsu}'"){print $0,"selected"}
+   else{print $0,"@"}}'  > $tmp-kyoshitsu
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+#     window.opener.location.href = "KOJINJYOUHOU_SHOUSAI_KEIYAKU.CGI";
+#     window.opener.document.tab.submit();
+#--------------------------------------------------------------
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}
+###SHISETSUID###   ${SHISETSUID}
+###KCLASSACTIVE0### active
+###SCLASSACTIVE0### active
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###   ${PRINTDISP}
+###RIREKIDISP###  ${RIREKIDISP}
+###HENKOUDISP###  ${HENKOUDISP}
+###ETSURAN### ${ETSURAN}
+###HENKOUTOUROKU### ${HENKOUTOUROKU}
+###HENKOU### ${HENKOU}
+###NowChinryouTo### ${NowChinryouTo}
+###NowChinryou###   ${NowChinryou}
+###NextChinryouFrom###  ${NowChinryouTo}
+FIN
+
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+# データのはめ込み
+#cp $tmp-* /home/hands/work/okuda
+
+# 登録時登録okだったら新規htmlではなく、通常の詳細htmlを表示
+#if [ "${MODE}" = "touroku" -a "${result}" = "touroku_ok" ] ; then
+#else
+#fi |
+  cat ${html_dir}/RIYOURYOU_MASTER_RIYOURYOU_CHINRYOU.html     |
+  mojihame -lshiten_name_select - $tmp-shiten_name                  |
+  mojihame -lkouza_shurui_select - $tmp-kouza_shurui      |
+  mojihame -l###SHISETSU_NAME### - $tmp-shisetsu_name         |
+  mojihame -l###TATEYA_NAME### - $tmp-tateya_name             |
+  mojihame -l###FLOOR_NAME### - $tmp-floor                    |
+  mojihame -l###UNIT_NAME### - $tmp-unit_name                 |
+  mojihame -l###KYOSHITSU_NAME### - $tmp-kyoshitsu            |
+  mojihame -llist1_result - $tmp-list_data                | 
+  mojihame -llist2_result - $tmp-list_data2 |
+tee $tmp-areareare |
+calsed -f $tmp-calsed_data_result -                     |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+#--------------------------------------------------------------
+#tee $tmp-arerererere  /home/hands/work/okuda |
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi > $tmp-result_html
+
+#cp $tmp-* /home/hands/work/okuda
+
+cat $tmp-result_html
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

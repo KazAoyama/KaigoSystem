@@ -1,0 +1,345 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_WEEKLY_HAIBENHYO.SEARCH : 月間排便表検索用CGI
+#
+# Usage : KAIGOJISSEKI_WEEKLY_HAIBENHYO.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+apptbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+kisan_bi=$(mdate ${hd_sakuseibi}/-6 )
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月の取得
+echo ${nengetsu} > ${tmp}-nengetsu
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ $shisetsu = "0001" ];then
+  join0 key=2 <(echo "02")
+else
+  join0 key=2 <(echo "00")
+fi |
+awk '$7<="'${hd_sakuseibi}'" && $8>="'${hd_sakuseibi}'"'     > $tmp-riyosha_status
+
+cat $tmp-riyosha_status |
+self 6 7 5 |
+LANG=C sort -k1,2 |
+getlast 1 1 |
+self 1 3 > $tmp-riyosha_room
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2 3                                     > $tmp-riyosha_master_kana
+
+# 検索するメンバーを取得
+echo ${unit} > ${tmp}-unit
+cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=4 ${tmp}-unit                           |
+self 6                                            |
+LANG=C sort -k1,1                                |
+# 1:利用者ID
+yarr                                              > ${tmp}-search_member
+# 検索する日にちを取得
+mdate -e ${hd_sakuseibi}/-6           > ${tmp}-days
+# 検索する年月を決める
+cat ${tmp}-days                       |
+tarr                                  |
+awk '{print substr($1,1,6)}'          |
+LANG=C sort -u -k1,1n                 |
+yarr                                  > ${tmp}-nengetsu
+
+
+# 検索する
+for nengetsu in $(cat ${tmp}-nengetsu);do
+  cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU           |
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  LANG=C sort -k4,4n                                                      |
+  join0 key=4 <(echo "2")                                                 |
+  LANG=C sort -k5,5                                                       |
+  tee ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "排便介助")                                          |
+  LANG=C sort -k1,1n                                                      >> ${tmp}-taisho_data_base
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  cat ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "下剤与薬")                                          |
+  LANG=C sort -k1,1n                                                      >> ${tmp}-gezai_data_base
+done
+cat $tmp-taisho_data_base                                               |
+LANG=C sort -k1,1n -k2,2n                                               > $tmp-taisho_data
+cat ${tmp}-gezai_data_base                                              |
+LANG=C sort -k1,1n -k2,2n                                               > ${tmp}-gezai_data
+# まわしてsearchdata作成
+for member in $(cat ${tmp}-search_member);do
+  for day in $(cat ${tmp}-days);do
+  ##### 排便の処理
+    cat ${tmp}-taisho_data               |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=1 <(echo $member)          |
+    LANG=C sort -k2,2n                   |
+    join0 key=2 <(echo $day)             > ${tmp}-totyu
+    if [ "$(gyo ${tmp}-totyu)" = 0 ];then
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+    elif [ "$(gyo ${tmp}-totyu)" = 1 ];then
+      cat ${tmp}-totyu                   |
+      self 1 7                           |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+    elif [ "$(gyo ${tmp}-totyu)" = 2 ];then
+      cat ${tmp}-totyu                   |
+      self 1 7                           |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+    elif [ "$(gyo ${tmp}-totyu)" = 3 ];then
+      cat ${tmp}-totyu                   |
+      self 1 7                           |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+    elif [ "$(gyo ${tmp}-totyu)" = 4 ];then
+      cat ${tmp}-totyu                   |
+      self 1 7                           |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+      echo "${member}" "${day}" "0" "0"              >> ${tmp}-daydata
+    elif [ "$(gyo ${tmp}-totyu)" = 4 ];then
+      cat ${tmp}-totyu                   |
+      self 1 7                           |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+    else
+      cat ${tmp}-totyu                   |
+      self 1 7 12                        |
+      LANG=C sort -k3,3n                 |
+      sed 's/+++/ /g'                    |
+      # 1:member_id 2:haiben_ryo2 3:【量】 4:haiben_ryo2のvalue 5:多量 6:hainyo_kubun2 7:【介助区分】 8:hainyo_kubun2のvalue 9:オムツ交換 10:haiben_keijou
+      # 11:【形状】 12:haiben_keijouのvalue 13:普通 14:hainyo_shurui2 15:【排泄種類】 16:hainyo_shurui2のvalue 17:オムツ
+      self 1 12 4                        |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $1,"'${day}'",$2,$3}' |
+      # 1:日付 2:haiben_keijouのvalue 3:haiben_ryo2のvalue
+      ## 量の計算
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}'      |
+      # 3行以上ある場合は上から3行をとる
+      awk 'NR<=5'                        >> ${tmp}-daydata
+      # 1:member_id 2:日付 3:haiben_keijouのvalue 4:haiben_ryo2のvalue
+    fi
+  
+  ##### 下剤の処理
+    cat ${tmp}-gezai_data                |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=1 <(echo $member)          |
+    LANG=C sort -u -k2,2n                |
+    join0 key=2 <(echo $day)             > ${tmp}-gezai_totyu
+    if [ "$(gyo  ${tmp}-gezai_totyu)" = 0 ];then
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+    elif [ "$(gyo  ${tmp}-gezai_totyu)" = 1 ];then
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+      echo "${member}" "${day}" "lightgray" "-" "-"        >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"        >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+    elif [ "$(gyo  ${tmp}-gezai_totyu)" = 2 ];then
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+    elif [ "$(gyo  ${tmp}-gezai_totyu)" = 3 ];then
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+    elif [ "$(gyo  ${tmp}-gezai_totyu)" = 4 ];then
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+      echo "${member}" "${day}" "lightgray" "-" "-"         >> ${tmp}-daygezai
+    elif [ "$(gyo  ${tmp}-gezai_totyu)" = 5 ];then
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+    else
+      cat ${tmp}-gezai_totyu               |
+      awk '{print $1,$2,"red","inset","3px"}' |
+      LANG=C sort -k1,1n -k2,2n            |
+      awk 'NR<=5'                          >> ${tmp}-daygezai
+      # 1:member_id 2:日 3:99
+    fi
+  done
+done
+
+# 日付を2桁に
+cat ${tmp}-daydata                       |
+awk '{print $1,substr($2,7,2),$3,$4}'    > ${tmp}-day_data
+cat ${tmp}-daygezai                      |
+awk '{print $1,substr($2,7,2),$3,$4,$5}' > ${tmp}-day_gezai
+
+# 排便データと下剤データを合体
+if [ -e ${tmp}-day_gezai ];then
+  cat ${tmp}-day_data                      |
+  loopj num=2 - ${tmp}-day_gezai           > ${tmp}-data
+else
+  cat ${tmp}-day_data                      > ${tmp}-data
+fi
+  
+# データを整形
+# 先に目盛りの日にちデータを作成
+cat  ${tmp}-days                     |
+tarr                                 |
+awk '{print substr($1,7,2)}'         |
+yarr                                 > ${tmp}-calender
+
+# 形状種類は色、量は記号に変換
+cat ${tmp}-data                       |
+# 1:member_id 2:日にち 3:形状フラグ 4:量フラグ 5:下剤色
+awk '{gsub(/1/,"skyblue",$3);gsub(/2/,"orange",$3);gsub(/3/,"wheat",$3);gsub(/4/,"seagreen",$3);gsub(/5/,"darkseagreen",$3);gsub(/6/,"saddlebrown",$3);gsub(/99/,"red",$3);gsub(/0/,"white",$3);print}'        |
+awk '{if($4>=3){$4="◎";print}else if($4==2){$4="○";print}else if($4<2 && $4>=1){$4="△";print}else{$4="-";print}}'   |
+delf 2  |
+yarr num=1                             |
+LANG=C sort -k1,1                     |
+join1 key=1 $tmp-riyosha_master_kana        |
+join2 key=1 $tmp-riyosha_room |
+LANG=C sort -k2,2 -k4,4 |
+delf 1 4                                > ${tmp}-data2
+
+
+
+
+cat ${tmp}-calender ${tmp}-data2
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

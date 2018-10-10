@@ -1,0 +1,201 @@
+#!/bin/bash
+#
+# MONITORING_HOMEHELPER.SEARCH
+# モニタリング　検索用CGI
+#
+# Written by K.Aoyama :20131216
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdSakuseiDate
+SakuseiDate
+MonitoringDate
+ShokaiZenkaiFlg
+slKyotakuKaigoShienJigyousho
+slKaigoShienSenmonin
+slServiceTeikyouSekininsha
+slTankiChouki
+HyokakikanFrom
+HyokakikanTo
+KeikakuSelect
+KeikakuText
+SeikatsuSelect
+SeikatsuText
+ShinshinHenkaSelect
+ShinshinHenkaText
+RiyoushaSelect
+RiyoushaText
+KazokuSelect
+KazokuText
+KazokuHenkaSelect
+KazokuHenkaText
+ADLSelect
+ADLText
+KeikakuSyuseiHitsuyo
+KongoHoushin
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/MONITORING_HOMEHELPER |
+awk '$(NF-2)!="9"'            |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${hdSakuseiDate}" -o "${hdSakuseiDate}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdSakuseiDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                |
+tee  ${tmp}-result          |
+delf 1 4                    |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-monitoring
+
+# 目標リストデータ取得用対象日付
+awk '{print $2}' $tmp-result > $tmp-taishoudate
+
+cp -p $tmp-taishoudate $work_dir/taishoudate_houkai
+
+# 援助計画より目標取得
+#if [ "$MODE" = "new" ] ; then
+#: > ${tmp}-mokuhyou
+#else
+
+if [ $(gyo ${tmp}-taishoudate) -gt 0 ] ; then
+
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/MONITORING_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'     |
+#--------------------------------------------------------------
+join1 key=2 $tmp-taishoudate -  |
+awk '$12!="9"'                  |
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1/2 NF-2/NF                     |
+LANG=C sort -k3n,3n                  |
+# 1:データ区分 2:1.データID   3:表示順     4:目標名 5:サービス内容
+# 6:確認方法   7:利用者満足度 8:家族満足度 9:意見   10:達成度評価
+#--------------------------------------------------------------
+awk '{print "l",$0}'        > ${tmp}-mokuhyou
+
+else
+
+: > ${tmp}-mokuhyou
+
+fi
+
+#fi
+
+# 過去に作成した援助計画のデータが無い場合は、訪問介護計画書の
+# データを反映させる
+# 取得するデータは長期目標と短期目標
+#--------------------------------------------------------------
+
+#if [ $(gyo ${tmp}-mokuhyou) -eq 0 ] ; then
+if [ "$MODE" = "new" ] ; then
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 目標ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/ENJO_KEIKAKU_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+getlast 1 1                   |
+# 最新個別援助計画目標リストを取得
+awk '{print $2}' > $tmp-taishoudate_mokuhyou_list
+
+cp $tmp-taishoudate_mokuhyou_list $work_dir/date_mokuhyou_list
+#--------------------------------------------------------------
+# 目標ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/ENJO_KEIKAKU_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate_mokuhyou_list -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1/3 NF-2/NF                     |
+#--------------------------------------------------------------
+# 1:データ区分 2:1.データID   3:表示順     4:目標名 5:サービス内容
+# 6:確認方法   7:利用者満足度 8:家族満足度 9:意見   10:達成度評価
+awk '{print "l","_","_",$2,"_","_","_","_","_","_"}'        >> ${tmp}-mokuhyou
+
+fi
+
+
+# 計画書データを表示
+cat ${tmp}-monitoring ${tmp}-mokuhyou
+
+
+## 終了
+rm -f $tmp-*
+exit 0

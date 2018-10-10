@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMONKAIGO.TOUGETSUKAKUTEI : 介護請求訪問介護　当月確定登録
+#
+# Usage : KAIGOSEIKYU_HOUMONKAIGO.TOUGETSUKAKUTEI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 翌月の請求ディレクトリを作る
+YOKUGETSU=$(mdate ${seikyu_nengetsu}m/+1)
+mkdir -p ${seikyu_dir}/${shisetsu}/${YOKUGETSU}
+# SEIKYUデータを呼び出す
+# 介護の場合
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_KAIGO > ${tmp}-seikyu_data_kaigo
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+
+# 未確定の人を決めて未確定の人のデータを確定する
+cat $tmp-seikyu_data_kaigo                                           |
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+awk '$27=="0"'                                                       |
+awk '{$27="9";$29="'${current_time}'";$29="'${userid}'";print $0}'   > $tmp-mikakutei_list_kaigo
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+if [ "$(gyo $tmp-mikakutei_list_kaigo)" != 0 ];then
+  cp -p $tmp-mikakutei_list_kaigo ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_KAIGO
+  # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+  # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+  # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+  # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+  # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+  # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+
+  cat $tmp-mikakutei_list_kaigo    |
+  self 2 3 4                       |
+  awk '{print $1,$2$3}'            |
+  LANG=C sort -u -k1,1n -k2,2n     > $tmp-mikakutei_member_kaigo
+else
+  :                                > $tmp-mikakutei_member_kaigo
+fi
+
+
+# 予防の場合
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_YOBO > ${tmp}-seikyu_data_yobo
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+
+
+# 未確定の人を決めて未確定の人のデータを確定する
+cat $tmp-seikyu_data_yobo                                            |
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+awk '$27=="0"'                                                       |
+tee ${work}/yobo_seikyu |
+awk '{$27="9";$29="'${current_time}'";$30="'${userid}'";print $0}'   > $tmp-mikakutei_list_yobo
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+
+if [ "$(gyo $tmp-mikakutei_list_yobo)" != 0 ];then
+  cp -p $tmp-mikakutei_list_yobo ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_YOBO
+  cat $tmp-mikakutei_list_yobo     |
+  # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+  # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+  # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+  # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+  # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+  # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録時間           30:userid
+  self 2 3 4                       |
+  awk '{print $1,$2$3}'            |
+  LANG=C sort -u -k1,1n -k2,2n     > $tmp-mikakutei_member_yobo
+else
+  :                                > $tmp-mikakutei_member_yobo
+fi
+
+# 日常生活費の分を翌月に
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SERVICE_JISSEKI_DETAIL_HIYOU              |
+# 1:訪問介護用のID 2:利用者ID    3:年        4:月       5:日
+# 6:品目名         7:税抜金額    8:税率      9:税込金額 10:課税フラグ
+# 11:確定フラグ    12:有効フラグ 13:登録日時 14:登録者
+awk '$11=="0"'                                                                             |
+awk '{$11="9";$13="'${current_time}'";$14="'${usserid}'";print}'                           > $tmp-tebukuro
+
+# 自費サービス分を確定
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/SEIKYU_JIHI_SERVICE                       |
+# 1:施設ID    2:年月         3:利用者ID 4:利用年月日  5:開始時間
+# 6:終了時間  7:サービス種類 8:内容     9:所用時間    10:税抜金額
+# 11:税率     12:税込金額    13:実施者  14:確定フラグ 15:有効フラグ
+# 16:登録日時 17:ログインID
+tee ${work}/jiho |
+awk '$14=="0"'                                                                             |
+awk '{$14="9";$16="'${current_time}'";$17="'${userid}'";print}'                            > $tmp-jihi
+cp -p $tmp-tebukuro ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/SERVICE_JISSEKI_DETAIL_HIYOU
+cp -p $tmp-jihi ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/SEIKYU_JIHI_SERVICE
+
+cat $tmp-mikakutei_member_kaigo $tmp-mikakutei_member_yobo |
+LANG=C sort -u -k1,1n -k2,2n                               > $tmp-jisseki_taisho_list
+cp $tmp-jisseki_taisho_list ${work}/list
+for member in $(cat $tmp-jisseki_taisho_list | self 1 | uniq);do
+  cat $tmp-jisseki_taisho_list | awk '$1=="'${member}'"{print $2}'      |
+  LANG=C sort -u                                                        > $tmp-month_list
+  cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_JISSEKI  |
+  awk '{print $1,$2$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15}'       |
+  awk '$1=="'${member}'"'                                               |
+  join0 key=2 $tmp-month_list                                           |
+  awk '{print $1,substr($2,1,4),substr($2,5,2),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14}'
+done                                                                    > $tmp-mikakutei_jisseki
+
+cp -p $tmp-mikakutei_jisseki ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/HOUMONKAIGO_JISSEKI
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# 確定データを確定データ置き場に格納する
+mkdir -p ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI
+cp -p ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.SERVICESEIKYU_MEISAISHO ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO
+
+echo ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.SEIRVICE_SEIKYUJOHO_7111      |
+tarr                                                                                    |
+awk '{print substr($1,51,6)}'      | LANG=C sort -u                                      > $tmp-list_7111
+
+for hozon_month in $(cat $tmp-list_7111 | yarr);do
+  cp -p ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${hozon_month}.SEIRVICE_SEIKYUJOHO_7111 ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${hozon_month}.SEIRVICE_SEIKYUJOHO_7111
+done
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+echo "${current_time}" > ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/KAKUTEI_FILE
+
+# FB用引落金額のファイル作成
+awk '$1~/FB/' ${namefile} |
+sed 's/_/ /g'             |
+self 2/NF                 |
+LANG=C sort               |
+awk '{print $0,"6","'${current_time}'"}'      > $tmp-forfb
+cp $tmp-forfb ${work}/forfb
+mkdir -p ${pompa_dir}/MEISAI/${shisetsu}/${seikyu_nengetsu}
+cp $tmp-forfb ${pompa_dir}/MEISAI/${shisetsu}/${seikyu_nengetsu}/FOR_FB
+
+echo "hoge"
+
+rm -f ${tmp}-*
+exit 0
+

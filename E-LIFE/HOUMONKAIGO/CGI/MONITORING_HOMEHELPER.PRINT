@@ -1,0 +1,284 @@
+#!/bin/bash
+#
+# MONITORING_HOMEHELPER.PRINT : モニタリング表示
+#
+# Usage : MONITORING_HOMEHELPER.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_monitoring
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)}'          > $tmp-gengou_master
+self 1 2 $tmp-gengou_master > $tmp-gengou_master2
+
+self 1 3 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER > $tmp-jigyousho_master
+
+# 確認方法
+echo "0" "電話" > $tmp-kakunin_master
+echo "1" "訪問" >> $tmp-kakunin_master
+echo "2" "職員連絡" >> $tmp-kakunin_master
+
+# 達成度
+echo "0" "達成した" > $tmp-tassei_master
+echo "1" "効果あり" >> $tmp-tassei_master
+echo "2" "効果あるも不十分" >> $tmp-tassei_master
+echo "3" "判断できない" >> $tmp-tassei_master
+
+# 満足度
+echo "0" "非常に満足" > $tmp-manzoku_master
+echo "1" "満足" >> $tmp-manzoku_master
+echo "2" "不満" >> $tmp-manzoku_master
+echo "3" "わからない" >> $tmp-manzoku_master
+
+# ありなし
+echo "0" "なし" > $tmp-umu_master
+echo "1" "あり" >> $tmp-umu_master
+
+# 実施
+echo "0" "している" > $tmp-do_master
+echo "1" "していない" >> $tmp-do_master
+
+# 短期長期
+echo "0" "短期" > $tmp-choukitanki_master
+echo "1" "長期" >> $tmp-choukitanki_master
+
+# 入居者情報(仮)
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:性別 3:誕生日和暦   4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 2 4 5 6 7 8 14 15                             |
+LANG=C sort -k3,3                                  |
+tee $work_dir/KIHON_HOUMONKAIGO                    |
+# 1:利用者名 2:性別   3:誕生日和暦 4:和暦名       5:誕生日年
+# 6:誕生日月 7:誕生日 8:住所       9:携帯電話番号
+join1 key=3 $tmp-gengou_master2 -        |
+tee $work_dir/KIHON_HOUMONKAIGO2                    |
+# 1:利用者名 2:性別 3:和暦名       4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 1 2 4 5 6 7 8 9                            |
+awk '{if($2=="female"){$2="1"}else{$2="0"};print $1,$2,$3$4"年"$5"月"$6"日",$7,$8}'  > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 検索結果
+  print)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+
+
+cp -p $tmp-listdata $work_dir/listdata_enjokeikaku
+
+# 基本援助計画書データ取得
+awk '$1=="k"' $tmp-listdata    |
+delf 1           > $tmp-listdata_monitoring
+
+# 目標リストデータ取得
+awk '$1=="l"' $tmp-listdata    |
+delf 1           > $tmp-mokuhyoulist
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata_monitoring)
+#--------------------------------------------------------
+
+dispSakuseiDate=$(echo $hdSakuseiDate | awk '$1!="" {print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+if [ -z "$ShokaiZenkaiFlg" -o "$ShokaiZenkaiFlg" = "_" ] ; then
+  ShokaiZenkaiFlg="初回"
+  showSakuseiDate="none"
+else
+  ShokaiZenkaiFlg="前回"
+  showSakuseiDate="inline"
+fi
+
+#if [ -z "${Riyousha}" -o "${Riyousha}" = "_" ] ; then
+   Riyousha=${Riyoushamei}
+#fi
+
+cat $tmp-mokuhyoulist |
+LANG=C sort -k5,5     |
+join2 +@ key=5 $tmp-kakunin_master |
+self 1/4 6/NF         |
+LANG=C sort -k6,6     |
+join2 +@ key=6 $tmp-manzoku_master |
+self 1/5 7/NF         |
+LANG=C sort -k7,7     |
+join2 +@ key=7 $tmp-manzoku_master |
+self 1/6 8/NF         |
+LANG=C sort -k9,9     |
+join2 +@ key=9 $tmp-tassei_master  |
+self 1/8 10           |
+LANG=C sort -k2n,2n     > $tmp-disp_mokuhyoulist
+
+dispslTankiChouki=$(echo "$slTankiChouki" | join1 key=1 $tmp-choukitanki_master | self 2)
+dispKeikakuSelect=$(echo "$KeikakuSelect" | join1 key=1 $tmp-do_master | self 2)
+dispSeikatsuSelect=$(echo "$SeikatsuSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispShinshinHenkaSelect=$(echo "$ShinshinHenkaSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispRiyoushaSelect=$(echo "$RiyoushaSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispKazokuSelect=$(echo "$KazokuSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispKazokuHenkaSelect=$(echo "$KazokuHenkaSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispADLSelect=$(echo "$ADLSelect" | join1 key=1 $tmp-umu_master | self 2)
+dispKeikakuSyuseiHitsuyo=$(echo "$KeikakuSyuseiHitsuyo" | join1 key=1 $tmp-umu_master | self 2)
+dispJigyousho=$(echo "$slKyotakuKaigoShienJigyousho" | join1 key=1 $tmp-jigyousho_master | self 2)
+dispSekininsha=$(echo "$slServiceTeikyouSekininsha" | join1 key=1 $tmp-user_mst | self 2)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###HDSAKUSEIDATE### $dispSakuseiDate
+###SAKUSEIDATE### $SakuseiDate
+###RIYOUSHA### $Riyousha
+###MONITORINGDATE### $MonitoringDate
+###SHOKAIZENKAIFLG### $ShokaiZenkaiFlg
+###SHOWSAKUSEIDATE### $showSakuseiDate
+###SLKYOTAKUKAIGOSHIENJIGYOUSHO### $dispJigyousho
+###SLKAIGOSHIENSENMONIN### $slKaigoShienSenmonin
+###SLSERVICETEIKYOUSEKININSHA### $dispSekininsha
+###SLTANKICHOUKI### $dispslTankiChouki
+###HYOKAKIKANFROM### $HyokakikanFrom
+###HYOKAKIKANTO### $HyokakikanTo
+###KEIKAKUSELECT### $dispKeikakuSelect
+###KEIKAKUTEXT### $KeikakuText
+###SEIKATSUSELECT### $dispSeikatsuSelect
+###SEIKATSUTEXT### $SeikatsuText
+###SHINSHINHENKASELECT### $dispShinshinHenkaSelect
+###SHINSHINHENKATEXT### $ShinshinHenkaText
+###RIYOUSHASELECT### $dispRiyoushaSelect
+###RIYOUSHATEXT### $RiyoushaText
+###KAZOKUSELECT### $dispKazokuSelect
+###KAZOKUTEXT### $KazokuText
+###KAZOKUHENKASELECT### $dispKazokuHenkaSelect
+###KAZOKUHENKATEXT### $KazokuHenkaText
+###ADLSELECT### $dispADLSelect
+###ADLTEXT### $ADLText
+###KEIKAKUSYUSEIHITSUYO### $dispKeikakuSyuseiHitsuyo
+###KONGOHOUSHIN### $KongoHoushin
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+# 訪問介護サービス事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER   |
+# 1:ID          2:事業所名  3:電話番某      4:住所   5:金融コード
+# 6:支店コード  7:口座区分  8:口座番号      9:口座名 10:郵便番号
+# 11:有効フラグ 12:処理時刻 13:ユーザコード
+awk '$11!="9"'                                      |
+LANG=C sort -k1,1                                   |
+self 1 2                                  > $tmp-kyotaku_master
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_MONITORING_HOMEHELPER.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###KYOTAKUMASTER### - ${tmp}-kyotaku_master          |
+mojihame -l###MOKUHYOU### - $tmp-disp_mokuhyoulist |
+sed 's/###KAIGYO###/<br>/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-monitoring_homonkaigo_base_pdf.html
+#--------------------------------------------------------------
+cp $tmp-monitoring_homonkaigo_base_pdf.html $work_dir/monitoring_houmonkaigo_base_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/MONITORING_HOUMONKAIGO.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-top 5 --margin-left 10 --margin-right 2 --margin-bottom 2 $tmp-monitoring_homonkaigo_base_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/MONITORING_HOUMONKAIGO.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/MONITORING_HOUMONKAIGO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

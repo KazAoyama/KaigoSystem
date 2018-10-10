@@ -1,0 +1,624 @@
+#!/bin/bash
+#
+# MONITORING_YOBO.DISPLAY
+# アセスメント　表示用CGI
+#
+# Written by K.Aoyama :20131125
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" ] ; then
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+fi
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明で>
+す"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+# 一括印刷用
+if [ -z "${hdIkkatsuKijunDate}" -o "${hdIkkatsuKijunDate}" = "_" ] ; then
+# 週間計画データの取得
+  cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW   |
+  awk '$1=="'${Riyoushaid}'"'   |
+  awk '$(NF-2)!="9"'                 |
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'                |
+  getlast 1 1                   |
+  self 2 > $tmp-latest_date
+else
+# 週間計画データの取得
+  cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW   |
+  awk '$1=="'${Riyoushaid}'"'   |
+  awk '$(NF-2)!="9"'                 |
+  awk '$2<="'${hdIkkatsuKijunDate}'"'                |
+  getlast 1 1                   |
+  self 2 > $tmp-latest_date
+fi
+
+  dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdMonitoringSakuseiDate
+HyoukakikanFirstMonth
+HyoukakikanFirstDay
+HyoukakikanSecondMonth
+HyoukakikanSecondDay
+HyoukakikanThirdMonth
+HyoukakikanThirdDay
+HyoukakikanFourthMonth
+HyoukakikanFourthDay
+HyoukakikanFifthMonth
+HyoukakikanFifthDay
+HyoukakikanSixthMonth
+HyoukakikanSixthDay
+HyoukaKoumoku1
+HyoukakijunFirst1
+HyoukakijunSecond1
+HyoukakijunThird1
+HyoukakijunFourth1
+HyoukakijunFifth1
+HyoukakijunSixth1
+HyoukaKoumoku2
+HyoukakijunFirst2
+HyoukakijunSecond2
+HyoukakijunThird2
+HyoukakijunFourth2
+HyoukakijunFifth2
+HyoukakijunSixth2
+HyoukaKoumoku3
+HyoukakijunFirst3
+HyoukakijunSecond3
+HyoukakijunThird3
+HyoukakijunFourth3
+HyoukakijunFifth3
+HyoukakijunSixth3
+HyoukaKoumoku4
+HyoukakijunFirst4
+HyoukakijunSecond4
+HyoukakijunThird4
+HyoukakijunFourth4
+HyoukakijunFifth4
+HyoukakijunSixth4
+HyoukaKoumoku5
+HyoukakijunFirst5
+HyoukakijunSecond5
+HyoukakijunThird5
+HyoukakijunFourth5
+HyoukakijunFifth5
+HyoukakijunSixth5
+JoukyoukijunFirst1
+JoukyoukijunSecond1
+JoukyoukijunThird1
+JoukyoukijunFourth1
+JoukyoukijunFifth1
+JoukyoukijunSixth1
+JoukyoukijunFirst2
+JoukyoukijunSecond2
+JoukyoukijunThird2
+JoukyoukijunFourth2
+JoukyoukijunFifth2
+JoukyoukijunSixth2
+JoukyoukijunFirst3
+JoukyoukijunSecond3
+JoukyoukijunThird3
+JoukyoukijunFourth3
+JoukyoukijunFifth3
+JoukyoukijunSixth3
+taChoukiMokuhyou1
+HyoukaPlanJoudanFirst1
+HyoukaPlanJoudanSecond1
+HyoukaPlanJoudanThird1
+HyoukaPlanJoudanFourth1
+HyoukaPlanJoudanFifth1
+HyoukaPlanJoudanSixth1
+HyoukaPlanChudanFirst1
+HyoukaPlanChudanSecond1
+HyoukaPlanChudanThird1
+HyoukaPlanChudanFourth1
+HyoukaPlanChudanFifth1
+HyoukaPlanChudanSixth1
+taChoukiMokuhyou2
+HyoukaPlanJoudanFirst2
+HyoukaPlanJoudanSecond2
+HyoukaPlanJoudanThird2
+HyoukaPlanJoudanFourth2
+HyoukaPlanJoudanFifth2
+HyoukaPlanJoudanSixth2
+HyoukaPlanChudanFirst2
+HyoukaPlanChudanSecond2
+HyoukaPlanChudanThird2
+HyoukaPlanChudanFourth2
+HyoukaPlanChudanFifth2
+HyoukaPlanChudanSixth2
+taChoukiMokuhyou3
+HyoukaPlanJoudanFirst3
+HyoukaPlanJoudanSecond3
+HyoukaPlanJoudanThird3
+HyoukaPlanJoudanFourth3
+HyoukaPlanJoudanFifth3
+HyoukaPlanJoudanSixth3
+HyoukaPlanChudanFirst3
+HyoukaPlanChudanSecond3
+HyoukaPlanChudanThird3
+HyoukaPlanChudanFourth3
+HyoukaPlanChudanFifth3
+HyoukaPlanChudanSixth3
+taChoukiMokuhyou4
+HyoukaPlanJoudanFirst4
+HyoukaPlanJoudanSecond4
+HyoukaPlanJoudanThird4
+HyoukaPlanJoudanFourth4
+HyoukaPlanJoudanFifth4
+HyoukaPlanJoudanSixth4
+HyoukaPlanChudanFirst4
+HyoukaPlanChudanSecond4
+HyoukaPlanChudanThird4
+HyoukaPlanChudanFourth4
+HyoukaPlanChudanFifth4
+HyoukaPlanChudanSixth4
+taChoukiMokuhyou5
+HyoukaPlanJoudanFirst5
+HyoukaPlanJoudanSecond5
+HyoukaPlanJoudanThird5
+HyoukaPlanJoudanFourth5
+HyoukaPlanJoudanFifth5
+HyoukaPlanJoudanSixth5
+HyoukaPlanChudanFirst5
+HyoukaPlanChudanSecond5
+HyoukaPlanChudanThird5
+HyoukaPlanChudanFourth5
+HyoukaPlanChudanFifth5
+HyoukaPlanChudanSixth5
+ShokenFirst1
+ShokenSecond1
+ShokenThird1
+ShokenFourth1
+ShokenFifth1
+ShokenSixth1
+ShokenFirst2
+ShokenSecond2
+ShokenThird2
+ShokenFourth2
+ShokenFifth2
+ShokenSixth2
+ShokenFirst3
+ShokenSecond3
+ShokenThird3
+ShokenFourth3
+ShokenFifth3
+ShokenSixth3
+ShokenFirst4
+ShokenSecond4
+ShokenThird4
+ShokenFourth4
+ShokenFifth4
+ShokenSixth4
+ShokenFirst5
+ShokenSecond5
+ShokenThird5
+ShokenFourth5
+ShokenFifth5
+ShokenSixth5
+ShokenFirst6
+ShokenSecond6
+ShokenThird6
+ShokenFourth6
+ShokenFifth6
+ShokenSixth6
+KinyuMei1
+KinyuMei2
+KinyuMei3
+KinyuMei4
+KinyuMei5
+KinyuMei6
+taMonitoringNaiyo1
+taMonitoringNaiyo2
+taMonitoringNaiyo3
+taMonitoringNaiyo4
+taMonitoringNaiyo5
+taMonitoringNaiyo6
+MonitoringYear
+slInsui1
+slInsui2
+slInsui3
+slInsui4
+slInsui5
+slInsui6
+slShokujiSesshu1
+slShokujiSesshu2
+slShokujiSesshu3
+slShokujiSesshu4
+slShokujiSesshu5
+slShokujiSesshu6
+slShokujiKeitai1
+slShokujiKeitai2
+slShokujiKeitai3
+slShokujiKeitai4
+slShokujiKeitai5
+slShokujiKeitai6
+slHainyou1
+slHainyou2
+slHainyou3
+slHainyou4
+slHainyou5
+slHainyou6
+slHaiben1
+slHaiben2
+slHaiben3
+slHaiben4
+slHaiben5
+slHaiben6
+slShikkin1
+slShikkin2
+slShikkin3
+slShikkin4
+slShikkin5
+slShikkin6
+slHaisetsuNicchu1
+slHaisetsuNicchu2
+slHaisetsuNicchu3
+slHaisetsuNicchu4
+slHaisetsuNicchu5
+slHaisetsuNicchu6
+slHaisetsuYakan1
+slHaisetsuYakan2
+slHaisetsuYakan3
+slHaisetsuYakan4
+slHaisetsuYakan5
+slHaisetsuYakan6
+slSenshin1
+slSenshin2
+slSenshin3
+slSenshin4
+slSenshin5
+slSenshin6
+slNyuyokuHouhou1
+slNyuyokuHouhou2
+slNyuyokuHouhou3
+slNyuyokuHouhou4
+slNyuyokuHouhou5
+slNyuyokuHouhou6
+slChakudatsuUwagi1
+slChakudatsuUwagi2
+slChakudatsuUwagi3
+slChakudatsuUwagi4
+slChakudatsuUwagi5
+slChakudatsuUwagi6
+slChakudatsuPants1
+slChakudatsuPants2
+slChakudatsuPants3
+slChakudatsuPants4
+slChakudatsuPants5
+slChakudatsuPants6
+slKouku1
+slKouku2
+slKouku3
+slKouku4
+slKouku5
+slKouku6
+slSengan1
+slSengan2
+slSengan3
+slSengan4
+slSengan5
+slSengan6
+slOkiagari1
+slOkiagari2
+slOkiagari3
+slOkiagari4
+slOkiagari5
+slOkiagari6
+slZai1
+slZai2
+slZai3
+slZai4
+slZai5
+slZai6
+slTachiagari1
+slTachiagari2
+slTachiagari3
+slTachiagari4
+slTachiagari5
+slTachiagari6
+slHokou1
+slHokou2
+slHokou3
+slHokou4
+slHokou5
+slHokou6
+slIjou1
+slIjou2
+slIjou3
+slIjou4
+slIjou5
+slIjou6
+slIdouNicchu1
+slIdouNicchu2
+slIdouNicchu3
+slIdouNicchu4
+slIdouNicchu5
+slIdouNicchu6
+slIdouYakan1
+slIdouYakan2
+slIdouYakan3
+slIdouYakan4
+slIdouYakan5
+slIdouYakan6
+slIshiDentatsu1
+slIshiDentatsu2
+slIshiDentatsu3
+slIshiDentatsu4
+slIshiDentatsu5
+slIshiDentatsu6
+slIshiKettei1
+slIshiKettei2
+slIshiKettei3
+slIshiKettei4
+slIshiKettei5
+slIshiKettei6
+slShijiHanno1
+slShijiHanno2
+slShijiHanno3
+slShijiHanno4
+slShijiHanno5
+slShijiHanno6
+slDenwa1
+slDenwa2
+slDenwa3
+slDenwa4
+slDenwa5
+slDenwa6
+slKusuri1
+slKusuri2
+slKusuri3
+slKusuri4
+slKusuri5
+slKusuri6
+slKinsen1
+slKinsen2
+slKinsen3
+slKinsen4
+slKinsen5
+slKinsen6
+slHigaiMousou1
+slHigaiMousou2
+slHigaiMousou3
+slHigaiMousou4
+slHigaiMousou5
+slHigaiMousou6
+slGenkaku1
+slGenkaku2
+slGenkaku3
+slGenkaku4
+slGenkaku5
+slGenkaku6
+slKanjou1
+slKanjou2
+slKanjou3
+slKanjou4
+slKanjou5
+slKanjou6
+slChuya1
+slChuya2
+slChuya3
+slChuya4
+slChuya5
+slChuya6
+slBougen1
+slBougen2
+slBougen3
+slBougen4
+slBougen5
+slBougen6
+slOogoe1
+slOogoe2
+slOogoe3
+slOogoe4
+slOogoe5
+slOogoe6
+slKaigoTeiko1
+slKaigoTeiko2
+slKaigoTeiko3
+slKaigoTeiko4
+slKaigoTeiko5
+slKaigoTeiko6
+slHaikai1
+slHaikai2
+slHaikai3
+slHaikai4
+slHaikai5
+slHaikai6
+slKitakuGanbou1
+slKitakuGanbou2
+slKitakuGanbou3
+slKitakuGanbou4
+slKitakuGanbou5
+slKitakuGanbou6
+KirokuMei1
+KirokuMei2
+KirokuMei3
+KirokuMei4
+KirokuMei5
+KirokuMei6
+FIN
+
+cat <<- FINN > $tmp-header-extra
+taChoukiMokuhyou6
+HyoukaPlanJoudanFirst6
+HyoukaPlanJoudanSecond6
+HyoukaPlanJoudanThird6
+HyoukaPlanJoudanFourth6
+HyoukaPlanJoudanFifth6
+HyoukaPlanJoudanSixth6
+HyoukaPlanChudanFirst6
+HyoukaPlanChudanSecond6
+HyoukaPlanChudanThird6
+HyoukaPlanChudanFourth6
+HyoukaPlanChudanFifth6
+HyoukaPlanChudanSixth6
+taChoukiMokuhyou7
+HyoukaPlanJoudanFirst7
+HyoukaPlanJoudanSecond7
+HyoukaPlanJoudanThird7
+HyoukaPlanJoudanFourth7
+HyoukaPlanJoudanFifth7
+HyoukaPlanJoudanSixth7
+HyoukaPlanChudanFirst7
+HyoukaPlanChudanSecond7
+HyoukaPlanChudanThird7
+HyoukaPlanChudanFourth7
+HyoukaPlanChudanFifth7
+HyoukaPlanChudanSixth7
+taChoukiMokuhyou8
+HyoukaPlanJoudanFirst8
+HyoukaPlanJoudanSecond8
+HyoukaPlanJoudanThird8
+HyoukaPlanJoudanFourth8
+HyoukaPlanJoudanFifth8
+HyoukaPlanJoudanSixth8
+HyoukaPlanChudanFirst8
+HyoukaPlanChudanSecond8
+HyoukaPlanChudanThird8
+HyoukaPlanChudanFourth8
+HyoukaPlanChudanFifth8
+HyoukaPlanChudanSixth8
+taChoukiMokuhyou9
+HyoukaPlanJoudanFirst9
+HyoukaPlanJoudanSecond9
+HyoukaPlanJoudanThird9
+HyoukaPlanJoudanFourth9
+HyoukaPlanJoudanFifth9
+HyoukaPlanJoudanSixth9
+HyoukaPlanChudanFirst9
+HyoukaPlanChudanSecond9
+HyoukaPlanChudanThird9
+HyoukaPlanChudanFourth9
+HyoukaPlanChudanFifth9
+HyoukaPlanChudanSixth9
+taChoukiMokuhyou10
+HyoukaPlanJoudanFirst10
+HyoukaPlanJoudanSecond10
+HyoukaPlanJoudanThird10
+HyoukaPlanJoudanFourth10
+HyoukaPlanJoudanFifth10
+HyoukaPlanJoudanSixth10
+HyoukaPlanChudanFirst10
+HyoukaPlanChudanSecond10
+HyoukaPlanChudanThird10
+HyoukaPlanChudanFourth10
+HyoukaPlanChudanFifth10
+HyoukaPlanChudanSixth10
+FINN
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+awk '$2=="'${dispHdKeikakuSakuseiDate}'"'     |
+if [ -z "$hdMonitoringSakuseiDate" -o "$hdMonitoringSakuseiDate" = "_" ] ; then
+   cat -
+else
+   awk '$3=="'$hdMonitoringSakuseiDate'"'
+fi |
+LANG=C sort -k1,2           |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+self 3/NF-3            |
+#--------------------------------------------------------------
+tee $tmp-monitoring_result             |
+# name形式で返す
+tateyoko               |
+ycat ${tmp}-header -        > ${tmp}-monitoring_base
+
+#cp -p ${tmp}-monitoring_base $work_dir/monitoring_base
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW_EXTRA |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+awk '$2=="'${dispHdKeikakuSakuseiDate}'"'     |
+if [ -z "$hdMonitoringSakuseiDate" -o "$hdMonitoringSakuseiDate" = "_" ] ; then
+   cat -
+else
+   awk '$3=="'$hdMonitoringSakuseiDate'"'
+fi |
+LANG=C sort -k1,2           |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+self 4/NF-7            |
+#--------------------------------------------------------------
+tee $tmp-monitoring_result2             |
+# name形式で返す
+tateyoko               |
+ycat ${tmp}-header-extra -        > ${tmp}-monitoring_base_extra
+
+# ケアプランデータを表示
+cat ${tmp}-monitoring_base ${tmp}-monitoring_base_extra
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# MASTER_SEIKYUUSAKI_SETTEI_POPUP.DISPLAY : 請求先設定ポップアップ
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d%H%M%S) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 表示の処理
+
+# 施設
+cjoin0 key=1 <(echo "${Shisetsu}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザID
+awk '$8!="9"'                 |
+self 1 2                      |
+awk '{if($1=="'${Shisetsu}'")
+        {$3="selected"}
+      else
+        {$3="disabled"};
+      print}'                 > ${tmp}-SHISETSU_SELECT
+
+# 建屋
+cjoin0 key=1 <(echo "${Shisetsu}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR |
+# 1:施設ID   2:建屋ID   3:フロア 4:ユニットID 5:削除フラグ
+# 6:更新日時 7:ユーザID
+awk '$5!="9"'  |
+self 2         |
+# 1:建屋ID
+LANG=C sort -u > ${tmp}-tateya_id
+# -
+awk '$4!="9"' ${home_dir}/TBL/SHISETSU_MASTER/TATEYA_NAME |
+# 1:建屋ID   2:建屋名 3:建屋略 4:削除フラグ 5:更新日時
+# 6:ユーザID
+self 1 3                           |
+join0 key=1 ${tmp}-tateya_id       |
+cat <(echo "_ 選択してください") - > ${tmp}-TATEYA_SELECT
+# 1:建屋ID 2:建屋名
+
+# 以下項目はajaxで変更するので初期はこれだけ
+
+# フロア
+echo "_ 選択してください" > ${tmp}-FLOOR_SELECT
+
+# 居室
+echo "_ 選択してください" > ${tmp}-ROOM_SELECT
+
+# 請求先に設定できる人リスト
+echo "_ 設定しない" > ${tmp}-SEIKYU_SELECT
+
+# 表示することば(電話課金か月額請求かで分岐)
+case "${CLICK_ID}" in
+  denwakakin )
+    click_seikyu_syubetu_id="${CLICK_ID}"
+    click_seikyu_from_year="$(grep "seikyu_${CLICK_ID}_from_year" ${namedata} | self 2)"
+    click_seikyu_from_month="$(grep "seikyu_${CLICK_ID}_from_month" ${namedata} | self 2)"
+    seikyu_kaisi_month="$(echo "${click_seikyu_from_year}/${click_seikyu_from_month}")"
+    # -
+    MESSAGE="居室番号${hensyu_room}の電話課金を請求できる人一覧"
+    MESSAGE2="(請求開始月${seikyu_kaisi_month})"
+  ;;
+  * )
+    click_seikyu_syubetu_id="${CLICK_ID}"
+    click_seikyu_from_year="$(grep "seikyu_${CLICK_ID}_from_year" ${namedata} | self 2)"
+    click_seikyu_from_month="$(grep "seikyu_${CLICK_ID}_from_month" ${namedata} | self 2)"
+    # -
+    settei_name="$(awk '$5!="9"' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER | cjoin0 key=1 <(echo "${kobetu_settei}") - | self 2)"
+    settei_naiyou_name="$(cjoin0 key=1/2 <(echo "${Shisetsu} ${click_seikyu_syubetu_id}") ${tbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER | awk '$8!="9"' | self 3)"
+    seikyu_kaisi_month="$(echo "${click_seikyu_from_year}/${click_seikyu_from_month}")"
+    # -
+    MESSAGE="${settei_name}様の${settei_naiyou_name}を請求を設定できる人一覧"
+    MESSAGE2="(請求開始月${seikyu_kaisi_month})"
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html_alert
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 共通設定項目
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SEIKYU_FROM### ${click_seikyu_from_year}${click_seikyu_from_month}
+###SENTAKU_USER### ${kobetu_settei}
+###KOUMOKU_ID### ${CLICK_ID}
+###MESSAGE### ${MESSAGE}
+###MESSAGE2### ${MESSAGE2}
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+cat ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI_POPUP.html  |
+calsed -f $tmp-calsed_kaigyozumi -                    |
+mojihame -l"SHISETSU_SELECT" - ${tmp}-SHISETSU_SELECT |
+mojihame -l"TATEYA_SELECT" - ${tmp}-TATEYA_SELECT     |
+mojihame -l"FLOOR_SELECT" - ${tmp}-FLOOR_SELECT       |
+mojihame -l"ROOM_SELECT" - ${tmp}-ROOM_SELECT         |
+mojihame -l"SEIKYU_SELECT" - ${tmp}-SEIKYU_SELECT
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

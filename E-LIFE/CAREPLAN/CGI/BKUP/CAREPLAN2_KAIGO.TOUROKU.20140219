@@ -1,0 +1,362 @@
+#!/bin/bash
+#
+# CAREPLAN2_KAIGO.TOUROKU : アセスメント登録
+#
+# Usage : CAREPLAN2_KAIGO.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%H%M%S).$$ ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+#  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 作成年月日
+[ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] && error_exit "作成年月日が不明です"
+
+#--------------------------------------------------------------
+
+# データ作成
+
+# 目標データ
+seq $MokuhyouVal  |
+while read mokuhyounum ; do
+   mnum=$((mokuhyounum-1))
+   mokuhyouid=$(nameread MokuhyouID$mnum $namedata | head -1)
+   mokuhyoupoint=$(nameread MokuhyouPoint$mnum $namedata | head -1)
+   choukimokuhyou=$(nameread ChoukiMokuhyou$mnum $namedata | head -1)
+   choukimokuhyoustart=$(nameread ChoukiMokuhyouStart$mnum $namedata | head -1)
+   choukimokuhyouend=$(nameread ChoukiMokuhyouEnd$mnum $namedata | head -1)
+   tankimokuhyoufirst=$(nameread TankiMokuhyouFirst$mnum $namedata | head -1)
+   tankimokuhyoufirststart=$(nameread TankiMokuhyouFirstStart$mnum $namedata | head -1)
+   tankimokuhyoufirstend=$(nameread TankiMokuhyouFirstEnd$mnum $namedata | head -1)
+   servicenaiyoufirst=$(nameread ServiceNaiyouFirst$mnum $namedata | head -1)
+   hokenkyufufirst=$(nameread HokenKyufuFirst$mnum $namedata | head -1)
+   [ -z "${hokenkyufufirst}" ] && hokenkyufufirst="_"
+   jigyousha0first=$(nameread Jigyousha0First$mnum $namedata | head -1)
+   servicejigyoushafirst0hindo=$(nameread ServiceJigyoushaFirst0Hindo$mnum $namedata | head -1)
+   servicejigyoushafirststart=$(nameread ServiceJigyoushaFirst0Start$mnum $namedata | head -1)
+   servicejigyoushafirstend=$(nameread ServiceJigyoushaFirst0End$mnum $namedata | head -1)
+   jigyousha1first=$(nameread Jigyousha1First$mnum $namedata | head -1)
+   servicejigyoushafirst1hindo=$(nameread ServiceJigyoushaFirst1Hindo$mnum $namedata | head -1)
+   jigyousha2first=$(nameread Jigyousha2First$mnum $namedata | head -1)
+   servicejigyoushafirst2hindo=$(nameread ServiceJigyoushaFirst2Hindo$mnum $namedata | head -1)
+   jigyousha3first=$(nameread Jigyousha3First$mnum $namedata | head -1)
+   servicejigyoushafirst3hindo=$(nameread ServiceJigyoushaFirst3Hindo$mnum $namedata | head -1)
+   jigyousha4first=$(nameread Jigyousha4First$mnum $namedata | head -1)
+   servicejigyoushafirst4hindo=$(nameread ServiceJigyoushaFirst4Hindo$mnum $namedata | head -1)
+   tankimokuhyousecond=$(nameread TankiMokuhyouSecond$mnum $namedata | head -1)
+   servicenaiyousecond=$(nameread ServiceNaiyouSecond$mnum $namedata | head -1)
+   hokenkyufusecond=$(nameread HokenKyufuSecond$mnum $namedata | head -1)
+   [ -z "${hokenkyufusecond}" ] && hokenkyufusecond="_"
+   jigyousha0second=$(nameread Jigyousha0Second$mnum $namedata | head -1)
+   servicejigyoushasecond0hindo=$(nameread ServiceJigyoushaSecond0Hindo$mnum $namedata | head -1)
+   servicejigyoushasecondstart=$(nameread ServiceJigyoushaSecond0Start$mnum $namedata | head -1)
+   servicejigyoushasecondend=$(nameread ServiceJigyoushaSecond0End$mnum $namedata | head -1)
+   jigyousha1second=$(nameread Jigyousha1Second$mnum $namedata | head -1)
+   servicejigyoushasecond1hindo=$(nameread ServiceJigyoushaSecond1Hindo$mnum $namedata | head -1)
+   jigyousha2second=$(nameread Jigyousha2Second$mnum $namedata | head -1)
+   servicejigyoushasecond2hindo=$(nameread ServiceJigyoushaSecond2Hindo$mnum $namedata | head -1)
+   jigyousha3second=$(nameread Jigyousha3Second$mnum $namedata | head -1)
+   servicejigyoushasecond3hindo=$(nameread ServiceJigyoushaSecond3Hindo$mnum $namedata | head -1)
+   jigyousha4second=$(nameread Jigyousha4Second$mnum $namedata | head -1)
+   servicejigyoushasecond4hindo=$(nameread ServiceJigyoushaSecond4Hindo$mnum $namedata | head -1)
+   tankimokuhyouthird=$(nameread TankiMokuhyouThird$mnum $namedata | head -1)
+   servicenaiyouthird=$(nameread ServiceNaiyouThird$mnum $namedata | head -1)
+   hokenkyufuthird=$(nameread HokenKyufuThird$mnum $namedata | head -1)
+   [ -z "${hokenkyufuthird}" ] && hokenkyufuthird="_"
+   jigyousha0third=$(nameread Jigyousha0Third$mnum $namedata | head -1)
+   servicejigyoushathird0hindo=$(nameread ServiceJigyoushaThird0Hindo$mnum $namedata | head -1)
+   servicejigyoushathirdstart=$(nameread ServiceJigyoushaThird0Start$mnum $namedata | head -1)
+   servicejigyoushathirdend=$(nameread ServiceJigyoushaThird0End$mnum $namedata | head -1)
+   jigyousha1third=$(nameread Jigyousha1Third$mnum $namedata | head -1)
+   servicejigyoushathird1hindo=$(nameread ServiceJigyoushaThird1Hindo$mnum $namedata | head -1)
+   jigyousha2third=$(nameread Jigyousha2Third$mnum $namedata | head -1)
+   servicejigyoushathird2hindo=$(nameread ServiceJigyoushaThird2Hindo$mnum $namedata | head -1)
+   jigyousha3third=$(nameread Jigyousha3Third$mnum $namedata | head -1)
+   servicejigyoushathird3hindo=$(nameread ServiceJigyoushaThird3Hindo$mnum $namedata | head -1)
+   jigyousha4third=$(nameread Jigyousha4Third$mnum $namedata | head -1)
+   servicejigyoushathird4hindo=$(nameread ServiceJigyoushaThird4Hindo$mnum $namedata | head -1)
+   tankimokuhyoufourth=$(nameread TankiMokuhyouFourth$mnum $namedata | head -1)
+   servicenaiyoufourth=$(nameread ServiceNaiyouFourth$mnum $namedata | head -1)
+   hokenkyufufourth=$(nameread HokenKyufuFourth$mnum $namedata | head -1)
+   [ -z "${hokenkyufufourth}" ] && hokenkyufufourth="_"
+   jigyousha0fourth=$(nameread Jigyousha0Fourth$mnum $namedata | head -1)
+   servicejigyoushafourth0hindo=$(nameread ServiceJigyoushaFourth0Hindo$mnum $namedata | head -1)
+   servicejigyoushafourthstart=$(nameread ServiceJigyoushaFourth0Start$mnum $namedata | head -1)
+   servicejigyoushafourthend=$(nameread ServiceJigyoushaFourth0End$mnum $namedata | head -1)
+   jigyousha1fourth=$(nameread Jigyousha1Fourth$mnum $namedata | head -1)
+   servicejigyoushafouth1hindo=$(nameread ServiceJigyoushaFourth1Hindo$mnum $namedata | head -1)
+   jigyousha2fourth=$(nameread Jigyousha2Fourth$mnum $namedata | head -1)
+   servicejigyoushafourth2hindo=$(nameread ServiceJigyoushaFourth2Hindo$mnum $namedata | head -1)
+   jigyousha3fourth=$(nameread Jigyousha3Fourth$mnum $namedata | head -1)
+   servicejigyoushafourth3hindo=$(nameread ServiceJigyoushaFourth3Hindo$mnum $namedata | head -1)
+   jigyousha4fourth=$(nameread Jigyousha4Fourth$mnum $namedata | head -1)
+   servicejigyoushafourth4hindo=$(nameread ServiceJigyoushaFourth4Hindo$mnum $namedata | head -1)
+   tankimokuhyoufifth=$(nameread TankiMokuhyouFifth$mnum $namedata | head -1)
+   servicenaiyoufifth=$(nameread ServiceNaiyouFifth$mnum $namedata | head -1)
+   hokenkyufufifth=$(nameread HokenKyufuFifth$mnum $namedata | head -1)
+   [ -z "${hokenkyufufifth}" ] && hokenkyufufifth="_"
+   jigyousha0fifth=$(nameread Jigyousha0Fifth$mnum $namedata | head -1)
+   servicejigyoushafifth0hindo=$(nameread ServiceJigyoushaFifth0Hindo$mnum $namedata | head -1)
+   servicejigyoushafifthstart=$(nameread ServiceJigyoushaFifth0Start$mnum $namedata | head -1)
+   servicejigyoushafifthend=$(nameread ServiceJigyoushaFifth0End$mnum $namedata | head -1)
+   jigyousha1fifth=$(nameread Jigyousha1Fifth$mnum $namedata | head -1)
+   servicejigyoushafifth1hindo=$(nameread ServiceJigyoushaFifth1Hindo$mnum $namedata | head -1)
+   jigyousha2fifth=$(nameread Jigyousha2Fifth$mnum $namedata | head -1)
+   servicejigyoushafifth2hindo=$(nameread ServiceJigyoushaFifth2Hindo$mnum $namedata | head -1)
+   jigyousha3fifth=$(nameread Jigyousha3Fifth$mnum $namedata | head -1)
+   servicejigyoushafifth3hindo=$(nameread ServiceJigyoushaFifth3Hindo$mnum $namedata | head -1)
+   jigyousha4fifth=$(nameread Jigyousha4Fifth$mnum $namedata | head -1)
+   servicejigyoushafifth4hindo=$(nameread ServiceJigyoushaFifth4Hindo$mnum $namedata | head -1)
+# 1:利用者ID               2:作成日（西暦）   3:ID                    4:課題                     5:長期目標
+# 6:長期目標開始時期       7:長期目標終了時期 8:短期目標１            9:短期目標1開始期間        10:短期目標1終了期間
+# 11:サービス内容1         12:保険給付1       13:サービス提供事業者１ 14:サービス提供事業者1頻度 15:サービス1提供開始期間
+# 16:サービス1提供終了期間 17～24:サービス提供事業者2～5、サービス提供頻度2～5 25～83:短期目標2～5のそれぞれの設定
+# 85:有効フラグ 86:更新時刻 87:ユーザID
+   echo "$Riyoushaid" "$hdKeikakuSakuseiDate" "$mokuhyouid" "$mokuhyoupoint" "$choukimokuhyou" "$choukimokuhyoustart" \
+"$choukimokuhyouend" "$tankimokuhyoufirst" "$tankimokuhyoufirststart" "$tankimokuhyoufirstend" "$servicenaiyoufirst" \
+"$hokenkyufufirst" "$jigyousha0first" "$servicejigyoushafirst0hindo" "$servicejigyoushafirststart" \
+"$servicejigyoushafirstend" "$jigyousha1first" "$servicejigyoushafirst1hindo" "$jigyousha2first" \
+"$servicejigyoushafirst2hindo" "$jigyousha3first" "$servicejigyoushafirst3hindo" "$jigyousha4first" \
+"$servicejigyoushafirst4hindo" "$tankimokuhyousecond" "$servicenaiyousecond" "$hokenkyufusecond" "$jigyousha0second" \
+"$servicejigyoushasecond0hindo" "$servicejigyoushasecondstart" "$servicejigyoushasecondend" "$jigyousha1second" \
+"$servicejigyoushasecond1hindo" "$jigyousha2second" "$servicejigyoushasecond2hindo" "$jigyousha3second" \
+"$servicejigyoushasecond3hindo" "$jigyousha4second" "$servicejigyoushasecond4hindo" "$tankimokuhyouthird" \
+"$servicenaiyouthird" "$hokenkyufuthird" "$jigyousha0third" "$servicejigyoushathird0hindo" "$servicejigyoushathirdstart" \
+"$servicejigyoushathirdend" "$jigyousha1third" "$servicejigyoushathird1hindo" "$jigyousha2third" \
+"$servicejigyoushathird2hindo" "$jigyousha3third" "$servicejigyoushathird3hindo" "$jigyousha4third" \
+"$servicejigyoushathird4hindo" "$tankimokuhyoufourth" "$servicenaiyoufourth" "$hokenkyufufourth" "$jigyousha0fourth" \
+"$servicejigyoushafourth0hindo" "$servicejigyoushafourthstart" "$servicejigyoushafourthend" "$jigyousha1fourth" \
+"$servicejigyoushafouth1hindo" "$jigyousha2fourth" "$servicejigyoushafourth2hindo" "$jigyousha3fourth" \
+"$servicejigyoushafourth3hindo" "$jigyousha4fourth" "$servicejigyoushafourth4hindo" "$tankimokuhyoufifth" \
+"$servicenaiyoufifth" "$hokenkyufufifth" "$jigyousha0fifth" "$servicejigyoushafifth0hindo" "$servicejigyoushafifthstart" \
+"$servicejigyoushafifthend" "$jigyousha1fifth" "$servicejigyoushafifth1hindo" "$jigyousha2fifth" \
+"$servicejigyoushafifth2hindo" "$jigyousha3fifth" "$servicejigyoushafifth3hindo" "$jigyousha4fifth" \
+"$servicejigyoushafifth4hindo" "1" "${sdaytime}" "${USER_ID}" >> ${tmp}-careplan2_kaigo_work1
+done
+
+
+cat ${tmp}-careplan2_kaigo_work1 |
+awk '$3=="_"'                    > ${tmp}-careplan2_new
+
+cat ${tmp}-careplan2_kaigo_work1 |
+awk '$3!="_"'                    > ${tmp}-careplan2_upd
+
+new_careplan2_num=$(gyo ${tmp}-careplan2_new)
+
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $new_careplan2_num -gt 0 ] ; then
+last_no="${new_careplan2_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}/CAREPLAN2_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}/CAREPLAN2_ID ] || echo "00001" > ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}/CAREPLAN2_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}/CAREPLAN2_ID
+get_no ${last_no} ${kanri_dir}/CAREPLAN2_KAIGO/${Riyoushaid}/CAREPLAN2_ID > $tmp-id_careplan2all
+
+fi
+#---------------------------------------------------------------
+
+ycat $tmp-id_careplan2all ${tmp}-careplan2_new      |
+self 2 3 1 5/NF                                     > ${tmp}-careplan2_new2
+
+cat ${tmp}-careplan2_upd ${tmp}-careplan2_new2     |
+LANG=C sort -k1,3                                   > ${tmp}-careplan2_input
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN2_KAIGO   CAREPLAN2_KAIGO
+FIN
+
+input_detail_dir=CAREPLAN2_KAIGO/${Riyoushaid}#
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+careplan2 CAREPLAN2_KAIGO 3 86 87 ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'$Riyoushaid'"||$2!="'$hdKeikakuSakuseiDate'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+#cat $tmp-target-table |
+#while read table base ;do
+#  rm -f $lock_dir/$base.lock
+#: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+#rm -f ${tmp}-*
+exit 0
+
+# 画面の描画モードを決定する。

@@ -1,0 +1,215 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KIHON.DISPLAY : 施設基本情報マスタ
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+#result_data=$3
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${test_tbl_dir}/STAFF_NAME                     |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${test_tbl_dir}/SHISETSU_NAME                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 表示の処理
+
+# 表示するデータの取得
+# 一覧からわたってきた${shisetsu_key}で絞込み
+
+# SHISETSU_KIHON
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザーID
+# -
+# TATEYA_NAME
+# 1:建屋ID   2:建屋名 3:建屋略称 4:削除フラグ 5:更新日時
+# 6:ユーザID
+# -
+# SHISETSU_TATEYA_FLOOR_UNIT
+# 1:施設ID   2:建屋ID   3:フロア 4:ユニットID 5:削除フラグ
+# 6:更新日時 7:ユーザID
+# -
+# UNIT_NAME
+# 1:ユニットID 2:ユニット名 3:削除フラグ 4:更新日時 5:ユーザID
+
+cat << FIN > ${tmp}-list
+SHISETSU_KIHON 8 1 9 1 1
+SHISETSU_TATEYA_FLOOR_UNIT 5 1 6 1 4
+TATEYA_NAME 4 _ 5 1 1
+UNIT_NAME 3 _ 4 1 1
+FIN
+# 1:ファイル名       2:削除フラグフィールド 3:施設キー 4:更新時間フィールド 5:キーフィールドFROM
+# 6:キーフィールドTO
+
+# テーブルからの取得
+cat ${tmp}-list |
+while read File Delete_flg Shisetsu_key u_key s_key_from s_key_to; do
+  # 有効なものを取得
+  awk '$"'${Delete_flg}'"!="9"' ${home_dir}/TBL/SHISETSU_MASTER/${File} |
+  LANG=C sort -k${s_key_from},${s_key_to} -k${u_key},${u_key} |
+  getlast ${s_key_from} ${s_key_to} |
+  # 施設コードをもつものは絞込みする
+#  case "${Shisetsu_key}" in
+#    _ )
+#      cjoin0 key=${Shisetsu_key} <(echo "${shisetsu_key}") -
+#    ;;
+#  esac |
+  if [ "${Shisetsu_key}" != "_" ] ; then
+    cjoin0 key=${Shisetsu_key} <(echo "${shisetsu_key}") -
+  else
+    cat -
+  fi |
+  LANG=C sort > ${tmp}-${File}
+done
+
+
+# 施設基本情報各項目の取得
+SHISETSU_ADR="$(self 7 ${tmp}-SHISETSU_KIHON)"
+SHISETSU_FAX="$(self 5 ${tmp}-SHISETSU_KIHON)"
+SHISETSU_NAME="$(self 2 ${tmp}-SHISETSU_KIHON)"
+SHISETSU_POST="$(self 6 ${tmp}-SHISETSU_KIHON)"
+SHISETSU_RYAKU="$(self 3 ${tmp}-SHISETSU_KIHON)"
+SHISETSU_TEL="$(self 4 ${tmp}-SHISETSU_KIHON)"
+
+
+# ユニット情報の作成
+self 1/2 ${tmp}-TATEYA_NAME |
+# 1:建屋ID 2:建屋名
+LANG=C sort -k1,1 > ${tmp}-tateya_name_sort
+LANG=C sort -k2,2 ${tmp}-SHISETSU_TATEYA_FLOOR_UNIT |
+join2 key=2 ${tmp}-tateya_name_sort - |
+# 1:施設ID     2:建屋ID   3:建屋名   4:フロア 5:ユニットID
+# 6:削除フラグ 7:更新日時 8:ユーザID
+LANG=C sort -k5,5 |
+join2 +"なし" key=5 ${tmp}-UNIT_NAME - |
+# 1:施設ID     2:建屋ID     3:建屋名   4:フロア   5:ユニットID
+# 6:ユニット名 7:削除フラグ 8:更新日時 9:ユーザID 10:削除フラグ
+# 11:更新日時  12:ユーザID
+# -
+# シニアはユニットを設定しないので除外する
+awk '$2!="01"' |
+# -
+# 必要なものに並べ替え
+self 2 4 5 3/4 6 |
+# 1:建屋ID     2:フロア 3:ユニットID 4:建屋名 5:フロア
+# 6:ユニット名
+LANG=C sort > ${tmp}-unit_table
+
+
+# 画面上部のとりあえず表示のみドロップダウン
+awk '$8!="9"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+LANG=C sort -k1,1 -k9,9 |
+getlast 1 1 |
+self 1 2 |
+awk '{if($1=="'${shisetsu_key}'"){$3="selected"}
+                             else{$3="disabled"};print}' - |
+LANG=C sort > ${tmp}-SHISETSU_DROP
+
+
+# MODE=regist時のみ処理
+case "${MODE}" in
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${koushin_data})
+    # メッセージ作成
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${koushin_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+  ;;
+esac
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html_alert
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 共通設定項目
+# DROPDOWN_ACTIVE:メニューのどのドロップダウンが選択されているか
+# LI_SYSTEMSETTEIi:ドロップダウン内のどこが選択されているか
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI3### active
+###shisetsu_key### ${shisetsu_key}
+###shisetsu_key2### ${shisetsu_key}
+###SHISETSU_NAME### ${SHISETSU_NAME}
+###SHISETSU_RYAKU### ${SHISETSU_RYAKU}
+###SHISETSU_TEL### ${SHISETSU_TEL}
+###SHISETSU_FAX### ${SHISETSU_FAX}
+###SHISETSU_POST### ${SHISETSU_POST}
+###SHISETSU_ADR### ${SHISETSU_ADR}
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+cat ${html_dir}/SHISETSU_MASTER_KIHON1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/SHISETSU_MASTER_KIHON2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER_NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l"SHISETSU_DROP" - ${tmp}-SHISETSU_DROP |
+mojihame -l"TATEYA_TBL" - ${tmp}-TATEYA_NAME |
+mojihame -l"UNIT_TBL" - ${tmp}-unit_table |
+if [ -e $tmp-html_alert ] ; then
+  cat - $tmp-html_alert
+else
+  cat -
+fi
+# --------------------------------------------------------------
+
+#rm -f ${tmp}-*
+exit 0

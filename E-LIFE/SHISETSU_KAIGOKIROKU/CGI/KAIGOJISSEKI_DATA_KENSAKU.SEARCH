@@ -1,0 +1,491 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_DATA_KENSAKU.SEARCH : 介護実績一覧表示検索用CGI
+#
+# Usage : KAIGOJISSEKI_DATA_KENSAKU.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+echo ${shisetsu} > $tmp-shisetsu
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月日の取得
+from_month="$(echo ${hd_sakuseibi} | awk '{print substr($1,1,6)}')"
+to_month="$(echo ${hd_sakuseibi2} | awk '{print substr($1,1,6)}')"
+keisan=$(mdate ${from_month}m ${to_month}m)
+if [ "${keisan}" -ne "0" ];then
+  mdate -e ${to_month}m/${keisan} > ${tmp}-searchmonth
+else
+  echo ${to_month}                > ${tmp}-searchmonth
+fi
+
+echo ${hd_sakuseibi} > ${tmp}-from_day
+echo ${hd_sakuseibi2} > ${tmp}-to_day
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 対象者を決める
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ $shisetsu = "0001" ];then
+  join0 key=2 <(echo "02")
+else
+  join0 key=2 <(echo "00")
+fi |
+awk '$7<="'${hd_sakuseibi2}'" && $8>="'${hd_sakuseibi}'"'    > $tmp-riyosha_status
+
+echo "99999999" > $tmp-riyosha_igai_code
+if [ "${riyosha_name}" = "00" ];then
+  if [ "${floor}" = "0" ];then
+    if [ "${unit}" = "0" ];then
+      cat $tmp-riyosha_status            |
+      self 6                             |
+      cat - $tmp-riyosha_igai_code       |
+      yarr                               > ${tmp}-riyosha_master
+    else
+      cat $tmp-riyosha_status            |
+      LANG=C sort -k4,4n                 |
+      join0 key=4 <(echo ${unit})        |
+      self 6                             |
+      cat - $tmp-riyosha_igai_code       |
+      yarr                               > ${tmp}-riyosha_master
+    fi
+  else
+    if [ "${unit}" = "0" ];then
+      cat $tmp-riyosha_status            |
+      LANG=C sort -k3,3n                 |
+      join0 key=3 <(echo ${floor})       |
+      self 6                             |
+      cat - $tmp-riyosha_igai_code       |
+      yarr                               > ${tmp}-riyosha_master
+    else
+      cat $tmp-riyosha_status            |
+      LANG=C sort -k3,3n                 |
+      join0 key=3 <(echo ${floor})       |
+      LANG=C sort -k4,4n                 |
+      join0 key=4 <(echo ${unit})        |
+      self 6                             |
+      cat - $tmp-riyosha_igai_code       |
+      yarr                               > ${tmp}-riyosha_master
+    fi
+  fi
+else
+  echo ${riyosha_name} > ${tmp}-riyosha_master
+fi
+# 処理の分岐
+for member in $(cat ${tmp}-riyosha_master);do
+  for month in $(cat ${tmp}-searchmonth);do
+    if [ -n "${hyojikomoku_kaigojisseki}" ];then
+      if [ "${bunrui_select}" = "default" ];then
+        # 介護実績データを取得
+        cat ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU               |
+        # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+        LANG=C sort -k1,1n                                                                  |
+        join0 key=1 <(echo ${member})                                                       |
+        LANG=C sort -k2,2n                                                                  |
+        awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                           |
+        awk '{gsub(/+++/," ",$11);print}'                                                   |
+        case ${JISSHISHA} in
+          0 )
+            cat -
+          ;;
+          * )
+            awk '$11=="'${JISSHISHA}'"'
+          ;;
+        esac                                                                                |
+        delf 11                                                                             |
+        self 1 2 3 4 5 6 10 7 8 9 11 13                                                         |
+        # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:終了時間 8:内容 9:場所 10:備考 11:実施者 12:ID
+        awk '{print "JISSEKI",$0}'                                                          |
+        # 1:目印 2:対象者 3:作成日 4:共有 5:介護分類 6:介護項目 7:開始時間 8:終了時間 9:内容 10:場所 11:備考 12:実施者 13:ID
+        awk '{fromhr=substr($7,1,2);frommt=substr($7,4,2);tohr=substr($8,1,2);tomt=substr($8,4,2);from=fromhr*60+frommt;to=tohr*60+tomt;time=to-from;print $1,$2,$3,$4,$7,$5,$6,$9,$10,$11,time,$12,"black",$13}'                                  |
+        # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:場所 10:備考 11:時間 12:実施者 13:色 14:ID
+     awk '{if($9!="_"){print $1,$2,$3,$4,$5,$6,$7,$8"【場所】"$9,$10,$11,$12,$13,$14}else{print $1,$2,$3,$4,$5,$6,$7,$8,$10,$11,$12,$13,$14}}' >> ${tmp}-kaigojisseki
+      # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+      else
+        case ${bunrui_select} in
+          shokuji )
+            kaigobunrui="1"
+            case ${bunrui_shokuji} in
+              1 )
+              kaigokoumoku="食事摂取"
+              ;;
+              2 )
+              kaigokoumoku="おやつ摂取"
+              ;;
+              3 )
+              kaigokoumoku="水分摂取"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          haisetsu )
+            kaigobunrui="2"
+            case ${bunrui_haisetsu} in
+              1 )
+              kaigokoumoku="排尿介助"
+              ;;
+              2 )
+              kaigokoumoku="排便介助"
+              ;;
+              3 )
+              kaigokoumoku="下剤与薬"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          nyuyoku )
+            kaigobunrui="3"
+            case ${bunrui_nyuyoku} in
+              1 )
+              kaigokoumoku="入浴"
+              ;;
+              2 )
+              kaigokoumoku="洗髪"
+              ;;
+              3 )
+              kaigokoumoku="清拭"
+              ;;
+              4 )
+              kaigokoumoku="足浴"
+              ;;
+              5 )
+              kaigokoumoku="手浴"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          senmen )
+            kaigobunrui="4"
+            case ${bunrui_senmen} in
+              1 )
+              kaigokoumoku="モーニングケア"
+              ;;
+              2 )
+              kaigokoumoku="ナイトケア"
+              ;;
+              3 )
+              kaigokoumoku="食後の口腔ケア"
+              ;;
+              4 )
+              kaigokoumoku="リネンケア"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          kihon_dousa )
+            kaigobunrui="5"
+            case ${bunrui_kihon_dousa} in
+              1 )
+              kaigokoumoku="生活リハ"
+              ;;
+              2 )
+              kaigokoumoku="アクティビティー"
+              ;;
+              3 )
+              kaigokoumoku="マッサージ"
+              ;;
+              4 )
+              kaigokoumoku="体位交換"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          iryo_kenkou )
+            kaigobunrui="6"
+            case ${bunrui_iryo_kenkou} in
+              1 )
+              kaigokoumoku="内服薬"
+              ;;
+              2 )
+              kaigokoumoku="処置等"
+              ;;
+              3 )
+              kaigokoumoku="医療"
+              ;;
+              4 )
+              kaigokoumoku="口腔ケア"
+              ;;
+              5 )
+              kaigokoumoku="頓用"
+              ;;
+              6 )
+              kaigokoumoku="外用薬"
+              ;;
+              7 )
+              kaigokoumoku="測定・観察"
+              ;;
+              8 )
+              kaigokoumoku="通院介助"
+              ;;
+              9 )
+              kaigokoumoku="健康診断"
+              ;;
+              10 )
+              kaigokoumoku="入院中の面会"
+              ;;
+              11 )
+              kaigokoumoku="往診"
+              ;;
+              12 )
+              kaigokoumoku="健康相談"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+          shinri_shakai )
+            kaigobunrui="7"
+            case ${bunrui_shinri_shakai} in
+              1 )
+              kaigokoumoku="巡回・訪室"
+              ;;
+              2 )
+              kaigokoumoku="理美容"
+              ;;
+              3 )
+              kaigokoumoku="相談・助言等"
+              ;;
+              4 )
+              kaigokoumoku="ご家族への連絡"
+              ;;
+              0 )
+              kaigokoumoku="0"
+              ;;
+            esac
+          ;;
+        esac
+        if [ "${kaigokoumoku}" != "0" ];then
+          # 介護実績データを取得
+          cat ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU               |
+          # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+          LANG=C sort -k1,1n                                                                  |
+          join0 key=1 <(echo ${member})                                                       |
+          LANG=C sort -k2,2n                                                                  |
+          awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                           |
+          case ${JISSHISHA} in
+            0 )
+              cat -
+            ;;
+            * )
+              awk '$11=="'${JISSHISHA}'"'
+            ;;
+          esac                                                                                |
+          self 1 2 3 4 5 6 10 7 8 9 11 13                                                         |
+          # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:終了時間 8:内容 9:場所 10:備考 11:実施者 12:ID
+          awk '{gsub(/+++/," ",$11);print}'                                                 |
+          delf 11                                                                           |
+          awk '$4=="'${kaigobunrui}'"'                                                      |
+          awk '$5=="'${kaigokoumoku}'"'                                                     |
+          awk '{print "JISSEKI",$0}'                                                        |
+          # 1:目印 2:対象者 3:作成日 4:共有 5:介護分類 6:介護項目 7:開始時間 8:終了時間 9:内容 10:場所 11:備考 12:実施者 13:ID
+          awk '{fromhr=substr($7,1,2);frommt=substr($7,4,2);tohr=substr($8,1,2);tomt=substr($8,4,2);from=fromhr*60+frommt;to=tohr*60+tomt;time=to-from;print $1,$2,$3,$4,$7,$5,$6,$9,$10,$11,time,$12,"black",$13}'                                  |
+          # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:場所 10:備考 11:時間 12:実施者 13:色 14:ID
+          awk '{if($9!="_"){print $1,$2,$3,$4,$5,$6,$7,$8"【場所】"$9,$10,$11,$12,$13,$14}else{print $1,$2,$3,$4,$5,$6,$7,$8,$10,$11,$12,$13,$14}}' >> ${tmp}-kaigojisseki
+          # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+        else
+          # 介護実績データを取得
+          cat ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU               |
+          # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+          LANG=C sort -k1,1n                                                                  |
+          join0 key=1 <(echo ${member})                                                       |
+          LANG=C sort -k2,2n                                                                  |
+          awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                           |
+          case ${JISSHISHA} in
+            0 )
+              cat -
+            ;;
+            * )
+              awk '$11=="'${JISSHISHA}'"'
+            ;;
+          esac                                                                                |
+          self 1 2 3 4 5 6 10 7 8 9 11 13                                                         |
+          # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:終了時間 8:内容 9:場所 10:備考 11:実施者 12:ID
+          awk '{gsub(/+++/," ",$11);print}'                                                 |
+          delf 11                                                                           |
+          awk '$4=="'${kaigobunrui}'"'                                                      |
+          awk '{print "JISSEKI",$0}'                                                        |
+          # 1:目印 2:対象者 3:作成日 4:共有 5:介護分類 6:介護項目 7:開始時間 8:終了時間 9:内容 10:場所 11:備考 12:実施者 13:ID
+          awk '{fromhr=substr($7,1,2);frommt=substr($7,4,2);tohr=substr($8,1,2);tomt=substr($8,4,2);from=fromhr*60+frommt;to=tohr*60+tomt;time=to-from;print $1,$2,$3,$4,$7,$5,$6,$9,$10,$11,time,$12,"black",$13}'                                  |
+          # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:場所 10:備考 11:時間 12:実施者 13:色 14:ID
+          awk '{if($9!="_"){print $1,$2,$3,$4,$5,$6,$7,$8"【場所】"$9,$10,$11,$12,$13,$14}else{print $1,$2,$3,$4,$5,$6,$7,$8,$10,$11,$12,$13,$14}}' >> ${tmp}-kaigojisseki
+          # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+        fi
+      fi
+    else
+      :  >>  ${tmp}-kaigojisseki
+    fi
+    # バイタルデータを取得
+    if [ -n "${hyojikomoku_vital}" ];then
+      cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL               |
+      # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻 11:所要時間 12:備考 13:実施者 14:登録時間 15:ID
+      LANG=C sort -k1,1n                                                                        |
+      join0 key=1 <(echo ${member})                                                             |
+      LANG=C sort -k2,2n                                                                        |
+      awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                                 |
+      case ${JISSHISHA} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$13=="'${JISSHISHA}'"'
+        ;;
+      esac                                                                                |
+      self 1 2 10 3 4 5 6 7 8 9 12 13 11 15                                                     |
+      # 1:利用者 2:作成日 3:時刻 4:体温 5:血圧(上) 6:血圧(下) 7:脈拍 8:呼吸 9:SAT 10:体重 11:備考 12:実施者 13:所要時間 14:ID
+      awk '{print "VITAL",$1,$2,"_",$3,"バイタル","測定","'${vital_taion}'"=="on"?"【体温】"$4:"+++","'${vital_ketuatu_ue}'"=="on"?"【血圧(上)】"$5:"+++","'${vital_ketuatu_shita}'"=="on"?"【血圧(下)】"$6:"+++","'${vital_myakuhaku}'"=="on"?"【脈拍】"$7:"+++","'${vital_kokyu}'"=="on"?"【呼吸】"$8:"+++","'${vital_SAT}'"=="on"?"【SAT】"$9:"+++","'${vital_taijyu}'"=="on"?"【体重】"$10:"+++",$11,$13,$12,"black",$13}'    |
+      # 1:目印 2:利用者 3:作成日 4:共有 5:時刻 6:介護分類 7:介護項目 8:体温 9:血圧(上) 10:血圧(下) 11:脈拍 12:呼吸 13:SAT 14:体重 15:備考 16:時間 17:実施者 18:色 19:ID
+      awk '{print $1,$2,$3,$4,$5,$6,$7,$8$9$10$11$12$13$14,$15,$16,$17,$18,$19}'               |
+      awk '{gsub(/+++/,"",$8);gsub(/+++/," ",$11);print}'                                      |
+      delf 11                                                                                  >> ${tmp}-vital
+      # 1:目印 2:利用者 3:作成日 4:共有 5:時刻 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+    else
+      : >> ${tmp}-vital
+    fi
+    # 申し送りデータの取得
+    if [ -n "${hyojikomoku_moushiokuri}" ];then
+      cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI              |
+      # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+      LANG=C sort -k1,1n                                                                        |
+      join0 key=1 <(echo ${member})                                                             |
+      LANG=C sort -k2,2n                                                                             |
+      awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                                 |
+      case ${JISSHISHA} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$7=="'${JISSHISHA}'"'
+        ;;
+      esac                                                                                |
+      case ${moushiokuri_select} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$3=="'${moushiokuri_select}'"'
+      ;;
+      esac                                                                                       |
+      case ${moushiokuri_taisho} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$5=="'${moushiokuri_taisho}'"'
+      ;;
+      esac                                                                                       |
+      case ${moushiokuri_koumoku} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$6=="'${moushiokuri_koumoku}'"'
+      ;;
+      esac                                                                                       |
+      case ${keyword} in
+      _ )
+        cat -
+      ;;
+      * )
+        awk '$10~/'${keyword}'/'
+      ;;
+      esac                                                                                       |
+      
+      self 1 2 9 4 3 5 6 7 10 11 13                                                              |
+      # 1:利用者 2:作成日 3:支援経過共有 4:時刻 5:申送り種別 6:対象 7:項目 8:記入者 9:内容 10:色 11:ID
+      awk '{gsub(/+++/," ",$8);print}'                                                           |
+      delf 8                                                                                     |
+      LANG=C sort -k5,5n                                                                             |
+      join1 key=5 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_SELECT                                                   |
+      delf 5                                                                                         |
+      LANG=C sort -k6,6n                                                                             |
+      join1 key=6 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_TAISHO                                                   |
+      delf 6                                                                                         |
+      LANG=C sort -k7,7n                                                                             |
+      join1 key=7 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/MOUSHIOKURI_KOUMOKU                                                  |
+      delf 7                                                                                         |
+      awk '{print "OKURI",$1,$2,$3,$4,$5,$6,"【検索項目】"$7"【内容】"$9,"_","_",$8,$10,$11}'   >> ${tmp}-okuri
+      # 1:目印 2:利用者 3:作成日 4:支援経過共有 5:時刻 6:申送り種別 7:対象 8:内容 9:備考 10:所要時間 11:実施者 12:色 13:ID
+    else
+      :
+    fi >> ${tmp}-okuri
+  done
+done
+
+
+cat ${tmp}-kaigojisseki ${tmp}-vital ${tmp}-okuri > ${tmp}-search_kekka
+cat ${tmp}-search_kekka
+
+# 終了
+rm -f $tmp-*
+
+exit 0

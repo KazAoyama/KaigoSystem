@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+# TATEKAEKIN_KINSHUHYO.TOUROKU : 立替金金種表登録.DISPLAY
+#
+# Usage : TATEKAEKIN_KINSHUHYO.TOUROKU namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+downloadfile=${3}
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/TATEKAEKIN/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+
+# ログインUSER名と施設の取得（仮）
+cat ${test_tbl_dir}/STAFF_NAME                     |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${test_tbl_dir}/SHISETSU_NAME                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 登録する施設を取得
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 保存するデータを作成
+echo ${hd_date} ${man} ${gosen} ${sen} ${gohyaku} ${hyaku} ${gojyu} ${jyu} ${go} ${ichi} ${current_time} |
+# 1:日付 2:万 3:五千 4:千 5:五百 6:百 7:五十 8:十 9:五 10:一 11:登録日時
+sed 's/_/0/g'                                                                                            > ${tmp}-data
+
+# INPUTに保存
+mkdir -p ${input_dir}/${today}
+cp -p ${tmp}-data ${input_dir}/${today}/KINSHUHYO.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+
+# POMPA
+save_month=$(echo ${hd_date} | awk '{print substr($1,1,6)}')
+mkdir -p ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${save_month}
+
+lock_file=${pompa_dir}/KINSHUHYO.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+if [ -e ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${save_month}/${save_month}.${shisetsu}-${tateya}_KINSHUHYO ];then
+  cat ${tmp}-data ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${save_month}/${save_month}.${shisetsu}-${tateya}_KINSHUHYO |
+  self 1 NF 2/NF-1                          |
+  LANG=C sort -k1,2                         |
+  getlast 1 1                               |
+  self 1 3/NF 2                             > $tmp-new_pompa
+  mv $tmp-new_pompa ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${save_month}/${save_month}.${shisetsu}-${tateya}_KINSHUHYO
+  # 1:日付 2:万 3:五千 4:千 5:五百 6:百 7:五十 8:十 9:五 10:一 11:登録日時
+else
+  cp ${tmp}-data ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${save_month}/${save_month}.${shisetsu}-${tateya}_KINSHUHYO
+fi
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+cat ${tmp}-data
+
+rm -f ${tmp}-*
+exit 0

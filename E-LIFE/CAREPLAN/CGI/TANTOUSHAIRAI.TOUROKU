@@ -1,0 +1,238 @@
+#!/bin/bash
+#
+# TANTOUSHAIRAI.TOUROKU :　担当者依頼登録
+#
+# Usage : TANTOUSHAIRAI.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+yukoflg="1"
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# ケアプラン作成年月日
+[ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] && error_exit "ケアプラン作成年月日が不明です"
+
+#--------------------------------------------------------------
+
+# データ作成
+# 担当者会議基本情報
+# 1:利用者ID 2:ケアプラン作成年月日(西暦) 3:ケアプラン作成年月日(和暦) 4:欠席理由 5:有効フラグ
+# 6:更新日時 7:ログインユーザ
+echo "$Riyoushaid" "$hdKeikakuSakuseiDate" "$KeikakuSakuseiDate" "$Reason" \
+"$yukoflg" "${sdaytime}" "${USER_ID}" > ${tmp}-tantoushairai_input
+
+# データ作成
+# 照会先
+echo ${dataCsvShoukaisaki} |
+sed 's/,/ /g'    > $tmp-shoukaisaki
+# 照会年月日
+echo ${dataCsvShoukaiYearMonthDay} |
+sed 's/,/ /g'    > $tmp-shoukaiymd
+# 照会内容
+echo ${dataCsvShoukaiNaiyou} |
+sed 's/,/ /g'    > $tmp-shoukainaiyou
+# 回答者氏名
+echo ${dataCsvKaitouName} |
+sed 's/,/ /g'    > $tmp-kaitouname
+# 回答年月日
+echo ${dataCsvKaitouYearMonthDay} |
+sed 's/,/ /g'    > $tmp-kaitouymd
+# 回答内容
+echo ${dataCsvKaitouNaiyou} |
+sed 's/,/ /g'    > $tmp-kaitounaiyou
+
+cat $tmp-shoukaisaki $tmp-shoukaiymd $tmp-shoukainaiyou $tmp-kaitouname $tmp-kaitouymd $tmp-kaitounaiyou |
+tateyoko         |
+# 1:利用者ID  2:ケアプラン作成年月日(西暦) 3:ケアプラン作成年月日(和暦) 4:照会先   5:照会年月日
+# 6:照会内容  7:回答氏名                   8:回答年月日                 9:回答内容 10:有効フラグ
+# 11:更新日時 12:ログインユーザ
+awk '$1!="_"{print "'$Riyoushaid'","'$hdKeikakuSakuseiDate'","'$KeikakuSakuseiDate'",$0,"'$yukoflg'","'${sdaytime}'","'${USER_ID}'"}' > $tmp-tantoushairai_list_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI   TANTOUSHAIRAI
+CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI_SHOUKAI   TANTOUSHAIRAI_SHOUKAI
+FIN
+
+input_detail_dir=TANTOUSHAIRAI/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+tantoushairai TANTOUSHAIRAI 3 6 7 ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+tantoushairai_list TANTOUSHAIRAI_SHOUKAI 3 11 12 ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'$Riyoushaid'"||$2!="'$hdKeikakuSakuseiDate'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+#cat $tmp-target-table |
+#while read table base ;do
+#  rm -f $lock_dir/$base.lock
+#: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

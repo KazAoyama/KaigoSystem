@@ -1,0 +1,70 @@
+#!/bin/bash -xv
+#
+# FUNCTION.LOCK_CHECK
+# lockfileチェックCGI
+#
+# $1:table_list
+#
+# Written by Y.kashiyama 2014/03/17
+
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+#-------------------------------------------------------------
+# パラメーターの取得
+[ -z "$1" ] && exit 1
+table_list="$1"
+[ ! -s "$table_list" ] && exit 1
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 対象テーブルのlockfileが全てない状態をまって、lockfileを作成
+repeat_cnt=0
+:> $tmp-locked_table
+while true ;do
+
+   # テーブルリストにあるテーブルのlockfileが全てないかチェック
+  if [ "$(ls $(cat $table_list | awk '{print "'$tmplock_dir/'"$2".lock"}' | LANG=C sort -u | tr "\n" " ") | wc -l)" == "0" ]; then
+    cat $table_list |
+    while read table base key ;do
+
+      # もしlockfile作成に失敗したらエラーフラグを立てる
+      lockfile -1 -r 1 $tmplock_dir/$base.lock
+      [ $? -ne 0 ] && :> $tmp-err
+      [ -e $tmp-err ] && break;
+
+      # エラー時に本シェルが作成したlockfileのみを削除できるようにテーブル名を出力
+      echo "$tmplock_dir/$base.lock" >> $tmp-locked_table
+    : ;done
+
+    # lockfileを作り終えたら終了
+    break;
+  fi
+  # リピート上限を超えたらエラーフラグを立てる
+  repeat_cnt="$(plus $repeat_cnt 1)"
+  [ "$repeat_cnt" -gt 1 ] && :> $tmp-err
+
+  # エラーフラグが立っていたら終了
+  [ -e $tmp-err ] && break;
+
+  sleep 3
+: ;done
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# エラー処理
+if [ -e $tmp-err ]; then
+
+  # 作成したlockfileは削除
+  cat $tmp-locked_table |
+  while read locked ;do
+    rm -f "$locked"
+  : ;done
+
+  rm -f $tmp-*
+  exit 1
+fi
+#-------------------------------------------------------------
+
+# 終了
+rm -f $tmp-*
+exit 0

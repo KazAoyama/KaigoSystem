@@ -1,0 +1,314 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_SHOUSAI.TOUROKU
+# 入院外泊情報
+#
+# Written by Y.kashiyama (Tokyu-hands.co.jp) :2013/3/14
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source  /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+#ゴミtmpの消去
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+thismonth="$(date +%Y%m)"
+lastmonth="$(mdate ${thismonth}m/-1)"
+nextmonth="$(mdate ${thismonth}m/+1)"
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+Shisetsu=$(nameread  "Shisetsu"   $namedata)
+Tateya=$(nameread    "Tateya"     $namedata)
+Floor=$(nameread     "Floor"      $namedata)
+Unit=$(nameread      "Unit"       $namedata)
+Kyoshitsu=$(nameread "Kyoshitsu"  $namedata)
+
+ [ -z "${Shisetsu}" ] && Shisetsu=$(nameread   "HiddenShisetsu"   $namedata)
+ [ -z "${Tateya}" ] && Tateya=$(nameread       "HiddenTateya"     $namedata)
+ [ -z "${Floor}" ] && Floor=$(nameread         "HiddenFloor"      $namedata)
+ [ -z "${Unit}" ] && Unit=$(nameread           "HiddenUnit"       $namedata)
+ [ -z "${Kyoshitsu}" ] && Kyoshitsu=$(nameread "HiddenKyoshitsu"  $namedata)
+
+RIYOUSHAID=$(nameread  "RIYOUSHAID"   $namedata)
+riyousha_i=$(nameread  "riyousha_i"   $namedata)
+
+ [ -z "${RIYOUSHAID}" ] && RIYOUSHAID="_"
+ [ -z "${riyousha_i}" ] && riyousha_i="_"
+
+# 施設を含むディレクトリ設定
+pompa_dir="${app_dir}/POMPA/NYUUINGAIHAKU/${Shisetsu}/${Tateya}"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/NYUUINGAIHAKU/${Shisetsu}/${Tateya}"
+data_dir="/DATA/E-LIFE/UNEI/NYUUINGAIHAKU/${Shisetsu}/${Tateya}"
+seikyuu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}"
+mkdir -p ${data_dir}
+mkdir -p ${seikyuu_dir}/${lastmonth}
+mkdir -p ${seikyuu_dir}/${thismonth}
+mkdir -p ${seikyuu_dir}/${nextmonth}
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# 利用者IDがなければ不正
+[ "${RIYOUSHAID}" = "_" -a "${riyousha_i}" = "_" ] && error_exit "データが不正です。"
+[ "${RIYOUSHAID}" = "_" ] && RIYOUSHAID="$(echo ${riyousha_i})"
+[ "${riyousha_i}" != "_" -a "${RIYOUSHAID}" != "${riyousha_i}" ] && RIYOUSHAID=$(nameread  "riyousha_i"  $namedata)
+
+
+NYUUINGAIHAKUID="$(nameread "NYUUINGAIHAKUID" ${namedata})"
+[ -z "${NYUUINGAIHAKUID}" ] && error_exit "削除対象データがありません。(一度も登録されていないデータです)"
+
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${NYUUINGAIHAKUID}'"' /home/hands/E-LIFE/UNEI/POMPA/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU_KESSHOKU > $tmp-nyuuingaihaku_kesshoku_data
+ShokujiKikanFrom="$(awk '{print $7}' $tmp-nyuuingaihaku_kesshoku_data)"
+ShokujiKikanTo="$(awk '{print $9}' $tmp-nyuuingaihaku_kesshoku_data)"
+
+#---------
+# 確定月の判定
+
+if [ "${KesshyokuTouroku}" == "1" -a -s "/DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu}" ] ; then
+  # 請求確定後のデータかどうか
+  kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+  kakunin_nengetsu_1="$(echo "${ShokujiKikanFrom}" | awk '{print substr($1,1,6)}')"
+  kakunin_nengetsu_2="$(echo "${ShokujiKikanTo}" | awk '{print substr($1,1,6)}')"
+
+  [ "${kakutei_nengetsu}" -lt "${kakunin_nengetsu_1}" ] || error_exit "請求確定月以前の欠食データは削除できません。"
+  [ "${kakutei_nengetsu}" -lt "${kakunin_nengetsu_2}" ] || error_exit "請求確定月以前の欠食データは削除できません。"
+
+fi
+
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 入院外泊情報
+# 入院外泊欠食登録テーブル
+# 欠食テーブル
+#--------------------------------------------------------------
+#####################
+# 1:入院外泊情報
+#####################
+
+# 仮INPUTの作成
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${NYUUINGAIHAKUID}'"{print $0}' /home/hands/E-LIFE/UNEI/POMPA/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU |
+delf NF-2/NF |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' > $tmp-riyousha_nyuuingaihaku_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# 1:利用者(入居者)ID 2:入院外泊ID  3:施設      4:建屋        5:居室
+# 6:種別             7:期間FROM    8:期間TO    9:出発地      10:帰宅先
+# 11:入院外泊先      12:備考       13:欠食登録 14:予備1      15:予備2
+# 16:予備3           17:削除フラグ 18:更新日時 19:ユーザーID
+
+
+#######################
+# 2:入院外泊欠食テーブル
+#######################
+cat $tmp-nyuuingaihaku_kesshoku_data |
+delf NF-2/NF  |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' > $tmp-riyousha_nyuuingaihaku_kesshoku_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# 1:利用者(入居者)ID 2:入院外泊ID   3:施設ID       4:建屋       5:居室
+# 6:欠食登録         7:欠食期間FROM 8:欠食食事FROM 9:欠食期間TO 10:欠食食事TO
+# 11:削除フラグ      12:更新日時    13:UserID
+
+#######################
+# 3:欠食テーブル
+#######################
+awk '$1=="'${RIYOUSHAID}'"&&$7=="'${NYUUINGAIHAKUID}'"' ${pompa_dir}/RIYOUSHA_KESSHOKU > $tmp-kesshoku_data       
+
+if [ -s $tmp-kesshoku_data ] ; then
+  cat $tmp-kesshoku_data   |
+  delf NF-2/NF             |
+  awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'   > $tmp-riyousha_kesshoku_input
+else  
+    : > $tmp-kesshoku_data
+fi
+  # 1:利用者(入居者)ID 2:施設ID     3:建屋       4:居室     5:欠食年月日
+  # 6:欠食食事         7:入院外泊ID 8:削除フラグ 9:更新日時 10:UserID
+
+ # 請求ディレクトリへコピー用月の準備
+ if [ -s $tmp-riyousha_kesshoku_input ] ; then
+   cat $tmp-riyousha_kesshoku_input |
+   awk '{print substr($5,1,6)}'     |
+   LANG=C sort -u                   > $tmp-kesshoku_month
+ else
+   :
+ fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+#cp $tmp-* /home/hands/work/okuda
+###########################
+# 4:食事実績テーブル
+###########################
+
+# 欠食データがあった場合、実績データの方にも上書き
+#if [ -s $tmp-riyousha_kesshoku_input ] ; then
+#  cat  $tmp-riyousha_kesshoku_input |
+# 1:利用者(入居者)ID 2:施設ID     3:建屋       4:居室     5:欠食年月日
+# 6:欠食食事         7:入院外泊ID 8:削除フラグ 9:更新日時 10:UserID
+
+  # 列合わせ
+#  awk '{print $1,$2,$3,$4,$5,"000",$6,"000","0","0",$(NF-2),$(NF-1),$NF}' > $tmp-riyousha_shokuji_jisseki_input
+
+#else
+#  : > $tmp-riyousha_shokuji_jisseki_input
+#fi
+
+#[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_NYUUINGAIHAKU RIYOUSHA_NYUUINGAIHAKU
+RIYOUSHA_NYUUINGAIHAKU_KESSHOKU RIYOUSHA_NYUUINGAIHAKU_KESSHOKU
+FIN
+
+[ -s $tmp-riyousha_kesshoku_input ] && echo "RIYOUSHA_KESSHOKU RIYOUSHA_KESSHOKU" >> $tmp-target-table
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+# 更新ファイルの作成とチェック用のテーブル
+# 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_nyuuingaihaku RIYOUSHA_NYUUINGAIHAKU 2 18 19 ${pompa_dir} ${input_dir}
+riyousha_nyuuingaihaku_kesshoku RIYOUSHA_NYUUINGAIHAKU_KESSHOKU 2 12 13 ${pompa_dir} ${input_dir}
+FIN
+
+[ -s $tmp-riyousha_kesshoku_input ] && echo "riyousha_kesshoku RIYOUSHA_KESSHOKU 6 9 10 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+# エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+done
+#--------------------------------------------------------------
+cp -p ${pompa_dir}/RIYOUSHA_NYUUINGAIHAKU ${data_dir}/RIYOUSHA_NYUUINGAIHAKU
+cp -p ${pompa_dir}/RIYOUSHA_NYUUINGAIHAKU_KESSHOKU ${data_dir}/RIYOUSHA_NYUUINGAIHAKU_KESSHOKU
+[ -s ${pompa_dir}/RIYOUSHA_KESSHOKU ] && cp -p ${pompa_dir}/RIYOUSHA_KESSHOKU ${data_dir}/RIYOUSHA_KESSHOKU
+
+if [ -s $tmp-riyousha_kesshoku_input ] ; then
+  cat $tmp-kesshoku_month |
+  while read MONTH ;do
+    mkdir -p ${seikyuu_dir}/${MONTH}
+    awk 'substr($5,1,6)=="'${MONTH}'"{print $0}' ${pompa_dir}/RIYOUSHA_KESSHOKU > $tmp-month_riyousha_kesshoku
+
+    [ -s $tmp-month_riyousha_kesshoku ] && cp -p $tmp-month_riyousha_kesshoku  ${seikyuu_dir}/${MONTH}/RIYOUSHA_KESSHOKU
+  done
+fi
+
+echo "result ok" "${NYUUINGAIHAKUID}"
+
+## 終了
+rm -f $tmp-*
+exit 0

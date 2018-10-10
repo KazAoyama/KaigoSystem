@@ -1,0 +1,145 @@
+#!/bin/bash
+#
+# SHOKUJI_PATTERN_TOUROKU.SEARCH
+# 食事パターン検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+tourokudata=$2
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+  Shisetsu=$(nameread "shisetsu" ${namedata})
+  Tateya=$(nameread "Tateya" ${namedata})
+  SHOKUJIPATTERNID=$(nameread "SHOKUJIPATTERNID" ${namedata})
+  [ -z "${SHOKUJIPATTERNID}" -a "${SHOKUJIPATTERNID}" = "_" ] && SHOKUJIPATTERNID=$(awk '$1=="result"{print $3}' ${tourokudata})
+  Shokuji=$(nameread      "SELECTShokuji"   $namedata)
+  Shokushu=$(nameread     "SELECTShokushu"   $namedata)
+  Taishousha=$(nameread   "SELECTTaishousha"   $namedata)
+  Menu=$(nameread     "SELECTMenu"   $namedata)
+
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければ 従業員マスタから
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1) # 従業員マスタに指定がなければ>施設建屋フロアマスタの上にある方(シニアがあればシニア)
+#---------------------------------------------------------------
+
+# 処理の分岐
+case "$MODE" in
+ search )
+  KikanFrom=$(nameread "KikanFrom" ${namedata})
+  SHOKUJIPATTERNID=$(echo "${KikanFrom}")
+
+ ;;
+  
+ touroku | sakujyo )
+  result=$(awk '$1=="result"{print $2}' ${tourokudata})
+  SHOKUJIPATTERNID=$(awk '$1=="result"{print $3}' ${tourokudata})
+
+ ;;
+esac
+
+if [ -z "${result}" -o "${result}" != "ng" ] ; then
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+## 20140908追記
+# 消費税率を取得
+today="$(date +%Y%m%d)"
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU  |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+awk '$3<="'${today}'"&&$4>="'${today}'"{print $0}'   |
+self 2                                               > ${tmp}-zeiritsu
+zeiritsu=$(cat ${tmp}-zeiritsu | awk '{print $1+"1"}')
+
+
+cat ${pompa_dir}/${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER |
+# 1:利用者ID 2:食事パターンID 3:施設ID    4:建屋      5:居室
+# 6:期間From 7:期間To         8:予備項目1 9:予備項目2 10:予備項目3
+if [ -z "${SHOKUJIPATTERNID}" -o "${SHOKUJIPATTERNID}" = "_" ] ; then
+  awk '$1=="'${Nyuukyosha}'"&&$(NF-2)!="9"{print "HEADER",$2,$6,$7,$3,$4,$5}' |
+  LANG=C sort -k2,3nr |
+  head -1             > $tmp-header
+else
+  awk '$1=="'${Nyuukyosha}'"&&$2=="'${SHOKUJIPATTERNID}'"&&$(NF-2)!="9"{print "HEADER",$2,$6,$7,$3,$4,$5}'  > $tmp-header
+# 1:食事パターンID 2:期間From 3:期間To 4:施設ID 5:建屋
+# 6:居室
+fi
+
+[ -z "${SHOKUJIPATTERNID}" -o "${SHOKUJIPATTERNID}" = "_" ] && SHOKUJIPATTERNID=$(self 2 $tmp-header)
+
+if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN ] ; then
+  cat ${pompa_dir}/${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN |
+# 1:利用者ID       2:食事パターンID   3:曜日       4:食事（朝昼夜おやつ他） 5:食事ID
+# 6:食事メニューID 7:食事メニュー名称 8:食事種類ID 9:単価(税抜き)           10:数量
+# 11:色ID          12:予備項目1       13:予備項目2 14:予備項目3             15:予備項目4
+  awk '$1=="'${Nyuukyosha}'"&&$2=="'${SHOKUJIPATTERNID}'"&&$(NF-2)!="9"{print "PATTERN",$0}'    |
+  delf NF-2/NF > $tmp-shokuji_pattern_jyunbi_before
+
+  cat $tmp-shokuji_pattern_jyunbi_before |
+  lcalc '$10 * '${zeiritsu}'' |
+  marume -sage 1.0            |
+  ycat - $tmp-shokuji_pattern_jyunbi_before |
+# 1:税込み価格             2:PATTERN    3:利用者ID       4:食事パターンID   5:曜日
+# 6:食事（朝昼夜おやつ他） 7:食事ID     8:食事メニューID 9:食事メニュー名称 10:食事種類ID
+# 11:単価(税抜き)          12:数量      13:色ID          14:予備項目1       15:予備項目2
+# 16:予備項目3             17:予備項目4
+  self 2/10 1 12/NF           > $tmp-shokuji_pattern_jyunbi
+else
+  :
+fi
+
+#cp $tmp-* /home/hands/work/okuda 
+if [ -s $tmp-shokuji_pattern_jyunbi ] ; then
+  cat $tmp-shokuji_pattern_jyunbi |
+# 1:PATTERN    2:利用者ID       3:食事パターンID   4:曜日       5:食事（朝昼夜おやつ他）
+# 6:食事ID     7:食事メニューID 8:食事メニュー名称 9:食事種類ID 10:単価(税抜き)
+# 11:数量      12:色ID          13:予備項目1       14:予備項目2 15:予備項目3
+# 16:予備項目4
+  LANG=C sort -k12,12                |
+  join2 key=12 ${tbl_dir}/CONFIG/COLOR_TABLE   |
+  delf 12 14   > $tmp-shokuji_pattern
+
+  cat $tmp-header $tmp-shokuji_pattern
+else
+  cat $tmp-header
+fi
+
+else
+: > $tmp-header
+cat $tmp-header
+
+fi
+
+
+
+## 終了
+rm -f $tmp-*
+exit 0

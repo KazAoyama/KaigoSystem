@@ -1,0 +1,126 @@
+#!/bin/bash
+#
+# KIHONJYOUHOU_ICHIRAN.SEARCH
+# 基本情報一覧検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+data_dir="/DATA/E-LIFE"
+tbl_dir="${home_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+  Shisetsu=$(nameread      "Shisetsu"       $namedata)
+  Tateya=$(nameread        "Tateya"         $namedata)
+  HasseibiFrom=$(nameread "HasseibiFrom"  $namedata | sed 's/\///g')
+  HasseibiTo=$(nameread   "HasseibiTo"  $namedata | sed 's/\///g')
+
+#-------------------------------------------------------------=
+cat ${namefile} |
+## formhame 前に、キーワードが "_" のみの場合、消去
+awk '{if($1~/Keyword*/){if($2~/^_$/){$2=""};}print}' |
+# formhame 前に、キーワード検索ボックスの空白を、"_"から" "に戻す
+awk '{if($1~/Keyword*/){gsub(/_/," ",$2)};print}'    > $tmp-namefile
+#--------------------------------------------------------------
+#-------------------------------------------------------------
+# 検索対象の絞込み
+#------------------------
+
+cat ${pompa_dir}/JIKOHOU/JIKOHOU_HEADER |
+# 1:事故ヒヤリヘッダーID 2:報告書フラグ  3:報告日      4:部署        5:報告者
+# 6:施設                 7:建屋          8:フロア      9:居室        10:利用者ID
+# 11:年齢                12:介護度       13:発生日     14:発生時間   15:発生場所
+# 16:発生場所居室番号    17:発生場所備考 18:区分       19:区分備考   20:身体の状況
+# 21:身体の状況備考      22:予備項目１   23:予備項目２ 24:予備項目３ 25:予備項目４
+# 26:予備項目５
+awk '$(NF-2)!="9"{print $0}'  |
+#self 1/7 13 9 10              |
+
+# 必要項目(発生日で検索したいので報告日と位置切替)
+self 1 2 13 4/7 3 9 10        |
+#> $tmp-data_before
+# 1:事故ヒヤリヘッダーID 2:報告書フラグ  3:発生日      4:部署        5:報告者
+# 6:施設                 7:建屋          8:報告日      9:居室        10:利用者ID
+
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# --------------------------
+# 種別
+if [ ! -z "${Shubetsu}" -a "${Shubetsu}" != "_" -a "${Shubetsu}" != "0" ] ; then
+  awk '$2=="'${Shubetsu}'"'
+else
+#  cat -
+  # ヒヤリハットは出さない。
+  awk '$2!="2"&&$2!="4"'
+fi |
+# --------------------------
+# --------------------------
+# 施設
+if [ -z "${Shisetsu}" -o "${Shisetsu}" = "_" -o "${Shisetsu}" = "0000" ] ; then
+  cat - 
+else
+  awk '$6=="'${Shisetsu}'"'
+fi |
+# --------------------------
+# --------------------------
+## 施設
+#if [ -z "${Tateya}" -o "${Tateya}" = "_" -o "${Tateya}" = "00" ] ; then
+#  cat -
+#else
+#  awk '$7=="'${Tateya}'"||$7=="_"'
+#fi |
+# --------------------------
+# 発生日(FROM)
+if [ -z "${HasseibiFrom}" -o "${HasseibiFrom}" = "_" ] ; then
+  cat -
+else
+  awk '$3>="'${HasseibiFrom}'"'
+fi |
+# --------------------------
+# 発生日(TO)
+if [ -z "${HasseibiTo}" -o "${HasseibiTo}" = "_" ] ; then
+  cat -                                           
+else
+  awk '$3<="'${HasseibiTo}'"'
+fi  |
+LANG=C sort -k3r,3r > $tmp-data
+# 1:事故ヒヤリヘッダーID 2:報告書フラグ  3:報告日      4:部署        5:報告者
+# 6:施設                 7:建屋          8:発生日      9:居室        10:利用者ID
+
+# --------------------------
+#tee /home/hands/work/okuda/NANNIN |
+# --------------------------
+cat $tmp-data
+
+
+## 終了
+rm -f $tmp-*
+exit 0

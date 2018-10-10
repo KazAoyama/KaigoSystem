@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.SYUBETSU_KIKAN.AJAX : 電気・水道取込　書き換えAJAX
+#
+# Written by J.Mikami
+
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/DENKI_SUIDOU_JYOUHOU.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+[ "${shisetsu_key}" == "_" -o "${shisetsu_key}" == "" ] && shisetsu_key="${shisetsu}"
+#--------------------------------------------------------
+
+# どちらであっても月次テーブルは用意するので
+#find ${pompa_dir}/DENKI_SUIDOU/${shisetsu_key}/ -type f -name "DENKI_SUIDOU_CYOUHYOU.${shisetsu_key}.*" -print |
+find ${pompa_dir}/DENKI_SUIDOU/${shisetsu_key}/MAIN-DATA/ -type f -name "DENKI_CYOUHYOU.${shisetsu_key}.*" -print |
+tr "/" " " |
+tr "." " " |
+self NF |
+LANG=C sort |
+awk 'BEGIN{print "_","選択してください"}
+      {if($1=="'${lastmonth}'"){$3="selected"};
+      $2=substr($1,1,4)"/"substr($1,5,2); print}' > ${tmp}-kikan_month_tbl
+#--------------------------------------------------------
+
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+awk '/ajax_change2_start/,/ajax_change2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+mojihame -l"kikan_month_tbl" - ${tmp}-kikan_month_tbl > ${tmp}-html
+echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+cat - ${tmp}-html
+# --------------------------------------------------------------
+mv ${tmp}-* /home/hands/E-LIFE/KEIRI/WORK/mikami/TMP/KIKAN-TMP/
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,543 @@
+#!/bin/bash
+#
+# DENWAKAKIN_RIYOU_JYOUHOU.PDF : 電話課金利用情報マスタ
+#
+# Written by S.Otsubo
+
+# 画面から直接よびだし
+# HTML作成したのちPDFに変換
+
+# ログ
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/DENWAKAKIN_RIYOU_JYOUHOU.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+## てすと！
+#tmp=/var/tmp/otsubo${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------------
+# パラメーターの取得
+
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  password
+  shisetsu
+  shisetsu_key
+  Shisetsu_select
+  syubetsu_select
+  kikan_month_select
+  kikan_select
+  kikan_from
+  kikan_to
+FIN
+  
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+
+# チェックボックスは別で取得する
+# チェックの入った利用者IDをリスト化
+: > ${tmp}-check_person_list
+grep "check_person_" ${tmp}-param   |
+self NF                             |
+sed -e 's/^name="//g' -e 's/".$//g' |
+LANG=C sort                         |
+while read Name ; do
+  echo "$(mime-read ${Name} ${tmp}-param)" >> ${tmp}-check_person_list
+done
+
+  # アップロードしたファイルは別で取得
+  mime-read "upload_file" ${tmp}-param |
+  # 変換
+  nkf -wLu                             |
+  # 空行削除
+  grep -v "^$"                         |
+  # カンマ区切りの変換
+  tr " " "_"                           |
+  sed 's/^,/_,/g'                      |
+  sed 's/,$/,_/g'                      |
+  sed 's/,,/,_,/g'                     |
+  sed 's/,,/,_,/g'                     |
+  tr "," " "                           > ${tmp}-upload_file
+  # 1:(分からない)  2:(分からない)            3:(分からない) 4:(分からない) 5:(分からない)
+  # 6:種別          7:発信番号                8:発信先番号   9:通話開始時間 10:通話時間(たぶん秒)
+  # 11:(分からない) 12:通話金額(たぶん税抜き)
+
+  # アップロードファイル名取得
+  mime-read -v ${tmp}-param |
+  grep "upload_file"        |
+  sed -e 's/^.*filename="\(.*\)".*$/\1/' -e 's/ /_/g' -e 's/#/＃/g' -e 's/%/％/g' > ${tmp}-upload_file_name
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+
+cookie-name                    |
+LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------------
+
+# ディレクトリ設定
+ch_cgi_dir="${home_dir}/TEST/CGI"
+
+
+#------------------------------------------------------------
+# 処理モードの決定
+eval $(name-source ${tmp}-cookie)
+eval $(name-source $tmp-name)
+[ -z "${MODE}" ] && MODE="init"
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# エラー
+
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+#  rm -f $tmp-*
+  exit 1
+}
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# チェックされたリストとnameから帳票用データを取得する
+
+# 帳票用データには支払う人のIDが入っている
+# -
+# DENWA_KAKIN_CYOUHYOU
+# 1:入居者ID 2:発信番号  3:通話日         4:識別コード   5:通話開始時間
+# 6:通話時間 7:通話金額  8:通話金額税込み 9:通話相手番号 10:建屋ID
+# 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ  15:更新時間
+# 16:更新者
+
+case "${kikan_select}" in
+  # ---------------------
+  # 日次
+  1 )
+    # from-toのスラッシュを除く
+    kikan_from_syusei="$(echo "${kikan_from}" | sed 's/\///g')"
+    kikan_to_syusei="$(echo "${kikan_to}" | sed 's/\///g')"
+
+    # from-toからデータが必要な月を取得する
+    from_month="$(echo "${kikan_from}" | sed 's/\// /g' | awk '{print $1$2}')"
+    to_month="$(echo "${kikan_to}" | sed 's/\// /g' | awk '{print $1$2}')"
+    sa="$(mdate ${to_month}m ${from_month}m)"
+    if [ "${sa}" -eq 0 ] ; then
+      echo "${from_month}"
+    else
+      mdate -e ${from_month}/+${sa} |
+      tarr |
+      LANG=C sort
+    fi > ${tmp}-month_list
+
+    # 税込金額計算用税率取得
+    # 日次でも同じ月内しか集計できない仕様として、from_monthを基準
+    zeiritsu="$(awk '$5!="9" && $3<="'${from_month}'01" && $4>"'${from_month}'01"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU | self 2)"
+    zeiritsu_keisan="$(echo "${zeiritsu} + 1" | bc)"
+
+    # 取得するリストに応じて絞込みながら展開する
+    cat ${tmp}-month_list |
+    while read month ; do
+      cjoin0 key=1 ${tmp}-check_person_list ${pompa_dir}/DENWA_KAKIN/${Shisetsu_select}/DENWA_KAKIN_CYOUHYOU.${Shisetsu_select}.${month} |
+      # 日次のときは合計と税をその期間で算出するので合計行を除く
+      awk '$3!="_"{print}'
+    done |
+    awk '$3>="'${kikan_from_syusei}'" && $3<="'${kikan_to_syusei}'"{print}' |
+    LANG=C sort |
+    # 期間合計の算出
+    self 1/NF 6/7 |
+    # 1:入居者ID 2:発信番号  3:通話日         4:識別コード   5:通話開始時間
+    # 6:通話時間 7:通話金額  8:通話金額税込み 9:通話相手番号 10:建屋ID
+    # 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ  15:更新時間
+    # 16:更新者  17:通話時間 18:通話金額
+    sm4 1 2 3 16 17 18 |
+    self 1/5 17/18 8/NF-2 |
+    # 1:入居者ID 2:発信番号  3:通話日         4:識別コード   5:通話開始時間
+    # 6:通話時間 7:通話金額  8:通話金額税込み 9:通話相手番号 10:建屋ID
+    # 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ  15:更新時間
+    # 16:更新者
+    # -
+    # 合計行をととのえ集計期間中の税込みの値を算出
+    awk '{if($4~/@/){$3="_"; $4="2"; $5="_"; $8=int($7*"'${zeiritsu_keisan}'"); $9="_"; $10="_"; $11="_"; $12="_"; $13="_"; $14="1"};print}'
+    
+  ;;
+  # ---------------------
+  # ---------------------
+  # 月次
+  2 )
+    cjoin0 key=1 ${tmp}-check_person_list ${pompa_dir}/DENWA_KAKIN/${Shisetsu_select}/DENWA_KAKIN_CYOUHYOU.${Shisetsu_select}.${kikan_month_select}
+  ;;
+  # ---------------------
+esac > ${tmp}-kihon
+# 1:入居者ID 2:発信番号  3:通話日         4:識別コード   5:通話開始時間
+# 6:通話時間 7:通話金額  8:通話金額税込み 9:通話相手番号 10:建屋ID
+# 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ  15:更新時間
+# 16:更新者
+
+
+# =====================================================================
+# もしデータがなければここで終了
+[ ! -s ${tmp}-kihon ] && error_exit "条件に一致したデータはありません"
+# =====================================================================
+
+
+# --------------------------------------
+# 帳票作成に必要なデータの収集
+
+# 利用者名
+awk '$5!="9"' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+self 1/2 |
+LANG=C sort > ${tmp}-riyousha_name
+# 1:利用者ID 2:利用者氏名
+# --------------------------------------
+
+
+# ヒットしたデータに存在する入居者ファイルの作成
+# 以下の繰り返し処理はデータがあった入居者にのみ行う
+self 1 ${tmp}-kihon |
+LANG=C sort -u |
+cjoin0 +ng key=1 - ${tmp}-check_person_list > ${tmp}-data_ari 2> ${tmp}-data_nashi
+
+# 入居者ごとにファイル分割
+keycut ${tmp}-%1_meisai < ${tmp}-kihon
+# 1:入居者ID 2:発信番号  3:通話日         4:識別コード   5:通話開始時間
+# 6:通話時間 7:通話金額  8:通話金額税込み 9:通話相手番号 10:建屋ID
+# 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ  15:更新時間
+# 16:更新者
+
+# 帳票種別によって分岐
+case "${syubetsu_select}" in
+  # ------------------------
+  # 明細用
+  # ひとりひとり分割する
+  1 )
+    cat ${tmp}-data_ari |
+    while read ID ; do
+      # 合計行から合計値を変数へ入れ、税額もだす
+      awk '{if($4=="2"){zeigaku=$8-$7; print $1,$2,$9,$6,$7,$8,zeigaku}}' ${tmp}-${ID}_meisai > ${tmp}-${ID}_goukei
+      # 1:入居者ID       2:発信番号 3:通話相手番号 4:通話時間 5:通話金額
+      # 6:通話金額税込み 7:税額
+      NAISEN="$(self 2 ${tmp}-${ID}_goukei)"
+      NYUUKYOSYA="$(self 1 ${tmp}-${ID}_goukei | cjoin0 key=1 - ${tmp}-riyousha_name | self 2)"
+      GOUKEI_ZEIKOMI1="￥$(self 6 ${tmp}-${ID}_goukei | comma 1)(消費税込)" #合計の円マークつき
+      GOUKEI_ZEIKOMI2="$(self 6 ${tmp}-${ID}_goukei | comma 1)" #合計のみ
+      GOUKEI="$(self 5 ${tmp}-${ID}_goukei | comma 1)" #合計税抜き
+      MONTH="$(echo "${kikan_month_select}" | self 1.5.2)" #明細はかならず月次出力
+      ZEIGAKU="$(self 7 ${tmp}-${ID}_goukei | comma 1)"
+      # calsedの準備
+      cat << FIN | self 1/NF > ${tmp}-calsed
+      ###NAISEN### ${NAISEN}
+      ###NYUUKYOSYA### ${NYUUKYOSYA}
+      ###GOUKEI_ZEIKOMI1### ${GOUKEI_ZEIKOMI1}
+      ###GOUKEI_ZEIKOMI2### ${GOUKEI_ZEIKOMI2}
+      ###GOUKEI### ${GOUKEI}
+      ###MONTH### ${MONTH}
+      ###ZEIGAKU### ${ZEIGAKU}
+FIN
+
+      # 明細行を必要な情報に分割する
+      cjoin0 key=4 <(echo "1") ${tmp}-${ID}_meisai |
+      self 3 5 6 9 7 |
+      # 1:通話日 2:通話開始時間 3:通話時間 4:通話相手番号 5:通話金額
+      LANG=C sort |
+      comma 3 5 |
+      awk '{$1=substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2); print}' |
+      awk '{if(NR%2==0){color="#e0e0e0"}
+            else{color="#ffffff"}; print color,$0}' > ${tmp}-${ID}_meisai_kansei
+      # 1:行の色   2:通話日 3:通話開始時間 4:通話時間 5:通話相手番号
+      # 6:通話金額
+
+      # ブレイク条件に応じてファイル分割する
+      split -l "${meisai_break}" ${tmp}-${ID}_meisai_kansei ${tmp}-${ID}_meisai_kansei_
+
+      # 分割したファイル数取得
+      file_gyo="$(ls -l ${tmp}-${ID}_meisai_kansei_* | gyo)"
+
+      # 明細表ヘッダ部分を取得
+      awk '/\<head_start\>/,/\<head_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.FILEHAME.html |
+      calsed -f ${tmp}-calsed - > ${tmp}-html_head
+      
+      # 明細票フッタ部分を取得
+      awk '/\<fut_start\>/,/\<fut_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.FILEHAME.html > ${tmp}-html_fut
+
+      # 明細票合計部分を取得
+      awk '/\<goukei_start\>/,/\<goukei_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.FILEHAME.html |
+      calsed -f ${tmp}-calsed - > ${tmp}-html_goukei
+
+      # 分割ファイルごとにもじはめしながらページ数をふる
+      # もし現在処理している利用者IDが${tmp}-data_ariの最終行ならば###pagebreak###にはなにもいれない
+      last_id="$(tail -1 ${tmp}-data_ari )"
+      ls -l ${tmp}-${ID}_meisai_kansei_* |
+      tr "_" " " |
+      self NF |
+      LANG=C sort |
+      rank |
+      # 現在処理している利用者のファイル数だけ繰り返し処理
+      while read Number Name ; do
+        if [ "${Number}" -eq "${file_gyo}" ] ; then
+          # 現在処理している利用者の最終処理回
+          awk '/\<table_start\>/,/\<table_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.FILEHAME.html |
+          mojihame -l"table_body" - ${tmp}-${ID}_meisai_kansei_${Name} |
+          cat ${tmp}-html_head - ${tmp}-html_goukei ${tmp}-html_fut |
+          calsed "###MESSAGE###" "&nbsp;" - |
+          calsed "###PAGE###" "$(echo "${Number}/${file_gyo}ページ")" - |
+          if [ "${ID}" -eq "${last_id}" ] ; then
+            calsed "###pagebreak###" ""
+          else
+            calsed "###pagebreak###" "$(echo "page-break-after:always;")"
+          fi
+        else
+          # 現在処理している利用者の途中回
+          awk '/\<table_start\>/,/\<table_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.FILEHAME.html |
+          mojihame -l"table_body" - ${tmp}-${ID}_meisai_kansei_${Name} |
+          cat ${tmp}-html_head - ${tmp}-html_fut |
+          calsed "###MESSAGE###" "次ページに続きます" - |
+          calsed "###PAGE###" "$(echo "${Number}/${file_gyo}ページ")" - |
+          calsed "###pagebreak###" "$(echo "page-break-after:always;")"
+        fi
+      done > ${tmp}-${ID}_meisaihyou_kansei
+    done
+    # 明細票テーブルを全てcatして、ヘッダフッタにはめる
+    cat ${tmp}-data_ari |
+    while read ID ; do
+      cat ${tmp}-${ID}_meisaihyou_kansei
+    done |
+    filehame -l"meisai_table_filehame" ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.MEISAI.html - > ${tmp}-html_kansei.html
+
+    # PDF作成
+    ${home_dir}/TOOL/wkhtmltopdf-amd64 ${tmp}-html_kansei.html ${ap_dir}/DOWNLOAD/${cur_time}.DENWAKAKIN.pdf
+  ;;
+  # ------------------------
+  # ------------------------
+  # 集計表
+  # 選択したひとまとめて出力
+  2 )
+    # 一人ひとりに対して処理をしてから標準出力へ
+    cat ${tmp}-data_ari |
+    while read ID ; do
+      # 行数をとる
+      meisai_gyo="$(gyo ${tmp}-${ID}_meisai)"
+  
+      # 必要な情報に絞る
+      self 1/3 5/9 ${tmp}-${ID}_meisai |
+      # 1:入居者ID 2:発信番号       3:通話日       4:通話開始時間 5:通話時間
+      # 6:通話金額 7:通話金額税込み 8:通話相手番号
+      # -
+      # 入居者名をつける
+      LANG=C sort |
+      join1 key=1 ${tmp}-riyousha_name - |
+      # 1:入居者ID 2:入居者名 3:発信番号       4:通話日       5:通話開始時間
+      # 6:通話時間 7:通話金額 8:通話金額税込み 9:通話相手番号
+      awk '{print $0,$1":"$2}' |
+      # 1:入居者ID 2:入居者名 3:発信番号       4:通話日       5:通話開始時間
+      # 6:通話時間 7:通話金額 8:通話金額税込み 9:通話相手番号 10:入居者ID入居者名
+      self NF 3/NF-1 |
+      # 1:入居者ID入居者名 2:発信番号       3:通話日       4:通話開始時間 5:通話時間
+      # 6:通話金額         7:通話金額税込み 8:通話相手番号
+      # -
+      # 税額の計算
+      awk '{zeigaku=$7-$6; print $0,$5,$6,$7,zeigaku}' |
+      # 1:入居者ID        2:発信番号       3:通話日       4:通話開始時間 5:通話時間
+      # 6:通話金額        7:通話金額税込み 8:通話相手番号 9:通話時間     10:通話金額
+      # 11:通話金額税込み 12:税額
+      delf 7 |
+      # 1:入居者ID 2:発信番号     3:通話日   4:通話開始時間 5:通話時間
+      # 6:通話金額 7:通話相手番号 8:通話時間 9:通話金額     10:通話金額税込み
+      # 11:税額
+      self 2 1 3/4 7 5/6 8/NF |
+      # 1:発信番号 2:入居者ID 3:通話日   4:通話開始時間 5:通話相手番号
+      # 6:通話時間 7:通話金額 8:通話時間 9:通話金額     10:通話金額税込み
+      # 11:税額
+      LANG=C sort |
+      awk '{$3=substr($3,1,4)"/"substr($3,5,2)"/"substr($3,7,2); print}' |
+      # 一行目以外：入居者IDと発信番号のフィールドを＠埋め
+      # 最終行以外：合計額系フィールドを＠埋め
+      # 最終行：合計額系フィールド以外を＠埋め
+      awk '{if(NR!="1"){$1="@"; $2="@";}
+            if(NR!="'${meisai_gyo}'"){$8="@"; $9="@"; $10="@"; $11="@"}
+            if(NR=="'${meisai_gyo}'"){$3="@"; $4="@"; $5="@"; $6="@"; $7="@"}; print}' |
+      # 1:発信番号 2:入居者ID 3:通話日       4:通話開始時間 5:通話相手番号
+      # 6:通話時間 7:通話金額 8:通話時間合計 9:通話金額合計 10:通話金額合計税込み
+      # 11:税額
+      awk '{if(NR%2==0){color="#e0e0e0"}
+            else{color="#ffffff"}; print color,$0}' |
+      # 1:背景色              2:発信番号 3:入居者ID 4:通話日       5:通話開始時間
+      # 6:通話相手番号        7:通話時間 8:通話金額 9:通話時間合計 10:通話金額合計
+      # 11:通話金額合計税込み 12:税額
+      comma 7 8 9 10 11 12 > ${tmp}-${ID}_meisai_kansei
+
+      # 合計行だけ抜き出す
+      cjoin0 key=4 <(echo "2") ${tmp}-${ID}_meisai |
+      self 8 |
+      sm2 0 0 1 1 > ${tmp}-${ID}_meisai_goukei
+    done
+
+    ##########ここからファイルをまとめて処理する
+
+    # 利用者ごとに処理したファイルをまとめてcatし、ブレイク条件でファイルを分割する
+    cat ${tmp}-data_ari |
+    while read ID ; do
+      cat ${tmp}-${ID}_meisai_kansei
+    done |
+    split -l "${syuukei_break}" - ${tmp}-meisai_kansei_bunkatu_
+
+    # 分割したファイル名リストを作成し、くりかえしもじはめ
+    ls -l ${tmp}-meisai_kansei_bunkatu_* |
+    tr "_" " " |
+    self NF |
+    LANG=C sort |
+    while read Name ; do
+      # テーブル部分もじはめ
+      awk '/\<table_start\>/,/\<table_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+      mojihame -l"table_body" - ${tmp}-meisai_kansei_bunkatu_${Name} > ${tmp}-meisai_${Name}_html
+    done
+
+    # 抽出した人全員の税込額の合計
+    GOUKEI="￥$(cjoin0 key=4 <(echo "2") ${tmp}-kihon | self 8 | sm2 0 0 1 1 | comma 1)(消費税込)"
+    # 期間表示
+    case "${kikan_select}" in
+      1 )
+        KIKAN="$(echo "${kikan_from}～${kikan_to}")"
+      ;;
+      2 )
+        KIKAN="$(echo "${kikan_month_select}" | self 1.1.4 1.5.2 | tr " " "/")"
+      ;;
+    esac
+    # 作ったhtmlの数＝ページ数
+    PAGE=""
+    # calsedファイル
+    cat << FIN | self 1/NF > ${tmp}-calsed
+    ###KIKAN### ${KIKAN}
+    ###GOUKEI### ${GOUKEI}
+    ###PAGE### ${PAGE}
+FIN
+
+    # ヘッダ部(共通)
+    awk '/\<head_start\>/,/\<head_end\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+    calsed -f ${tmp}-calsed - > ${tmp}-html_head
+    
+    # テーブル本体＋フッダ部
+    # -
+    # 作成したテーブル全ての数を取得
+    zentai_table="$(ls -l ${tmp}-meisai_*_html | gyo)"
+    # 現在処理中の利用者の分割作成したhtml識別名取得
+    ls -l ${tmp}-meisai_*_html |
+    tr "_" " " |
+    self NF-1 |
+    LANG=C sort |
+    rank |
+    while read Number Name ; do
+      # フッタの選択
+      if [ "${zentai_table}" -eq "1" ] ; then
+        # テーブルがひとつならば改行しない
+        awk '/\<fut_start_3\>/,/\<fut_end_3\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+        cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+      else
+        # テーブルがひとつ以上なので最終以外は「次ページに続きます」と改ページ
+        if [ "${Number}" -eq "${zentai_table}" ] ; then
+          awk '/\<fut_start_3\>/,/\<fut_end_3\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+          cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+        else
+          awk '/\<fut_start_1\>/,/\<fut_end_1\>/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.FILEHAME.html |
+          cat ${tmp}-html_head ${tmp}-meisai_${Name}_html -
+        fi
+      fi
+    done > ${tmp}-filehame_file
+
+    # htmlの完成
+    cat ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU.SYUUKEI.html |
+    filehame -l"table_body_filehame" - ${tmp}-filehame_file > ${tmp}-html_kansei.html
+
+    # PDF作成
+    ${home_dir}/TOOL/wkhtmltopdf-amd64 --footer-right '[page]/[topage]ページ' ${tmp}-html_kansei.html ${ap_dir}/DOWNLOAD/${cur_time}.DENWAKAKIN.pdf
+  ;;
+  # ------------------------
+esac
+#------------------------------------------------------------
+
+# 一部データが無かった人がいた場合は帳票と一緒にリスト出力する
+if [ -s ${tmp}-data_nashi ] ; then
+  cat << FIN > ${tmp}-err_tbl
+  <html>
+    <head>
+      <style type="text/css">
+        .table_css{
+          border:solid 1px black;
+        }
+        .table_td_head_css{
+          font-weight:bold;
+          color:black;
+          text-align:center;
+          border:solid 1px black;
+          background-color:#a0a0a0;
+          padding:5px;
+        }
+        .table_td_css{
+          color:black;
+          border:solid 1px black;
+          padding:5px;
+        }
+      </style>
+    </head>
+    <body>
+      <div style="margin-left:auto;margin-right:auto;">
+        <table class="table_css" style="margin-left:auto;margin-right:auto;">
+          <tr>
+            <td class="table_td_head_css">帳票が出力できなかった方</td>
+          </tr>
+          <!--table_mojihame-->
+          <tr>
+            <td class="table_td_css">%2 %3</td>
+          </tr>
+          <!--table_mojihame-->
+        </table>
+      <div>
+    </body>
+  </html>
+FIN
+  cjoin0 key=1 ${tmp}-data_nashi ${tmp}-riyousha_name |
+  awk '{print $0,"様"}' |
+  mojihame -l"table_mojihame" ${tmp}-err_tbl - > /home/hands/E-LIFE/KEIRI/DOWNLOAD/err_tbl_${$}.html
+  cat << FIN > ${tmp}-alert
+    alert('一部の方はデータが存在しませんでした。\n詳細はテキストをご参照ください');
+FIN
+  cat << FIN > ${tmp}-alert2
+    function err_focus(){
+      window.open('/E-LIFE/KEIRI/DOWNLOAD/err_tbl_${$}.html','err_table','width=300,height=200,menubar=no,toolbar=no,scrollbar=yes,location=no,status=no');
+    }
+    setTimeout("err_focus()",1000);
+FIN
+else
+  cat << FIN > ${tmp}-alert
+  //なにもアラートださない
+FIN
+  cp -p ${tmp}-alert ${tmp}-alert2
+fi
+
+# 出力
+cat << FIN | filehame -l"###filehame1###" - ${tmp}-alert | filehame -l"###filehame2###" - ${tmp}-alert2 > ${tmp}-html.html
+  <html>
+    <head>
+      <script type="text/javascript" language="Javascript">
+        ###filehame1###
+        window.open("/E-LIFE/KEIRI/DOWNLOAD/${cur_time}.DENWAKAKIN.pdf","pdfprint");
+        ###filehame2###
+      </script>
+    </head>
+  </html>
+FIN
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-html.html
+
+## 終了
+rm -f ${tmp}-*
+exit 0
+

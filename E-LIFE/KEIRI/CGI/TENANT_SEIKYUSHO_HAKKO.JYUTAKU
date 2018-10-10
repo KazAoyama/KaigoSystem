@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# TENANT_SEIKYUSHO_HAKKO.JYUTAKU : テナント受託精算書出力
+#
+# Usage : TATEKAEKIN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 対象のテナントを取得
+awk '$1~/taishosha_check/{print $2}' ${namefile}         > $tmp-tenant_name
+
+# 明細ファイルを取得
+NENGETSU="$(echo ${nengetsu} | sed 's/-//g')"
+lastmonth=$(mdate ${NENGETSU}m/-1)
+TEMPLA=${temp_dir}/JYUTAKU_TEMPLATE.xls
+awk '$2=="'${NENGETSU}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_MEISAI > $tmp-meisaifile
+# 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+# 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+# 11:インターネット 12:クレールホール 13:自販機   14:有効フラグ 15:更新時間
+# 16:userid
+cp $tmp-meisaifile ${work}/meisiafil
+
+self 2/13 $tmp-meisaifile |
+# 1:年月            2:賃料       3:共益費     4:駐車場代 5:電気使用料
+# 6:水道使用料      7:空調費固定 8:空調費変動 9:駐輪場代 10:インターネット
+# 11:クレールホール 12:自販機
+sm2 1 1 2 NF             > $tmp-meisaigoukei
+
+self 2 $tmp-meisaigoukei > $tmp-tinryo
+self 3 $tmp-meisaigoukei > $tmp-kyouekihi
+self 4 $tmp-meisaigoukei > $tmp-parking
+self 5 $tmp-meisaigoukei > $tmp-denki
+self 6 $tmp-meisaigoukei > $tmp-suido
+self 1 7 8 $tmp-meisaigoukei |
+ysum num=1                   |
+self NF                      > $tmp-kutyo
+self 9 $tmp-meisaigoukei > $tmp-tyurin
+self 10 $tmp-meisaigoukei > $tmp-inter
+self 1 11 12 $tmp-meisaigoukei |
+ysum num=1               |
+self NF                  > $tmp-sonota
+
+# 初日と月末
+mdate ${NENGETSU}m      |
+tarr                     |
+head -n1                 > $tmp-shoniti
+
+mdate ${NENGETSU}m      |
+tarr                     |
+tail -n1                 > $tmp-getsumatsu
+
+cat $tmp-shoniti $tmp-getsumatsu |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"substr($1,7,2)"日"}' |
+yarr                             |
+awk '{print $1"～"$2}'           > $tmp-kikan
+
+
+
+Ehexcel < ${TEMPLA} 1 e25 $tmp-tinryo            \
+                    1 e13 $tmp-kikan             \
+                    1 e26 $tmp-kyouekihi         \
+                    1 e27 $tmp-parking           \
+                    1 e29 $tmp-denki             \
+                    1 e30 $tmp-suido             \
+                    1 e31 $tmp-kutyo             \
+                    1 e32 $tmp-tyurin            \
+                    1 e33 $tmp-inter             \
+                    1 e34 ${tmp}-sonota          > ${download_dir}/${userid}_$$.download.xls
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

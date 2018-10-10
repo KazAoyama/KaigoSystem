@@ -1,0 +1,176 @@
+#!/bin/bash
+#
+# KENGEN_KANRI.MEM_TSUIKA : 権限管理メンバー追加CGI
+#
+# Usage : KENGEN_KANRI.MEM_TSUIKA ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+
+exec 2> /home/hands/E-LIFE/TEST/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TEST"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+apptbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+cp ${tmp}-name namefile
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+
+######################  まずはKENGEN_GROUP_MEMBERをつくろう  ###############################################
+echo "${shisetsu_name}"     > ${tmp}-shisetsu_name
+echo "${kengen_name}"       > ${tmp}-kengen_name
+echo "${input_member_name}" > ${tmp}-new_member
+echo "${shisetsu_name}" "${kengen_name}" "${input_member_name}" > ${tmp}-new_kengen_gr_member
+# 1:施設コード 2:権限Grコード 3:USER_ID
+
+# INPUTディレクトリ作成
+mkdir -p ${input_dir}/${today}
+
+# POMPAディレクトリ作成
+mkdir -p ${pompa_dir}/KENGEN_GROUP_MEMBER
+
+
+# INPUTデータを保存
+cp -p ${tmp}-new_kengen_gr_member ${input_dir}/${today}/KENGEN_KANRI_MEMBER_TSUIKA.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:施設コード 2:権限Grコード 3:USER_ID
+
+
+# POMPAにデータを保存（とりあえず仮の形で）
+
+lock_file=${pompa_dir}/KENGEN_GROUP/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+### 保存
+if [ -e ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER ];then
+  cat ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER      |
+  cat - ${tmp}-new_kengen_gr_member                             |
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  LANG=C sort -k1,1n -k2,2n -k3,3n                              |
+  uniq                                                          > ${tmp}-pompa_new
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  mv ${tmp}-pompa_new ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER
+else
+  cat ${tmp}-new_kengen_gr_membe                                > ${tmp}-pompa_new
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  mv ${tmp}-pompa_new ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER
+fi
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+# TBLデータも保存しておこう
+lock_file=${apptbl_dir}/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+### 保存
+if [ -e ${apptbl_dir}/KENGEN_GROUP_MEMBER ];then
+  cat ${apptbl_dir}/KENGEN_GROUP_MEMBER                         |
+  cat - ${tmp}-new_kengen_gr_member                             |
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  LANG=C sort -k1,1n -k2,2n -k3,3n                              |
+  uniq                                                          > ${tmp}-tbl_new
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  mv ${tmp}-tbl_new ${apptbl_dir}/KENGEN_GROUP_MEMBER
+else
+  cat ${tmp}-new_kengen_gr_member                               > ${tmp}-tbl_new
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  mv ${tmp}-tbl_new ${apptbl_dir}/KENGEN_GROUP_MEMBER
+fi
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+
+
+######################  次はUSER_ID別のテーブルをつくろう  ###############################################
+
+# POMPAのKENGEN_GROUPを呼び出し
+
+cat ${pompa_dir}/KENGEN_GROUP/KENGEN_GROUP |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+join1 key=1 ${tmp}-shisetsu_name           |
+join1 key=2 ${tmp}-kengen_name             |
+awk '{print "'${input_member_name}'",$0}'  > ${tmp}-kari_pompa
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+
+# INPUTデータを保存
+cp -p ${tmp}-kari_pompa ${input_dir}/${today}/KENGEN_KANRI_MEMBER_TSUIKA_USER_KENGEN.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+
+# POMPAにデータを保存（とりあえず仮の形で）
+
+# POMPAディレクトリ作成
+mkdir -p ${pompa_dir}/USER_KENGEN
+
+lock_file=${pompa_dir}/USER_KENGEN/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+### 保存
+if [ -e ${pompa_dir}/USER_KENGEN/${input_member_name}.USER_KENGEN ];then
+  cat ${pompa_dir}/USER_KENGEN/${input_member_name}.USER_KENGEN      |
+  cat - ${tmp}-kari_pompa                                            |
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+  self 1 2 3 4 10 5/9                                                |
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:登録日時間 6:MENU名 7:MENUフラグ 8:CGI_NAME 9:CGIフラグ 10:権限ステータス
+  LANG=C sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n                     |
+  getlast 1 4                                                        |
+  self 1/4 6/10 5                                                    |
+  LANG=C sort -k1,1n -k2,2n -k3,3n -k4,4n                            > ${tmp}-new_userkengen
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+  mv ${tmp}-new_userkengen ${pompa_dir}/USER_KENGEN/${input_member_name}.USER_KENGEN
+else
+  cat ${tmp}-kari_pompa                                              > ${tmp}-new_userkengen
+  mv ${tmp}-new_userkengen ${pompa_dir}/USER_KENGEN/${input_member_name}.USER_KENGEN
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+fi
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

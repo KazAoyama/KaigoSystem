@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# POP_WEEKPLAN_WEEKLYSERVICE_INPUT.DISPLAY : アセスメント表示
+#
+# Usage : POP_WEEKPLAN_WEEKLYSERVICE_INPUT.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d).$$ ; set -xv
+
+
+
+rm -f$tmp-*
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_weekly
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    # 空のリストデータを作成する
+   : > $tmp-listdata
+  ;;
+
+  # 検索結果
+#  search)
+#    if [ "$(gyo ${result_data})" != 0 ] ; then
+#      cat ${result_data}        |
+      # 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終>更新日時
+      # 6:最終更新者
+#      LANG=C sort -k6,6nr       |
+#      self 1 2 3 4 5            |
+#      rank                      |
+#      head -10                  > $tmp-listdata
+#    else
+#      : > $tmp-listdata
+#    fi
+#  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message=""
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    : > $tmp-listdata
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+else
+if [ "${MODE}" = "regist" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      if(window.opener.document.frmWhole) {
+      window.opener.document.frmWhole.submit();
+      }
+      window.close();
+    </script>
+FIN
+fi
+fi
+#--------------------------------------------------------------
+
+START_FORMAT=$(echo $START | sed 's/h/:/g' | maezero 1.5)
+END_FORMAT=$(echo $END | sed 's/h/:/g' | maezero 1.5)
+
+# エラー時の苦肉の対応
+[ "$YOUBI" = "0"  ] && YOUBI="sun"
+[ "$YOUBI" = "1"  ] && YOUBI="mon"
+[ "$YOUBI" = "2"  ] && YOUBI="tue"
+[ "$YOUBI" = "3"  ] && YOUBI="wed"
+[ "$YOUBI" = "4"  ] && YOUBI="thu"
+[ "$YOUBI" = "5"  ] && YOUBI="fri"
+[ "$YOUBI" = "6"  ] && YOUBI="sat"
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USER_ID### $USER_ID
+###RIYOUSHA_ID### $Riyoushaid
+###WEEKLYSERVICE_ID### $WEEKLYSERVICE_ID
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###YOUBI### $YOUBI
+###START### $START_FORMAT
+###END### $END_FORMAT
+###NAIYOU### $NAIYOU
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/POP_WEEKPLAN_WEEKLYSERVICE_INPUT.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,185 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KOUZA.SEARCH
+# 個人情報詳細(口座)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/13
+
+#--------------------------------------------------------------
+# ログ
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+USERID="$(nameread  "userid" $namedata)"
+SHISETSUID="$(nameread  "shisetsu" $namedata)"
+
+[ -z "${Shisetsu}" -a "${Shisetsu}" = "_" ] && Shisetsu="$(nameread  "shisetsu"  $namedata)"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+if [ "$MODE" = "touroku" -a "KOUZAID" = "_" ] ; then
+KOUZAID="$(cat ${result_data} | self 3)"
+fi
+
+### モードによる表示の分岐
+#case "${MODE}" in
+  # 初期表示
+#  search)
+
+# 建屋、フロア、ユニットで対象居室絞込み
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM        |
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}'  |
+if [ -z "$Floor" -o "$Floor" = "_" ] ; then
+  cat -
+else
+  awk '$3=="'$Floor'"'
+fi |
+if [ -z "$Unit" -o "$Unit" = "_" ] ; then
+  cat -
+else
+  awk '$4=="'$Unit'"'
+fi |
+self 5 |
+LANG=C sort -k1,1 > $tmp-taishou_room
+
+cp $tmp-taishou_room $work_dir/taishou_room
+
+###########
+# 賃料情報の取得
+###########
+#cat ${pompa_dir}/RIYOURYOU/KYOSHITSU_CHINRYOU  |
+cat ${pompa_dir}/RIYOURYOU/KANRIHI_MASTER  |
+# 1:施設/事業所コード 2:建屋ID 3:居室ID 4:期間From 5:期間To
+# 6:金額
+
+# 施設IDと建屋IDが一致し、有効フラグが9:削除ではないなもの
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}'  |
+LANG=C sort -k3,3   |
+# 居室絞込み
+if [ "$(gyo $tmp-taishou_room)" != "0" ] ; then
+  join0 key=3 $tmp-taishou_room
+else
+  cat -
+fi |
+if [ -z "$Kyoshitsu" -o "$Kyoshitsu" = "_" ] ; then
+cat -
+else
+awk '$3=="'$Kyoshitsu'"'
+fi |
+self 3/6    |
+comma 4     |
+LANG=C sort > $tmp-chinryou_data
+# 1:居室ID 2:期間From 3:期間To 4:金額
+
+
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM        |
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}'  |
+# 1:施設ID       2:建屋ID      3:フロア      4:ユニットID 5:居室NO
+# 6:居室定員人数 7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザーID
+
+if [ -z "${Floor}" -o "${Floor}" = "_" ] ; then
+  cat -
+else
+  awk '$3=="'${Floor}'"{print $0}'
+fi |
+
+if [  -z "${Unit}" -o "${Unit}" = "_" ] ; then
+  cat -
+else
+  awk '$4=="'${Unit}'"{print $0}'
+fi |
+
+if [ -z "${Kyoshitsu}" -o "${Kyoshitsu}" = "_" ] ; then
+  cat -
+else
+  awk '$5=="'${Kyoshitsu}'"{print $0}'
+fi |
+
+self 5 1/4           |
+LANG=C sort           > $tmp-kyoshitsu
+# 1:居室NO 2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+
+cp $tmp-chinryou_data $work_dir/chinryou_data
+cp $tmp-kyoshitsu $work_dir/chinryou_kyoshitsu
+
+if [ -s $tmp-chinryou_data ] ; then
+  loopj -d_ num=1 $tmp-chinryou_data $tmp-kyoshitsu  |
+  LANG=C sort -k1,1                                  |
+  join1 key=1 $tmp-kyoshitsu                         |
+# 1:居室NO 2:期間From 3:期間To     4:金額 5:施設ID
+# 6:建屋ID 7:フロア   8:ユニットID
+  self 2/5 1 6/8  > $tmp-result
+else
+  cat $tmp-kyoshitsu |
+  self 2/5 1 |
+  awk '{print $0,"_","_","_"}' > $tmp-result  
+fi
+#cp $tmp-* /home/hands/work/okuda
+if [ -s $tmp-result ] ; then
+#echo "search_result ok" |
+cat $tmp-result
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室NO
+# 6:期間From 7:期間To 8:金額
+#  ;;
+fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

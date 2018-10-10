@@ -1,0 +1,250 @@
+#!/bin/bash
+#
+# SEIKYU_ICHIRAN.DISPLAY : 請求一覧.DISPLAY
+#
+# Usage : SEIKYU_ICHIRAN.DISPLAY namefile datafile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/SEIKYU_ICHIRAN.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+#downloadfile=${4}
+
+# 変数
+eval $(name-source ${namefile})
+if [ \( ! -n "${MODE}" \) -o \( "${MODE}" = "_" \) ] ; then
+  MODE="init"
+fi
+this_year="$(date +%Y)"
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst |
+  awk '{print $0,"'${shisetsu}'"}'                     |
+  awk '{if($1==$3)
+          {print $1,$2,"selected"}
+        else
+          {print $1,$2,""}
+       }'                                              > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                  |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+  # 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'           |
+  awk '{print $0,"'${shisetsu}'"}'   |
+  awk '{if($1==$3)
+          {print $1,$2,"selected"}
+        else
+          {print $1,$2,""}
+       }'                            > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+
+#-----------------------------------------------------------
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                          |
+# 1:USER_ID 2:ユーザー名
+self 2                                           > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                       |
+self 2                                            > ${tmp}-user_shisetsu
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# テーブル作成
+
+# 施設
+cjoin0 key=1 <(echo "${shisetsu}") ${home_tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザID
+awk '$8!="9"'                 |
+self 1/2                      |
+# 1:施設ID 2:施設名
+awk '{if($1=="'${shisetsu}'")
+        {$3="selected"}
+      else
+        {$3="disabled"};
+      print}'                 > ${tmp}-shisetsu_select
+
+# 年月テーブル(当月確定ファイルがある年を取得)
+awk '$4!="9"' ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+cjoin0 key=3 <(echo "2") |
+self 2.1.4               |
+self 1 1                 |
+LANG=C sort -u           |
+awk '{if($1=="'${year}'")
+        {$3="selected"};
+      print}' -          > ${tmp}-year_select
+[ ! -s ${tmp}-year_select ] && echo "$(date +%Y) $(date +%Y)" > ${tmp}-year_select
+seq -w 1 12                |
+tarr                       |
+self 1 1                   |
+awk '{if($1=="'${month}'")
+        {$3="selected"};
+      print}' -            > ${tmp}-month_select
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# サーチファイルの処理
+
+# ${searchfile}
+# 1:居室             2:入居者ID               3:入居者名           4:全項目合計         5:金額税込み(管理費賃料)
+# 6:金額税込み(食費) 7:金額税込み(月額利用料) 8:金額税込み(立替金) 9:金額税込み(その他)
+
+# 合計行の算出
+sm2 0 0 4 NF ${searchfile}      |
+# 1:全項目合計         2:金額税込み(管理費賃料) 3:金額税込み(食費) 4:金額税込み(月額利用料) 5:金額税込み(立替金)
+# 6:金額税込み(その他)
+awk '{heya="_";
+      id="_";
+      name="施設合計";
+      print $0,heya,id,name}' - |
+self NF-2/NF 1/NF-3             |
+comma 4/9                       |
+# 行のいろ
+awk '{print $0,"lightblue"}'    > ${tmp}-naiyou_goukei
+# 1:居室             2:入居者ID               3:入居者名           4:全項目合計         5:金額税込み(管理費賃料)
+# 6:金額税込み(食費) 7:金額税込み(月額利用料) 8:金額税込み(立替金) 9:金額税込み(その他) 10:行のいろ
+
+# 通常行
+LANG=C sort -k1,2 ${searchfile} |
+comma 4/9                       > ${tmp}-naiyou
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# calsed
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE4### active
+###LI_NYUUKYOSHASEIKYU4### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# MODE=excel_outならばエクセルだす
+
+if [ "${MODE}" = "excel_out" ] ; then
+  # サーチファイルをはめこむだけ。
+  disp_shisetsu_name="$(cjoin0 key=1 <(echo "${shisetsu}") ${home_tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | self 2)"
+  disp_seikyu_nengetsu="$(echo "${year} ${month}" | awk '{print $1"年"$2"月"}')"
+  delf 2 10 ${tmp}-naiyou_goukei                              > ${tmp}-naiyou_goukei_excel
+  delf 2 ${tmp}-naiyou                                        > ${tmp}-naiyou_excel
+  echo "${disp_shisetsu_name} ${disp_seikyu_nengetsu}" | tarr > ${tmp}-excel_title
+
+  Ehexcel < ${temp_dir}/SEIKYU_ICHIRAN.xls 1 b2 ${tmp}-excel_title i       \
+                                           1 a6 ${tmp}-naiyou_goukei_excel \
+                                           1 a7 ${tmp}-naiyou_excel        > ${tmp}-excel_kansei.xls
+
+  excel_filename="SEIKYU_ICHIRAN.${current_time}.${$}.xls"
+  cp -p ${tmp}-excel_kansei.xls ${download_dir}/${excel_filename}
+	cat <<- FIN > ${tmp}-excel_html
+	<html>
+	  <head>
+	    <meta http-equiv="refresh" content="1; url='/E-LIFE/KEIRI/DOWNLOAD/${excel_filename}'">
+	  </head>
+	</html>
+	FIN
+fi
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# MODE=kensaku時に${tmp}-naiyouが空のときアラートだす
+
+if [ "${MODE}" = "kensaku" ] ; then
+  if [ ! -s ${tmp}-naiyou ] ; then
+	cat <<- FIN > ${tmp}-alert
+	<script>
+	  alert('指定された検索条件のデータはありません');
+	</script>
+	FIN
+  fi
+fi
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# html作成
+
+cat ${html_dir}/SEIKYU_ICHIRAN1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/SEIKYU_ICHIRAN2.html   |
+if [ "${MODE}" = "excel_out" ] ; then
+  cat - ${tmp}-excel_html
+else
+  cat -
+fi |
+mojihame -l###USER__NAME### - ${tmp}-usermei                |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###USER__NAME### - ${tmp}-usermei                |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu  |
+mojihame -l"shisetsu_select" - ${tmp}-shisetsu_select       |
+mojihame -l"year_select" - ${tmp}-year_select               |
+mojihame -l"month_select" - ${tmp}-month_select             |
+mojihame -l"naiyou_goukei" - ${tmp}-naiyou_goukei           |
+mojihame -l"naiyou" - ${tmp}-naiyou                         |
+calsed -f ${tmp}-calsed -                                   |
+if [ -s ${tmp}-alert ] ; then
+  cat - ${tmp}-alert
+else
+  cat -
+fi
+#-----------------------------------------------------------
+
+#rm -f ${tmp}-*
+exit 0
+

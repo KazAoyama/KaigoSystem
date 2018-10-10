@@ -1,0 +1,467 @@
+#!/bin/bash
+#
+# CAREPLAN_RENRAKU_TSUIKA.TOUROKU : 連絡事項登録
+#
+# Usage : CAREPLAN_RENRAKU_TSUIKA.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+houmonkaigo_pompa_dir="${home_dir}/HOUMONKAIGO/POMPA"
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+checkMoushiokuri="off"
+checkHoumonkaigoFlg="off"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+
+
+#--------------------------------------------------------------
+# 連絡事項ＩＤがない場合（登録）ならデータIDをふる
+### 連絡事項IDの発番
+# 今回取得するID数
+if [ -z "${CareplanRenrakuID}" -o "${CareplanRenrakuID}" = "_" ] ; then
+last_no="1"
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/CAREPLAN/$shisetsu/CAREPLAN_RENRAKU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+# ディレクトリ作成
+mkdir -p ${kanri_dir}/CAREPLAN/$shisetsu
+
+[ -e ${kanri_dir}/CAREPLAN/$shisetsu/CAREPLAN_RENRAKU_ID ] || echo "000000001" > ${kanri_dir}/CAREPLAN/$shisetsu/CAREPLAN_RENRAKU_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 999999999 ] && echo "000000001" > ${kanri_dir}/CAREPLAN/$shisetsu/CAREPLAN_RENRAKU_ID
+get_no ${last_no} ${kanri_dir}/CAREPLAN/$shisetsu/CAREPLAN_RENRAKU_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+CareplanRenrakuID=$(cat $tmp-id_all)
+
+hdKakuninsha="_"
+hdMoushiokuri="_"
+HoumonkaigoRenrakuID="_"
+
+# 訪問介護連絡ノートへの反映
+if [ "${checkHoumonkaigoFlg}" = "on" ] ; then
+  houmon_kanri_dir="/DATA/E-LIFE/HOUMONKAIGO/KANRI"
+  houmon_last_no="1"
+# 現状の最終番号
+  houmon_now_last_no=$(cat ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+  houmon_new_last_no=$(expr ${houmon_now_last_no} + ${houmon_last_no})
+
+# ディレクトリ作成
+  mkdir -p ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu
+
+  [ -e ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID ] || echo "000000001" > ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID
+# 超えてたらリセット
+  [ ${houmon_new_last_no} -gt 999999999 ] && echo "000000001" > ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID
+  get_no ${houmon_last_no} ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+  HoumonkaigoRenrakuID=$(cat $tmp-id_all)
+
+fi
+
+else
+# 入力時間、居宅連絡ノートIDを取得
+cat ${pompa_dir}/CAREPLAN_RENRAKU/${shisetsu}/CAREPLAN_RENRAKU_JIKOU |
+awk '$1=="'${shisetsu}'"&&$2=="'${CareplanRenrakuID}'"{print $8,$10,$15}'                     > $tmp-kakuninsha
+
+hdKakuninsha=$(self 1 $tmp-kakuninsha | head -1)
+hdMoushiokuri=$(self 2 $tmp-kakuninsha | head -1)
+# 連絡ノートからは常に新規やめる？
+#hdMoushiokuri="_"
+HoumonkaigoRenrakuID=$(self 3 $tmp-kakuninsha | head -1)
+
+# 訪問介護連絡ノートへの反映
+if [ "${checkHoumonkaigoFlg}" = "on" -a "${HoumonkaigoRenrakuID}" = "_" ] ; then
+  houmon_kanri_dir="/DATA/E-LIFE/HOUMONKAIGO/KANRI"
+  houmon_last_no="1"
+# 現状の最終番号
+  houmon_now_last_no=$(cat ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+  houmon_new_last_no=$(expr ${houmon_now_last_no} + ${houmon_last_no})
+
+# ディレクトリ作成
+  mkdir -p ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu
+
+  [ -e ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID ] || echo "000000001" > ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID
+# 超えてたらリセット
+  [ ${houmon_new_last_no} -gt 999999999 ] && echo "000000001" > ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID
+  get_no ${houmon_last_no} ${houmon_kanri_dir}/HOUMONKAIGO/$shisetsu/HOUMONKAIGO_RENRAKU_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+  HoumonkaigoRenrakuID=$(cat $tmp-id_all)
+
+fi
+
+fi
+#---------------------------------------------------------------
+
+ShuseiId=${hdMoushiokuri}
+
+# 申し送り反映処理
+if [ "$relShisetsu" != "aaaaaa" ] ; then
+#if [ "$checkMoushiokuri" = "on" ] ; then
+  idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+  save_month=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)}')
+  tateya=$(echo "$relShisetsu" | awk '{print substr($1,5,2)}')
+  shisetsu_select=$(echo "$relShisetsu" | awk '{print substr($1,1,4)}')
+  setInputDate=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)substr($1,9,2)}')
+  this_month="$(date +%Y%m)"
+
+  # 申し送りデータを作成
+  echo "$relStaff" "$setInputDate" "1" "$inputTime" "1" "14" "${userid}" "$CareplanRenrakuDetail" "black" "${sdaytime}" |
+  join1 key=7 <(self 1 2 ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER) |
+  awk '{print $1,$2,$3,$4,$5,$6,$7"+++"$8,$9,$10,$11}' |
+  sed 's/\\n/<br>/g'    |
+  awk '{print $0,"off","off"}' |
+  self 1/7 11 12 8/10 > ${tmp}-moushiokuri
+
+  if [ "$ShuseiId" = "_" ] ; then
+    if [ -e "${idkanri_dir}/${save_month}/MOUSHIOKURI" ];then
+      new_num_m="$(getno -s 1 ${idkanri_dir}/${save_month}/MOUSHIOKURI)"
+      echo ${new_num_m} > ${tmp}-new_num_m
+      mv ${tmp}-new_num_m ${idkanri_dir}/${save_month}/MOUSHIOKURI
+    else
+      mkdir -p ${idkanri_dir}/${save_month}
+      new_num_m="$(echo "0000001")"
+      echo ${new_num_m} > ${idkanri_dir}/${save_month}/MOUSHIOKURI
+    fi
+    ShuseiId=$(echo ${new_num_m} | awk '{print "M""'${this_month}'"$1}')
+  fi
+# POMPAにデータを保存
+  kaigo_pompa_dir="/home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI"
+  mkdir -p ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}
+  lock_file=${kaigo_pompa_dir}/${shisetsu_select}/KAIGOJISSEKI_IKKATSU.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+  
+  if [ -e ${tmp}-moushiokuri ];then
+    if [ "${tateya}" = "01" ];then
+       if [ -e ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ];then
+          cat  ${tmp}-moushiokuri                                             |
+          awk '{print $0,"'${ShuseiId}'"}'               |
+          cat ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR -  |
+          self 1 13 12 2/11                                                                  |
+          LANG=C sort -k2,2 -k3,3n                                                    |
+          getlast 2 2                                                                        |
+          self 1 4/13 3 2                                                                    |
+          # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+          # 11:色 12:登録日時 13:ID
+          LANG=C sort -k1,1n -k12,12n                                             > ${tmp}-moushiokuri_pompa_new
+          # 削除の場合
+          if [ -z "$CareplanRenrakuDetail" -o "$CareplanRenrakuDetail" = "_" ] ; then 
+             cat ${tmp}-moushiokuri_pompa_new |
+             awk '$NF!="'${ShuseiId}'"'        > ${tmp}-moushiokuri_pompa_new2
+             mv ${tmp}-moushiokuri_pompa_new2 ${tmp}-moushiokuri_pompa_new
+          fi
+          mv ${tmp}-moushiokuri_pompa_new ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR          
+       else
+          cat ${tmp}-moushiokuri                                              |
+          tee $work_dir/moushiokuri_pompa_tmp |
+          awk '{print $0,"'${ShuseiId}'"}'                                    > ${tmp}-moushiokuri_pompa_new
+          mv ${tmp}-moushiokuri_pompa_new ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR
+       fi
+    else
+       if [ -e ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ];then
+          cat  ${tmp}-moushiokuri                                             |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時
+          awk '{print $0,"'${ShuseiId}'"}'               |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+          cat ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI -  |
+          self 1 13 12 2/11                                                                  |
+    # 1:利用者 2:ID 3:登録日時 4:作成日 5:申送り種別 6:時刻 7:対象 8:項目 9:記入者 10:日誌共有
+    # 11:支援経過共有 12:内容 13:色
+          LANG=C sort -k2,2 -k3,3n                                                    |
+          getlast 2 2                                                                        |
+          self 1 4/13 3 2                                                                    |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+          LANG=C sort -k1,1n -k12,12n                                             > ${tmp}-moushiokuri_pompa_new
+          # 削除の場合
+          if [ -z "$CareplanRenrakuDetail" -o "$CareplanRenrakuDetail" = "_" ] ; then 
+             cat ${tmp}-moushiokuri_pompa_new |
+             awk '$NF!="'${ShuseiId}'"'        > ${tmp}-moushiokuri_pompa_new2
+             mv ${tmp}-moushiokuri_pompa_new2 ${tmp}-moushiokuri_pompa_new
+          fi
+          mv ${tmp}-moushiokuri_pompa_new ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+       else
+          cat ${tmp}-moushiokuri                                              |
+          awk '{print $0,"'${ShuseiId}'"}'                                    > ${tmp}-moushiokuri_pompa_new
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容
+    # 11:色 12:登録日時 13:ID
+          mv ${tmp}-moushiokuri_pompa_new ${kaigo_pompa_dir}/${shisetsu_select}/${save_month}/${save_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+       fi
+    fi
+  else
+   :
+  fi
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+else
+  :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# データ作成
+# 連絡事項データ
+# 1:施設      2:ID            3:登録日付 4:登録時間           5:対象者
+# 6:施設ID    7:連絡事項詳細  8:確認者   9:申し送り反映フラグ 10:申送りID
+# 11:予備     12:連絡先事業所 13:相手先  14:訪問介護連絡ノートフラグ            15:訪問介護連絡ノートID
+# 16:予備３   17:予備４       18:予備５  19:有効フラグ        20:処理時間
+# 21:ユーザID
+if [ -z "$CareplanRenrakuDetail" -o "$CareplanRenrakuDetail" = "_" ] ; then 
+  if [ -z "${CareplanRenrakuID}" -o "${CareplanRenrakuID}" = "_" ] ; then 
+    : > $tmp-renraku_input
+  else
+    setInputDate=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)substr($1,9,2)}')
+    echo "$shisetsu" "$CareplanRenrakuID" "$setInputDate" "$inputTime" "$relStaff" "$relShisetsu" "$CareplanRenrakuDetail" \
+"_" "$checkMoushiokuri" "${ShuseiId}" "_" "${relJigyousho}" "${relAitesaki}" "${checkHoumonkaigoFlg}" "${HoumonkaigoRenrakuID}" "_" "_" "_" "9" "${sdaytime}" "${userid}"  > $tmp-renraku_input
+  fi
+  if [ "${checkHoumonkaigoFlg}" = "on" ] ; then
+    if [ -z "${HoumonkaigoRenrakuID}" -o "${HoumonkaigoRenrakuID}" = "_" ] ; then
+      : > $tmp-houmonkaigo_renraku_input
+    else
+      setInputDate=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)substr($1,9,2)}')
+      echo "$shisetsu" "$HoumonkaigoRenrakuID" "$setInputDate" "$inputTime" "$relStaff" "_" "$CareplanRenrakuDetail" \
+"_" "_" "_" "_" "_" "${relAitesaki}" "s" "_" "_" "_" "_" "9" "${sdaytime}" "${userid}"  > $tmp-houmonkaigo_renraku_input
+    fi
+  else
+    : > $tmp-houmonkaigo_renraku_input
+  fi
+else
+  setInputDate=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)substr($1,9,2)}')
+  echo "$shisetsu" "$CareplanRenrakuID" "$setInputDate" "$inputTime" "$relStaff" "$relShisetsu" "$CareplanRenrakuDetail" \
+"_" "$checkMoushiokuri" "${ShuseiId}" "_" "${relJigyousho}" "${relAitesaki}" "${checkHoumonkaigoFlg}" "${HoumonkaigoRenrakuID}" "_" "_" "_" "1" "${sdaytime}" "${userid}"  > $tmp-renraku_input
+
+  if [ "${checkHoumonkaigoFlg}" = "on" ] ; then
+    if [ -z "${HoumonkaigoRenrakuID}" -o "${HoumonkaigoRenrakuID}" = "_" ] ; then
+      : > $tmp-houmonkaigo_renraku_input
+    else
+      setInputDate=$(echo "$inputDate" | awk '{print substr($1,1,4)substr($1,6,2)substr($1,9,2)}')
+      echo "$shisetsu" "$HoumonkaigoRenrakuID" "$setInputDate" "$inputTime" "$relStaff" "_" "$CareplanRenrakuDetail" \
+"_" "_" "_" "_" "_" "${relAitesaki}" "s" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}"  > $tmp-houmonkaigo_renraku_input
+    fi
+  else
+    : > $tmp-houmonkaigo_renraku_input
+  fi
+
+fi
+
+# 他事業所に連絡する場合
+if [ "${relJigyousho}" != "_" ] ; then
+  cat $tmp-renraku_input |
+  # 関連施設、訪問介護フラグは他事業所には無関係なので"_"セット
+  awk '{$6="_";$14="_";$15="_";print $0}' > $tmp-renraku2_input
+fi
+
+cp $tmp-renraku_input $work_dir/houmonkaigo_renraku_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+CAREPLAN_RENRAKU/${shisetsu}/CAREPLAN_RENRAKU_JIKOU CAREPLAN_RENRAKU_JIKOU
+CAREPLAN_RENRAKU/${relJigyousho}/CAREPLAN_RENRAKU_JIKOU CAREPLAN_RENRAKU_JIKOU
+HOUMONKAIGO_RENRAKU/${shisetsu}/HOUMONKAIGO_RENRAKU_JIKOU HOUMONKAIGO_RENRAKU_JIKOU
+FIN
+
+input_detail_dir=CAREPLAN_RENRAKU_JIKOU/${shisetsu}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+renraku CAREPLAN_RENRAKU_JIKOU 2 20 21 ${pompa_dir}/CAREPLAN_RENRAKU/${shisetsu} ${input_dir}
+renraku2 CAREPLAN_RENRAKU_JIKOU 2 20 21 ${pompa_dir}/CAREPLAN_RENRAKU/${relJigyousho} ${input_dir}
+houmonkaigo_renraku HOUMONKAIGO_RENRAKU_JIKOU 2 20 21 ${houmonkaigo_pompa_dir}/HOUMONKAIGO_RENRAKU/${shisetsu} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+
+
+
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+   
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${shisetsu}'"||$2!="'${ScheduleID}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+echo "CareplanRenrakuID ${CareplanRenrakuID}"
+
+rm -f ${tmp}-*
+exit 0

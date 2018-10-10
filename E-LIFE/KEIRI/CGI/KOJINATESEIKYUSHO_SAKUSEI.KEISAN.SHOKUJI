@@ -1,0 +1,342 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.SHOKUJI 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+#------------------------------------------
+# 食事実績代の集計
+
+# 食事実績は単純に入居者ごとの金額を合計すればよい
+# 食事実績の自身のメイン食事(朝昼晩)をカウントして、備考欄に表示する
+# 欠食は3回連続で欠食ごとに1000円(税抜き)返金する。欠食もメイン食事(朝昼晩)をカウントして備考欄に表示する
+
+# 食事実績
+# ${seikyu_dir}/SHOKUJI/${施設}/${建屋}/${年月}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+# 1:利用者      2:施設      3:建屋              4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事区分  8:食事ID            9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分   13:税率             14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量     18:合計金額(税抜き) 19:合計税金額(税額のみ) 20:合計金額(税込み)
+# 21:予備       22:予備     23:予備             24:予備                 25:予備
+# 26:削除フラグ 27:更新時間 28:更新者
+
+# 食事区分の値
+# １：朝　２：昼　３：夜　４：おやつ　５：その他
+
+# 欠食テーブル(欠食した記録のみ。このファイルから欠食をカウントする作業が必要)
+# ${seikyu_dir}/SHOKUJI/${施設}/${建屋}/${年月}/RIYOUSHA_KESSHOKU
+# 1:利用者ID 2:施設ID     3:建屋ID     4:居室     5:欠食年月日
+# 6:欠食食事 7:入院外泊ID 8:削除フラグ 9:更新時間 10:更新者
+
+# 前月の欠食テーブル
+# ${seikyu_dir}/SHOKUJI/${施設}/${建屋}/${年月}/RIYOUSHA_KESSHOKU_KAKUTEI
+# 1:利用者ID 2:欠食年月日 3:欠食食事区分 4:欠食
+
+# 欠食の値
+# @:欠食なし 1:連続で一回目 2:連続で二回目 KESSHOKU${数字}:連続で三回目(返金発生)
+
+# 食事区分テーブル(備考欄の表示に使用)
+cat << FIN > ${tmp}-shokuji_kubun
+1 朝食
+2 昼食
+3 夕食
+FIN
+#------------------------------------------
+
+#------------------------------------------
+# ファイルがなければここで終了
+[ ! -e ${seikyu_dir}/SHOKUJI/${shisetsu}/*/${seikyu_syori_month}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA ] && exit 0
+#------------------------------------------
+
+#------------------------------------------
+# 実績の食事代の集計
+# ケアの食事はいじらず
+ls -l ${seikyu_dir}/SHOKUJI/${shisetsu}/02/${seikyu_syori_month}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+self NF                            |
+while read File ; do
+  cat ${File}                      |
+  awk '$26!="9"'
+done                               |
+self 1 5 7 18/20                   |
+# 1:利用者           2:入居者ゲストフラグ 3:食事区分 4:合計金額(税抜き) 5:合計税金額(税額のみ)
+# 6:合計金額(税込み)
+LANG=C sort                        |
+# 実績が0円のレコードは除く
+awk '$4!=0'                        |
+############################################### 食事代と食事追加代で行を分けるとなったらここで分ける
+# 食事回数の集計のためにも一旦ファイルへ吐き出し
+tee  ${tmp}-shokuji_kihon_data     |
+# 1:利用者           2:入居者ゲストフラグ 3:食事区分 4:合計金額(税抜き) 5:合計税金額(税額のみ)
+# 6:合計金額(税込み)
+sm2 1 1 4 6                        > ${tmp}-shokuji_keisan_kekka_care
+# 1:利用者 2:合計金額(税抜き) 3:合計税金額(税額のみ) 4:合計金額(税込み)
+
+# シニア別にする
+ls -l ${seikyu_dir}/SHOKUJI/${shisetsu}/01/${seikyu_syori_month}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+self NF                            |
+while read File ; do
+  cat ${File}                      |
+  awk '$26!="9"'
+done                               |
+self 1 5 7 18/20 17 11             |
+# 1:利用者           2:入居者ゲストフラグ 3:食事区分 4:合計金額(税抜き) 5:合計税金額(税額のみ)
+# 6:合計金額(税込み) 7:数量  8:食事種類ID
+LANG=C sort                        |
+# 実績が0円のレコードは除く
+awk '$4!=0'                        > $tmp-shokuji_kihon_senior
+# 1:利用者           2:入居者ゲストフラグ 3:食事区分 4:合計金額(税抜き) 5:合計税金額(税額のみ)
+# 6:合計金額(税込み) 7:数量  8:食事種類ID
+cat $tmp-shokuji_kihon_senior      |
+# 1:利用者           2:入居者ゲストフラグ 3:食事区分 4:合計金額(税抜き) 5:合計税金額(税額のみ)
+# 6:合計金額(税込み) 7:数量  8:食事種類ID
+cjoin0 +ng key=2 <(echo "1")       > $tmp-shokuji_main_pre 2> $tmp-shokuji_sonota_kihon
+cjoin0 +ng key=3 <(echo "1 2 3" | tarr) $tmp-shokuji_main_pre  > $tmp-shokuji_kihon_main_pre 2> $tmp-shokuji_sonota_omake_pre
+cjoin0 +ng key=8 <(echo "01") $tmp-shokuji_kihon_main_pre > $tmp-shokuji_kihon_main 2> $tmp-shokuji_sonota_omake_2
+cat $tmp-shokuji_sonota_omake_pre $tmp-shokuji_sonota_omake_2  > $tmp-shokuji_sonota_omake
+cat $tmp-shokuji_sonota_kihon $tmp-shokuji_sonota_omake        |
+LANG=C sort -k1,1                                              > $tmp-shokuji_kihon_sonota
+
+LANG=C sort -k1,1 $tmp-shokuji_kihon_main | sm2 1 1 4 6   > ${tmp}-shokuji_keisan_kekka_senior_main
+sm2 1 1 4 6 $tmp-shokuji_kihon_sonota  > ${tmp}-shokuji_keisan_kekka_senior_sonota
+# 1:利用者 2:合計金額(税抜き) 3:合計税金額(税額のみ) 4:合計金額(税込み)
+
+# シニアとケア合体
+cat ${tmp}-shokuji_keisan_kekka_care ${tmp}-shokuji_keisan_kekka_senior_main ${tmp}-shokuji_keisan_kekka_senior_sonota > ${tmp}-shokuji_keisan_kekka
+#------------------------------------------
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------------------------
+
+# --------------------------------------
+# ファイルなければここで終了(実績ファイルあっても0円をはじくと空なので)
+[ ! -s ${tmp}-shokuji_keisan_kekka ] && exit 0
+# --------------------------------------
+
+#------------------------------------------
+# 内訳に表示する食事回数の集計(下記条件で集計)
+#   入居者ゲストフラグ＝1：本人
+#   食事区分＝1と2と3(朝昼晩＝メイン食事)
+cat ${tmp}-shokuji_kihon_data      |
+cjoin0 key=2 <(echo "1")           |
+cjoin0 key=3 <(echo "1 2 3" | tarr) - |
+self 1 3                           |
+# 1:利用者 2:食事区分
+LANG=C sort                        |
+count 1 2                          > ${tmp}-shokuji_bikou_kari
+# 1:利用者 2:食事区分 3:回数
+#------------------------------------------
+
+# シニアも別にやっとく
+# 内訳に表示する食事回数の集計(下記条件で集計)
+#   入居者ゲストフラグ＝1：本人
+#   食事区分＝1と2と3(朝昼晩＝メイン食事)
+self 1 3 7 ${tmp}-shokuji_kihon_main |
+# 1:利用者 2:食事区分 3:数量
+LANG=C sort                        |
+sm2 1 2 3 3                        > ${tmp}-shokuji_senior_bikou_kari
+# 1:利用者 2:食事区分 3:回数
+#------------------------------------------
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------------------------
+
+# --------------------------------------
+# メインの食事がなかったとき${tmp}-shokuji_bikou_kariが空で
+# join落ちてしまうので＠埋めのファイルを作成する
+
+[ ! -s ${tmp}-shokuji_bikou_kari ] && echo "@ @ @" > ${tmp}-shokuji_bikou_kari
+[ ! -s ${tmp}-shokuji_senior_bikou_kari ] && echo "@ @ @" > ${tmp}-shokuji_senior_bikou_kari
+# --------------------------------------
+
+#------------------------------------------
+# 回数が0だった(上記ファイルにいない食事)も表示したい
+self 1 ${tmp}-shokuji_bikou_kari   |
+LANG=C sort -u                     |
+awk '{print $0,"1","2","3"}'       |
+tarr num=1                         |
+LANG=C sort                        |
+# 1:利用者 2:食事区分
+join2 +0 key=1/2 ${tmp}-shokuji_bikou_kari - |
+# 1:利用者 2:食事区分 3:食事回数
+LANG=C sort -k2,2                  |
+join1 key=2 ${tmp}-shokuji_kubun   |
+# 1:利用者 2:食事区分 3:食事名 4:食事回数
+LANG=C sort                        |
+yarr num=1                         |
+# 1:利用者       2:食事区分(1) 3:食事名(朝食) 4:食事回数     5:食事区分(2)
+# 6:食事名(昼食) 7:食事回数    8:食事区分(3)  9:食事名(夕食) 10:食事回数
+delf 2 5 8                         |
+# 1:利用者       2:食事名(朝食) 3:食事回数 4:食事名(昼食) 5:食事回数
+# 6:食事名(夕食) 7:食事回数
+#awk '{print $1,$2":"$3"回　"$4":"$5"回　"$6":"$7"回"}' |
+awk '{bikou_year_month=substr('${seikyu_syori_month}',1,4)"年"substr('${seikyu_syori_month}',5,2)"月分";
+      print $1,bikou_year_month"　"$2":"$3"回　"$4":"$5"回　"$6":"$7"回"}' |
+# 1:利用者 2:食事内容
+LANG=C sort                        > ${tmp}-shokuji_bikou
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SHOKUJI)"
+
+self 1 ${tmp}-shokuji_senior_bikou_kari   |
+LANG=C sort -u                     |
+awk '{print $0,"1","2","3"}'       |
+tarr num=1                         |
+LANG=C sort                        |
+# 1:利用者 2:食事区分
+join2 +0 key=1/2 ${tmp}-shokuji_senior_bikou_kari - |
+# 1:利用者 2:食事区分 3:食事回数
+LANG=C sort -k2,2                  |
+join1 key=2 ${tmp}-shokuji_kubun   |
+# 1:利用者 2:食事区分 3:食事名 4:食事回数
+LANG=C sort                        |
+yarr num=1                         |
+# 1:利用者       2:食事区分(1) 3:食事名(朝食) 4:食事回数     5:食事区分(2)
+# 6:食事名(昼食) 7:食事回数    8:食事区分(3)  9:食事名(夕食) 10:食事回数
+delf 2 5 8                         |
+# 1:利用者       2:食事名(朝食) 3:食事回数 4:食事名(昼食) 5:食事回数
+# 6:食事名(夕食) 7:食事回数
+#awk '{print $1,$2":"$3"回　"$4":"$5"回　"$6":"$7"回"}' |
+awk '{bikou_year_month=substr('${seikyu_syori_month}',1,4)"年"substr('${seikyu_syori_month}',5,2)"月分";
+      print $1,bikou_year_month"　"$2":"$3"回　"$4":"$5"回　"$6":"$7"回"}' |
+# 1:利用者 2:食事内容
+LANG=C sort                        > ${tmp}-shokuji_senior_bikou
+
+# 補足
+# メインの食事がなかった場合の${tmp}-shokuji_bikouは
+# @ 朝食:0回　昼食:0回　夕食:0回
+# が入る
+#------------------------------------------
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------------------------
+
+#------------------------------------------
+# 食事実績の明細データ作成
+# -
+# レコードの発生した年月日：代表して請求年月の月初とする
+# 行分類フラグ：10施設利用料明細行(実績だが施設利用料の食事と合わせて表示したいので)
+# 項目ID：食事実績はshokuji
+# -
+join2 key=1 ${tmp}-shokuji_bikou ${tmp}-shokuji_keisan_kekka_care |
+# 1:入居者ID 2:内訳1 3:合計金額(税抜き) 4:合計税金額(税額のみ) 5:合計金額(税込み)
+awk '{if($2=="_")
+        {$2=substr('${seikyu_syori_month}',1,4)"年"substr('${seikyu_syori_month}',5,2)"月分　朝食:0回　昼食:0回　夕食:0回"};
+      print}' -                    |
+awk '{print $0,"shokuji","'${seikyu_syori_month}'","'${seikyu_syori_month}'01","10","0","1","'${current_time}'","'${userid}'","_"}' - |
+# 1:入居者ID 2:内訳1     3:合計金額(税抜き) 4:合計税金額(税額のみ) 5:合計金額(税込み)
+# 6:項目ID   7:処理月    8:請求年月日       9:行分類フラグ         10:0
+# 11:1       12:更新時間 13:更新者          14:_
+self 7  1  9  NF 6  NF 8  11 3  5  \
+     4  2  NF 10 NF NF NF NF NF NF \
+     NF NF NF NF 11 12 13          |
+# 1:処理月       2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約項目枝番 7:請求年月日 8:1            9:金額(税抜き)    10:金額(税込み)
+# 11:税額        12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備        17:予備      18:予備        19:予備           20:予備
+# 21:予備        22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間    27:更新者
+LANG=C sort                        > ${tmp}-shokuji_input_care #集計対象!!
+#------------------------------------------
+join2 key=1 ${tmp}-shokuji_senior_bikou ${tmp}-shokuji_keisan_kekka_senior_main |
+# 1:入居者ID 2:内訳1 3:合計金額(税抜き) 4:合計税金額(税額のみ) 5:合計金額(税込み)
+awk '{if($2=="_")
+        {$2=substr('${seikyu_syori_month}',1,4)"年"substr('${seikyu_syori_month}',5,2)"月分　朝食:0回　昼食:0回　夕食:0回"};
+      print}' -                    |
+awk '{print $0,"shokuji_senior","'${seikyu_syori_month}'","'${seikyu_syori_month}'01","10","0","1","'${current_time}'","'${userid}'","_"}' - |
+# 1:入居者ID 2:内訳1     3:合計金額(税抜き) 4:合計税金額(税額のみ) 5:合計金額(税込み)
+# 6:項目ID   7:処理月    8:請求年月日       9:行分類フラグ         10:0
+# 11:1       12:更新時間 13:更新者          14:_
+self 7  1  9  NF 6  NF 8  11 3  5  \
+     4  2  NF 10 NF NF NF NF NF NF \
+     NF NF NF NF 11 12 13          |
+# 1:処理月       2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約項目枝番 7:請求年月日 8:1            9:金額(税抜き)    10:金額(税込み)
+# 11:税額        12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備        17:予備      18:予備        19:予備           20:予備
+# 21:予備        22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間    27:更新者
+LANG=C sort                        > ${tmp}-shokuji_input_senior_main #集計対象!!
+#------------------------------------------
+#------------------------------------------
+cat ${tmp}-shokuji_keisan_kekka_senior_sonota                                   |
+awk '{print $1,"'${seikyu_syori_month}'",$2,$3,$4}'                             |
+awk '{print $1,substr($2,1,4)"年"substr($2,5,2)"月分",$3,$4,$5}'            |
+awk '{print $0,"shokuji","'${seikyu_syori_month}'","'${seikyu_syori_month}'01","10","0","1","'${current_time}'","'${userid}'","_"}' - |
+# 1:入居者ID 2:内訳1     3:合計金額(税抜き) 4:合計税金額(税額のみ) 5:合計金額(税込み)
+# 6:項目ID   7:処理月    8:請求年月日       9:行分類フラグ         10:0
+# 11:1       12:更新時間 13:更新者          14:_
+self 7  1  9  NF 6  NF 8  11 3  5  \
+     4  2  NF 10 NF NF NF NF NF NF \
+     NF NF NF NF 11 12 13          |
+# 1:処理月       2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約項目枝番 7:請求年月日 8:1            9:金額(税抜き)    10:金額(税込み)
+# 11:税額        12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備        17:予備      18:予備        19:予備           20:予備
+# 21:予備        22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間    27:更新者
+LANG=C sort                        > ${tmp}-shokuji_input_senior_sonota #集計対象!!
+#------------------------------------------
+# 合体
+cat ${tmp}-shokuji_input_care ${tmp}-shokuji_input_senior_main ${tmp}-shokuji_input_senior_sonota |
+LANG=C sort                        > ${tmp}-SHOKUJI_INPUT
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------------------------
+
+# --------------------
+# 列チェック
+
+[ "$(retu ${tmp}-SHOKUJI_INPUT)" != "27" ] && error_exit "処理中にエラーが発生しました(SHOKUJI)"
+[ "$(retu ${tmp}-SHOKUJI_INPUT | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(SHOKUJI)"
+[ "$(awk 'NF!="27"' ${tmp}-SHOKUJI_INPUT | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------
+
+# --------------------
+# 処理開始時の合計額と最終的に作成したファイルの合計額の確認
+
+start_goukei="$(self 4 ${tmp}-shokuji_keisan_kekka | sm2 0 0 1 1)"
+end_goukei="$(self 10 ${tmp}-SHOKUJI_INPUT | sm2 0 0 1 1)"
+[ "${start_goukei}" != "${end_goukei}" ] && error_exit "処理中にエラーが発生しました(SHOKUJI)"
+# --------------------
+#---------------------------------------------------------------
+
+exit 0
+

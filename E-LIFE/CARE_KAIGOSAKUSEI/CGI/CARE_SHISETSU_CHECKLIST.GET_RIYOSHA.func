@@ -1,0 +1,402 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_IKKATSU.GET_RIYOSHA.CGI : _FLOORまたは_UNITを選択してRIYOSHAを返す
+#                     
+#
+# Usage : KAIGOJISSEKI_IKKATSU.GET_RIYOSHA.CGI
+#         POST メソッドで _FLOOR_CODE を渡す。
+#
+# Written by Jun Aoyagi  
+
+function setRiyoushaData () {
+
+# ディレクトリ設定
+local _home_dir="/home/hands"
+local _app_name="$3"
+local _app_dir="${_home_dir}/E-LIFE/${_app_name}"
+local _cgi_dir="${_app_dir}/CGI"
+local _html_dir="${_app_dir}/HTML"
+local _pompa_dir="${_app_dir}/POMPA"
+local _app_tbl_dir="${_app_dir}/TBL"
+local _kyoutsu_dir="${_home_dir}/E-LIFE/KYOUTSU/HTML"
+local _riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+local _tbl_dir="${_home_dir}/E-LIFE/TBL"
+local _work="${_app_dir}/WORK"
+local _htmlfile_in="$4"
+
+local _namefile="$1"
+local _type="$2"
+local _htmlfile_out="$5"
+
+local _today=$(date +%Y%m%d)
+
+
+
+## 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 各パラーメタ取得
+# 選択しているSHISETSU_CODE
+local _shisetsu=$(nameread "shisetsu" $_namefile)
+local _floor=$(nameread "floor" $_namefile)
+local _unit=$(nameread "unit" $_namefile)
+local _room=$(nameread "room" $_namefile)
+local _riyosha_name=$(nameread "riyosha_name" $_namefile)
+
+
+##モードがセットされてない場合はフロアで処理
+#if [ "$_type"  = "" ] ; then
+#
+#  local _type="floor"
+#  local _shisetsu=$(nameread "shisetsu" $_namefile)
+#  #_floorの値は ${tmp}-floor作成後にセット
+#
+#fi
+
+
+#local _room=""
+local _FLOOR=""
+#local _floor=""
+local _UNIT=""
+#local _unit=""
+
+
+echo $_shisetsu > $tmp-shisetsu
+# ユニットマスタの準備
+cat ${_tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${_riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2 3                                                    > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${_riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ "$_shisetsu" = "0007" ];then
+  join0 key=2 <(echo "00")
+else
+  join0 key=2 <(echo "02")
+fi |
+awk '$8>="'${_today}'"'  |
+self 1/6 > $tmp-riyosha_status
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+
+
+echo '_ 選択してください' > $tmp-riyosha_header
+echo "---" > $tmp-room_select
+echo "--- --- " > $tmp-room_select2
+
+if [ "$_type" = "init" ]; then
+
+  #何も選択されていない場合は初期表示状態を作成
+  # _floor一覧
+  self 3 $tmp-riyosha_status   |
+  LANG=C sort -u -k1,1n        |
+  awk '{print $1,$1"F","'${_floor}'"}'       |
+  awk '{if($1==$3){$3="selected"}else{$3="@"};print}' > ${tmp}-floor
+
+  #先頭のフロアをセット
+   _floor=$(awk '{print $1 }' ${tmp}-floor | head -n 1 )
+
+  # _unit
+  cat $tmp-riyosha_status                           |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  join0 key=3 <(echo "${_floor}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                         |
+  join1 key=1 $tmp-unit_master                                 > $tmp-unit
+
+  # _room
+#  echo "---" > $tmp-room_select
+  cat $tmp-riyosha_status                            |
+  join0 key=3 <(echo "${_floor}")                               |
+  self 5                                                       |
+#  cat $tmp-room_select2 - |
+  awk '{print $1,$1}'    |
+  cat $tmp-room_select2 -  > $tmp-room
+
+  # member
+#  _room="---"
+#  echo '_ 選択してください' > $tmp-riyosha_header
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$3=="'${_floor}'"{print $6,$5}'              |
+  # 1:利用者ID 2:居室 3:部屋name
+  LANG=C sort -k1,1                                            |
+  join1 key=1 $tmp-riyosha_master                              |
+  # 1:利用者id 2:利用者名 3:かな 4:居室 5:室name
+  LANG=C sort -k3,3 -u                                         |
+  self 1 2 |
+  cat $tmp-riyosha_header - > $tmp-riyosha
+
+
+elif [ "$_type" = "floor" ]; then
+  # _floor一覧
+  self 3 $tmp-riyosha_status   |
+  LANG=C sort -u -k1,1n        |
+  awk '{print $1,$1"F","'${_floor}'"}'       |
+  awk '{if($1==$3){$3="selected"}else{$3="@"};print}' > ${tmp}-floor
+
+#  #フロアが選択されていない場合、先頭のフロアをセット
+#  if [ "${_floor}" = "" ] ; then
+#     _floor=$(awk '{print $1 }' ${tmp}-floor | head -n 1 )
+#  fi
+
+  # _unit
+  cat $tmp-riyosha_status                           |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  join0 key=3 <(echo "${_floor}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                         |
+  join1 key=1 $tmp-unit_master                                 > $tmp-unit
+
+  # _room
+#  echo "---" > $tmp-room_select
+  cat $tmp-riyosha_status                            |
+  join0 key=3 <(echo "${_floor}")                               |
+  self 5                                                       |
+#  cat $tmp-room_select - |
+  awk '{print $1,$1}'                           |
+  cat $tmp-room_select2 -  > $tmp-room
+
+  # member
+#  _room="---"
+#  echo '_ 選択してください' > $tmp-riyosha_header
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$3=="'${_floor}'"{print $6,$5}'              |
+  # 1:利用者ID 2:居室 3:部屋name
+  LANG=C sort -k1,1                                            |
+  join1 key=1 $tmp-riyosha_master                              |
+  # 1:利用者id 2:利用者名 3:かな 4:居室 5:室name
+  LANG=C sort -k3,3 -u                                         |
+  self 1 2 |
+  cat $tmp-riyosha_header - > $tmp-riyosha
+
+
+elif [ "$_type" = "unit" ];then
+  # _floor一覧
+  self 3 4 $tmp-riyosha_status                                 |
+  LANG=C sort -u -k1,2n                                        |
+  awk '{print $0,"'${_floor}'"}'                                 |
+  awk '{if($2==$3){print $1,$1"F","selected"}else{print $1,$1"F",""}}'         > $tmp-floor
+
+  # _unit
+  cat $tmp-riyosha_status                            |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  join0 key=3 <(echo "${_floor}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${_unit}'"}'                                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > $tmp-unit
+  
+  cat $tmp-riyosha_status                            |
+  awk '$4=="'${_unit}'"{print $5}'                              |
+#  cat $tmp-room_select - |
+  awk '{print $1,$1,"'${_room}'"}'                           |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'  |
+  cat $tmp-room_select2 -  > $tmp-room
+
+  # member
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${_unit}'"{print $6}'                              |
+  LANG=C sort -k1,1                                            |
+  join1 key=1 $tmp-riyosha_master                              |
+  LANG=C sort -k3,3 -u                                         |
+  cat $tmp-riyosha_header -  > $tmp-riyosha
+
+elif [ "${_type}" = "room" ];then
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  LANG=C sort -k5,5                                            |
+  join0 key=5 <(echo "${_room}")                                |
+  self 3 4                                                     |
+  LANG=C sort -u -k1,2                                         > $tmp-floor_unit
+  _UNIT=$(cat $tmp-floor_unit | self 2 | tail -n1)
+  _FLOOR=$(cat $tmp-floor_unit | self 1 | tail -n1)
+  # _floor
+  self 3 $tmp-riyosha_status                                   |
+  LANG=C sort -u                                               |
+  awk '{print $0,"'${_FLOOR}'"}'                                |
+  awk '{if($1==$2){print $1,$1"F","selected"}else{print $1,$1"F",""}}' > $tmp-floor
+  # _unit
+  cat $tmp-riyosha_status  |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  join0 key=3 <(echo "${_FLOOR}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                         |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${_UNIT}'"}'                                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > $tmp-unit
+
+  awk '$3=="'${_FLOOR}'"{print $5}' $tmp-riyosha_status                   |
+#  cat $tmp-room_select - |
+  awk '{print $1,$1,"'${_room}'"}'                           |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' |
+  cat $tmp-room_select2 -  > $tmp-room
+  
+  # member
+  awk '$3=="'${_FLOOR}'"{print $0,"'${_room}'"}' $tmp-riyosha_status  |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id 7:居室name
+  LANG=C sort -k6,6                                            |
+  join1 key=6 $tmp-riyosha_master                              |
+  # 1:施設 2:建屋 3;フロア 4;ユニット 5:部屋番号 6:
+  LANG=C sort -k8,8                                            |
+  awk '{if($5==$9){print $6,$7,"selected"}else{print $6,$7,"@"}} ' |
+  cat $tmp-riyosha_header - > $tmp-riyosha
+
+
+elif [ "$_type" = "riyosha_name" ];then
+
+  cat $tmp-riyosha_status                           |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  LANG=C sort -k6,6                                           |
+  join0 key=6 <(echo "${_riyosha_name}")                        |
+  self 3 4                                                     |
+  LANG=C sort -u -k1,2n                                        > $tmp-floor_unit
+  _UNIT=$(cat $tmp-floor_unit | self 2)
+  _FLOOR=$(cat $tmp-floor_unit | self 1)
+
+  # _unit
+  cat $tmp-riyosha_status       |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  join0 key=3 <(echo "${_FLOOR}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${_UNIT}'"}'                                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > $tmp-unit
+
+  # _floor
+  self 3 $tmp-riyosha_status                                   |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $0,"'${_FLOOR}'"}'                                |
+  awk '{if($1==$2){print $1,$1"F","selected"}else{print $1,$1"F",""}}' > $tmp-floor
+  
+  # _room
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+#20150929add
+  join0 key=3 <(echo "${_FLOOR}")                               |
+  awk '{print $0,"'${_riyosha_name}'"}'                         |
+
+  awk '{if($6==$7){print $5,$5,"selected"}else{print $5,$5,"@"}} ' |
+  LANG=C sort -k1,2 -u                                         |
+  cat $tmp-room_select2 -  > $tmp-room
+
+  # member
+  awk '$3=="'${_FLOOR}'"{print $6}' $tmp-riyosha_status         |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  LANG=C sort -k1,1                                            |
+  join1 key=1 $tmp-riyosha_master                              |
+  LANG=C sort -k3,3                                            |
+  awk '{print $0,"'${_riyosha_name}'"}'                         |
+  awk '{if($1==$4){print $1,$2,"selected"}else{print $1,$2,""}} '|
+  cat $tmp-riyosha_header - > $tmp-riyosha
+
+else
+  _room=$_type
+  cat $tmp-riyosha_status                                      |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  LANG=C sort -k5,5                                            |
+  join0 key=5 <(echo "${_room}")                                |
+  self 3 4                                                     |
+  LANG=C sort -u -k1,2                                         > $tmp-floor_unit
+  _UNIT=$(cat $tmp-floor_unit | self 2 | tail -n1)
+  _FLOOR=$(cat $tmp-floor_unit | self 1 | tail -n1)
+  # _floor
+
+  self 3 $tmp-riyosha_status                                   |
+  LANG=C sort -u                                               |
+  awk '{print $0,"'${_FLOOR}'"}'                                |
+  awk '{if($1==$2){print $1,$1"F","selected"}else{print $1,$1"F",""}}' > $tmp-floor
+  # _unit
+  cat $tmp-riyosha_status  |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  join0 key=3 <(echo "${_FLOOR}")                               |
+  self 4                                                       |
+  LANG=C sort -u -k1,1                                         |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${_UNIT}'"}'                                 |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > $tmp-unit
+
+  awk '$3=="'${_FLOOR}'"{print $5}' $tmp-riyosha_status                   |
+  awk '{print $1,$1,"'${_room}'"}'                           |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' |
+  cat $tmp-room_select2 - > $tmp-room
+  
+  # member
+  awk '$3=="'${_FLOOR}'"{print $0,"'${_room}'"}' $tmp-riyosha_status  |
+  # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id 7:居室name
+  LANG=C sort -k6,6                                            |
+  join1 key=6 $tmp-riyosha_master                              |
+  # 1:施設 2:建屋 3;フロア 4;ユニット 5:部屋番号 6:
+  LANG=C sort -k8,8                                            |
+  awk '{if($5==$9){print $6,$7,"selected"}else{print $6,$7,"@"}} '|
+  cat $tmp-riyosha_header - > $tmp-riyosha
+
+
+
+fi
+
+########################################################################################
+## formhame前の実態参照変換
+#calsed "&" "&amp;" ${namefile}                      |
+#calsed "<" "&lt;"                                   |
+#calsed ">" "&gt;"                                   |
+#calsed "\"" "&quot;"                                |
+## formhame前にキーワードが　"_"　のみの場合、消去
+#awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+## formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+#awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+#
+#######################################################################################
+
+# formhameの準備
+#_floor=$(echo ${_floor})
+#_unit=$(echo ${_unit})
+
+
+#######################################################################################
+# namefileの再構成
+
+#cat <<- FIN > ${tmp}-name
+#_floor ${_floor}
+#FIN
+
+
+# ajaxモード（出力先HTMLが指定されている）の場合
+if [ "$_htmlfile_out" != ""  ] ;then
+
+  # HTMLを作成
+  awk '/\<ajax_start\>/,/\<ajax_end\>/' ${_html_dir}/${_htmlfile_in} |
+  mojihame -l###FLOOR_NAME### - $tmp-floor        |
+  mojihame -l###UNIT_NAME###  - $tmp-unit       |
+  mojihame -l###ROOM_NAME###  - $tmp-room       |
+  mojihame -l###RIYOSHA_NAME###  - $tmp-riyosha > $_htmlfile_out
+
+fi
+
+# HTML の出力
+#cat << FIN | cat - $tmp-html
+#Content-Type: text/html; charset=UTF-8;
+
+#FIN
+
+# 終了
+#ここでは削除しない
+#rm -f $tmp-*
+#exit 0
+
+return 0
+
+}

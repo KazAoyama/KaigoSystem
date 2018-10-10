@@ -1,0 +1,189 @@
+#!/bin/bash
+#
+# KAIGOSHIENKEIKA_HOUMONKAIGO.DISPLAY
+# 介護支援経過　表示用CGI
+#
+# Written by K.Aoyama :20131204
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 計画作成日
+# [ -z "${hdKeikakuSakuseiDate}" -o "" = "_" ] && error_exit "計画作成日が不明です"
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KAIGOSHIENKEIKA_HOUMONKAIGO |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   > $tmp-data_keika_houmonkaigo
+
+# 最新作成日を取得
+cat $tmp-data_keika_houmonkaigo |
+self 2 |
+LANG=C sort -k1,1 |
+tail -1 > $tmp-latest_sakuseibi
+
+latestSakuseiDate=$(self 1 $tmp-latest_sakuseibi)
+setSakuseiDate=$(mdate today | self 1.1.6 | awk '{print $1"01"}')
+
+# 今月中に別作成日の日付があれば、そちらを優先。なければ今月１日の日付をセット
+[ ${latestSakuseiDate} -gt ${setSakuseiDate} ] && setSakuseiDate=${latestSakuseiDate}
+
+# 作成日付が無いときは月最初の日をセット
+[ -z "${hdSakuseiDate}" -o "$hdSakuseiDate" = "_" ] && hdSakuseiDate=${setSakuseiDate}
+#[ -z "${hdSakuseiDate}" -o "" = "_" ] && hdSakuseiDate=$(mdate today | self 1)
+
+echo "d" "${hdSakuseiDate}" > $tmp-sakuseidate
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat $tmp-data_keika_houmonkaigo  |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${hdSakuseiDate}" -o "${hdSakuseiDate}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdSakuseiDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+# 削除フラグ、更新日付をはずす
+#delf NF-2/NF            |
+tee $work_dir/shien_base |
+#--------------------------------------------------------------
+LANG=C sort -k1,3        > ${tmp}-shien_base
+
+# 指定作成日の次の介護支援経過の日を検索
+cat $tmp-kaigoshienkeika_work          |
+LANG=C sort -k1,2                      |
+getlast 1 2 |
+tee $tmp-shiendate_list |
+self 1 2    |
+ychange num=1  |
+awk '$2=="'${hdSakuseiDate}'"{print $3}'  > $tmp-nextdate
+
+# 支援経過の最初の日を取得
+shien_first=$(head -1 $tmp-shiendate_list | self 2)
+
+cp $tmp-nextdate $work_dir/nextdate
+
+dispFirstdate=${hdSakuseiDate}
+dispLastdate=${hdSakuseiDate}
+
+if [ "$(gyo $tmp-nextdate)" = "1" -a "$(retu $tmp-nextdate)" = "1" ] ; then
+  # 支援経過の初期作成の場合は申し送りの対象は９０日前から
+  if [ "$shien_first" = "${hdSakuseiDate}" ] ; then
+    dispFirstdate=$(mdate ${hdSakuseiDate}/-90)
+  else
+    dispFirstdate=${hdSakuseiDate}
+  fi
+  dispLastdate=$(self 1 $tmp-nextdate)
+#else
+  #dispFirstdate=${hdSakuseiDate}
+  #dispLastdate=$(mdate today | self 1)
+#  dispFirstdate=$(mdate ${hdSakuseiDate}/-90)
+#  dispLastdate=${hdSakuseiDate}
+fi
+
+# 最初の介護支援経過作成の場合は３か月前からの申し送りを抽出
+if [ "$(gyo ${tmp}-shien_base)" = "0" ] ; then
+   dispFirstdate=$(mdate ${hdSakuseiDate}/-90)
+   dispLastdate=${hdSakuseiDate}
+fi
+
+dispFirstmonth=$(echo $dispFirstdate | awk '{print substr($1,1,6)}' | self 1)
+dispLastmonth=$(echo $dispLastdate| awk '{print substr($1,1,6)}' | self 1)
+
+echo "$dispFirstmonth" "$dispLastmonth" |
+mdate 1m 2m                             |
+mdate -e 3m +2                          |
+delf 1 2                                |
+tarr                                    > $tmp-kikan_month
+
+# 施設
+cat ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS    |
+awk '$6=="'${Riyoushaid}'"&&$7<="'$dispLastdate'"&&"'$dispLastdate'"<=$8{print $1,$2}' > $tmp-disp_shisetsu
+
+taishouShisetsu=$(self 1 $tmp-disp_shisetsu)
+taishouTateya=$(self 2 $tmp-disp_shisetsu)
+
+: > $tmp-moushiokuri
+if [ "${taishouTateya}" = "02" ] ; then
+  cat $tmp-kikan_month |
+  while read kijunmonth ; do
+    if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$kijunmonth/$kijunmonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ] ; then
+      cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$kijunmonth/$kijunmonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+      awk '$1=="'${Riyoushaid}'"&&$2>="'$dispFirstdate'"&&$2<="'$dispLastdate'"&&$9=="on"{print $1,"'$hdSakuseiDate'","m",$2,substr($2,1,4)"年"int(substr($2,5,2))"月"int(substr($2,7,2))"日",$4,"申し送り",$10,"1",$12,substr($7,1,5)}' >> $tmp-moushiokuri
+    fi
+  : ;done
+else
+  cat $tmp-kikan_month |
+  while read kijunmonth ; do
+    if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$kijunmonth/$kijunmonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ] ; then
+      cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$kijunmonth/$kijunmonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR  |
+      awk '$1=="'${Riyoushaid}'"&&$2>="'$dispFirstdate'"&&$2<="'$dispLastdate'"&&$9=="on"{print $1,"'$hdSakuseiDate'","m",$2,substr($2,1,4)"年"int(substr($2,5,2))"月"int(substr($2,7,2))"日",$4,"申し送り",$10,"1",$12,substr($7,1,5)}' >> $tmp-moushiokuri
+    fi
+  : ;done
+fi
+
+:> $tmp-kaigo_shien_aite
+if [ -s ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KAIGOSHIENKEIKA_HOUMONKAIGO_AITE ] ; then
+  cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KAIGOSHIENKEIKA_HOUMONKAIGO_AITE |
+  LANG=C sort -k1,4 |
+# 1:利用者ID 2:作成日 3:データID 4:発生日 5:相手先
+  self 1/5 > $tmp-kaigo_shien_aite
+fi
+
+[ "$(gyo $tmp-kaigo_shien_aite)" = "0" ] && echo "_" "_" "_" "_" "_" > $tmp-kaigo_shien_aite
+
+# データ表示
+cat ${tmp}-shien_base $tmp-moushiokuri |
+LANG=C sort -k1,4       |
+join2 +"@" key=1/4 $tmp-kaigo_shien_aite |
+self 1/4 6/NF 5 |
+LANG=C sort -k4,4 -k6,6 |
+awk '{print "l",$0}'    |
+cat - $tmp-sakuseidate  |
+sed 's/_/@/g'
+
+## 終了
+rm -f $tmp-*
+exit 0

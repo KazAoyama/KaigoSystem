@@ -1,0 +1,333 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI.EXCEL : 償却一覧EXCEL出力
+#
+# Usage : SHOKYAKU_KANRI.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 施設名
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# 年月
+nengetsu=$(echo "${NENGETSU}" | sed 's/-//g')
+
+# 対象者のリスト
+awk '$1~/print_/{print $2}' ${namefile}      > $tmp-list
+cp $tmp-list ${work}/list
+
+# 月額利用料のマスタ準備
+awk '$1=="'${shisetsu}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+self 2 3 6                                       |
+LANG=C sort -u                                   > $tmp-riyouryou_master
+# 1:利用料ID 2:利用料名 3:支払区分(1:先取翌月 2:先取今月 3:後払)
+echo "H 管理費返戻金 1"                          |
+cat - $tmp-riyouryou_master                      |
+LANG=C sort -k1,1                                > $tmp-riyo_master
+cp $tmp-riyo_master ${work}/riyomas
+
+# 銀行のマスタ準備
+awk '$(NF-2)!=9{print $1,$3}' /home/hands/E-LIFE/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME > $tmp-ginko_name
+awk '$(NF-2)!=9{print $1,$2,$4}' /home/hands/E-LIFE/TBL/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME > $tmp-shiten_name
+
+# 出力日
+echo $today | awk '{print substr($1,1,4)"年"substr($1,5,2)"月"substr($1,7,2)"日"}' > $tmp-today
+
+# ヘッダ
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+awk '$(NF-2)!=9'                                                     |
+getlast 1 2                                                          |
+cjoin0 key=3 <(echo "2 3 5 6 7" | tarr) -                            |
+cjoin0 key=1 <(echo "${nengetsu}") -                                 |
+self 8 2 1 10                                                        > $tmp-head
+# 1:居室番号 2:入居者ID 3:処理月 4:明細ファイル名
+
+# テンプレート
+TEMPLA=${temp_dir}/TAIKYOSEISAN_TEMPLATE.xls
+mkdir -p ${download_dir}/${current_time}_${userid}
+
+# 計算
+for member in $(yarr $tmp-list);do
+  # 明細データ取得
+  # 月額利用料のマスタ
+  awk '$1=="'${member}'" && $(NF-2)!=9 && $6<="'${nengetsu}'31"&&$7>="'${nengetsu}'01"' ${riyosha_dir}/RIYOUSHA_RIYOURYOU    |
+  awk '$2=="'${shisetsu}'"'                                                  |
+  self 4 8 6 7                                                               |
+  LANG=C sort                                                                > $tmp-riyouryou
+  # 1:利用料ID 2:金額 3:開始日 4:終了日
+  cp $tmp-riyouryou ${work}/riyouryou
+
+  cjoin0 key=2 <(echo "${member}") $tmp-head     |
+  while read room mem_id shori_month file_name ; do
+    cat ${seikyu_dir}/${shisetsu}/MEISAI/${shori_month}/${file_name} 
+  done                                           > $tmp-hoge
+cp $tmp-hoge ${work}/taikyo_hoge
+
+
+  cat $tmp-hoge                                  |
+  LANG=C sort -k5,5                              |
+  join2 +0 key=5 $tmp-riyouryou                  |
+  awk '{if($11==2){$6=$6}else{$6=$6*1.08};print}' |
+  marume -sage 6.0                               |
+  tee ${work}/hoge |
+  awk '$3!="15" && $3!="25" && $3!="30"'            |
+  self 2 5 6 8 9 10 11 12 13 14 17 15            |
+  tee ${work}/debu |   
+  while read riyosha riyouryou azukari owaribi suuji nengappi kazeiflag zeinuki zeikomi zei flag tekiyou ; do
+    if [ "${flag}" = 3 ];then
+      nissuu=$(mdate ${owaribi} ${nengappi} | lcalc '$1+1')
+      tekiyou=$(echo $azukari | comma 1 | awk '{print "\\"$1"×""'${nissuu}'""/30日"}')
+      echo $riyosha $riyouryou $azukari $owaribi $suuji $nengappi $kazeiflag $zeinuki $zeikomi $zei $tekiyou $flag
+    else
+      echo $riyosha $riyouryou $azukari $owaribi $suuji $nengappi $kazeiflag $zeinuki $zeikomi $zei $tekiyou $flag
+    fi
+  done |
+  LANG=C sort -k2,2                              |
+  join2 key=2 $tmp-riyo_master                   |
+  awk '{$7=substr($7,1,6);print}'                > $tmp-base_data
+  # 1:利用者ID   2:利用料ID             3:利用料名 4:利用料の区分        5:マスタの金額
+  # 6:契約終了日 7:月額利用料のみの枝番 8:年月日   9:課税区分            10:税抜金額
+  # 11:税込金額  12:税額                13:適用    14:特殊処理済みフラグ
+cp $tmp-base_data ${work}/doudesuka
+  cat $tmp-base_data                             |
+  awk '{if($11<=0){print $1,$2,$3,$5,$5+$11,$5-$5+$11,$7,$8,$13,$14}else{print $1,$2,$3,$5,$11,$5-$11,$7,$8,$13,$14}}' |
+  #awk '{if($4!=3){azukarikin=$5;riyougaku=$5+$11}else{azukarikin=$5;riyougaku=$5-$11};print $1,$2,$3,azukarikin,riyougaku,azukarikin-riyougaku,$7,$8,$13,$14}' |
+tee ${work}/doukana |
+  awk '{$8=substr($8,1,6);print}'                > $tmp-base_kansei
+cp $tmp-base_kansei ${work}/base_kansei
+  # 1:利用者ID 2:利用料ID             3:利用料名 4:預かり金 5:利用金額
+  # 6:差額     7:月額利用料のみの枝番 8:年月日   9:摘要     10:特殊処理済みフラグ
+
+  # 利用者名
+  awk '$1=="'${member}'"{print $2"様"}' ${riyosha_dir}/RIYOUSHA_KIHON > $tmp-shimei
+
+  # ご利用期間
+  awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                         |
+  awk '$1=="'${shisetsu}'"&&$6=="'${member}'"{print $7,$8}'                        > $tmp-kikan_status
+  START=$(LANG=C sort -k1,1 $tmp-kikan_status                                              |
+  self 1 | head -n1)
+  END=$(LANG=C sort -k2,2 $tmp-kikan_status                                              |
+  self 2 | tail -n1)
+  echo ${START} ${END}                                                             |
+  awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"～"substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2)}'    > $tmp-taizai_kikan
+
+  # 部屋
+  awk '$1=="'${member}'"{print $2"号室"}' ${searchfile} > $tmp-heya_ban
+
+  # 振込先
+  awk '$1=="'${member}'" && $21!=9' ${riyosha_dir}/RIYOUSHA_KOUZA                  |
+  awk '$5==1 || $5==2'                                                             |
+  LANG=C sort -k8,8                                                                |
+  tail -n1                                                                         |
+  self 3 4 6 7 10 15                                                               |
+  # 1:金融機関コード 2:支店コード 3:口座種類 4:口座番号 5:名義人
+  # 6:口座名義（漢字）
+  join1 key=1/2 $tmp-shiten_name                                                   |
+  join1 key=1 $tmp-ginko_name                                                      |
+  awk '{if($5==1){$5="普通"}else if($5==2){$5="当座"}else{$5="@"};print}'          > $tmp-riyosha_kouza
+  # 1:金融機関コード 2:金融機関名 3:支店コード 4:支店名 5:口座種類
+  # 6:口座番号 7:口座名義 8:口座名義（漢字）
+  awk '{print $2"　"$4}' $tmp-riyosha_kouza                                        > $tmp-ginko_shiten
+  self 5 6 $tmp-riyosha_kouza                                                      > $tmp-kouza_bangou
+  self 8 7 $tmp-riyosha_kouza                                                      |
+  awk '{print $1"("$2")"}'                                                         > $tmp-kouza_meiginin
+  
+  # 返金金額
+  sm2 1 1 4 6 $tmp-base_kansei                                                     |
+  self 4  | comma 1                                                                > $tmp-henkan_kingaku
+
+  # 支払い期限は翌月15日
+  mdate ${nengetsu}m/+1      |
+  awk '{print substr($1,1,4)"年"substr($1,5,2)"月15日"}'                           > $tmp-shiharai_kigen
+  
+  # 返金理由
+  awk '$1~/wake_/ && $1~/'$member'/{gsub(/'$member'/,"",$1);print $2}' ${namefile} > $tmp-wake
+  cp $tmp-wake ${work}/wake
+
+  # 内訳の計算
+  # 施設利用料のみに絞る
+  awk '$2~/^[0-9]+$/ || $2=="H"|| $2=="SH"{print}' $tmp-base_kansei                           > $tmp-riyouryou_nomi
+  # 1月目
+  awk '$8=="'${nengetsu}'"' $tmp-riyouryou_nomi                                    |
+tee ${work}/bant |
+  self 8 3 4 5 9                                                                   > $tmp-kongetsu
+  cp $tmp-kongetsu ${work}/kongetsu
+  self 1 $tmp-kongetsu | awk '{print substr($1,5,2)}' | tail -n1 | 1bai 1 | awk '{print $1"月分"}' > $tmp-kongetsubun
+
+  # 明細
+  self 2/NF $tmp-kongetsu                                      > $tmp-kongetsu_meisai
+
+  # 2シート目の合計
+  cat $tmp-kongetsu                                                                |
+  sm2 1 1 3 4                                                                      |
+  awk '{print "施設利用料"substr($1,5,2)"月分",$2,$3,"別紙参照"}'                  > $tmp-kongetsu_goukeigyo
+
+  # 2月目
+  awk '$8!="'${nengetsu}'"' $tmp-riyouryou_nomi                                    |
+  self 8 3 4 5 9                                                                   |
+  awk '{$5="@";print}'                                                             > $tmp-yokugetsu
+  cp $tmp-yokugetsu ${work}/yokugetsu
+  self 1 $tmp-yokugetsu | awk '{print substr($1,5,2)}' | tail -n1 | 1bai 1 | awk '{print $1"月分"}' > $tmp-yokugetsubun
+
+  # 明細
+  self 2/NF $tmp-yokugetsu                                     > $tmp-yokugetsu_meisai
+
+  cat $tmp-yokugetsu                                                               |
+  sm2 1 1 3 4                                                                      |
+  awk '{print "施設利用料"substr($1,5,2)"月分",$2,$3,"別紙参照"}'                  > $tmp-yokugetsu_goukeigyo
+
+  # 施設利用料以外
+  awk '$2!~/^[0-9]+$/ && $2!="H"{print}' $tmp-base_kansei                         > $tmp-riyouryou_igai
+  
+  awk '{$8=substr($8,1,6);print}' $tmp-riyouryou_igai                             |
+  self 5                                                                          |
+  sm2 0 0 1 1                                                                     |
+  awk '{print "個別費用負担","@",$1,"別紙参照"}'                                  > $tmp-kobetsu_futan
+
+  # 合計行合体
+  cat $tmp-kongetsu_goukeigyo $tmp-yokugetsu_goukeigyo $tmp-kobetsu_futan         > $tmp-goukeigyo
+
+  # 合計行の項目
+  self 1 $tmp-goukeigyo                                                           > $tmp-goukeigyo_koumoku
+  # 合計行の預かり額
+  self 2 $tmp-goukeigyo                                                           > $tmp-goukeigyo_azukari
+  # 合計行の利用額
+  self 3 $tmp-goukeigyo                                                           > $tmp-goukeigyo_riyougaku
+  # 合計行の備考
+  self 4 $tmp-goukeigyo                                                           > $tmp-goukeigyo_biko
+
+
+  
+  # シート2の施設名
+  awk '{print $1"　利用料ご精算書"}' $tmp-user_shisetsu > $tmp-seet2_title
+
+  # シート2の支払い期限
+  awk '{print "上記御返還金額は"$1"までに御指定の口座にお振込みいたします"}' $tmp-shiharai_kigen > $tmp-shirarai_kigen_seet2
+cp $tmp-shirarai_kigen_seet2 ${work}/shirarai_kigen_seet2
+
+  # シート2の口座情報
+  ycat $tmp-ginko_shiten $tmp-kouza_bangou $tmp-kouza_meiginin                   |
+  sed 's/ /　/g' > $tmp-furikomimeigi
+
+  # 1シート目の表題
+  awk '{print "「"$1"」顧客宛返金依頼書"}' $tmp-user_shisetsu > $tmp-hyodai
+
+  # 値がなかったときのエラー防止
+  [ $(gyo $tmp-goukeigyo_koumoku) = 0 ] && echo "@"                               > $tmp-goukeigyo_koumoku
+  [ $(gyo $tmp-goukeigyo_azukari) = 0 ] && echo "@"                               > $tmp-goukeigyo_azukari
+  [ $(gyo $tmp-goukeigyo_riyougaku) = 0 ] && echo "@"                             > $tmp-goukeigyo_riyougaku
+  [ $(gyo $tmp-goukeigyo_biko) = 0 ] && echo "@"                                  > $tmp-goukeigyo_biko
+  [ $(gyo $tmp-taizai_kikan) = 0 ] && echo "@"                                    > $tmp-taizai_kikan
+  [ $(gyo $tmp-kongetsubun) = 0 ] && echo "@"                                     > $tmp-kongetsubun
+  [ $(gyo $tmp-yokugetsubun) = 0 ] && echo "@"                                    > $tmp-yokugetsubun
+  [ $(gyo $tmp-kongetsu_meisai) = 0 ] && echo "@"                                 > $tmp-kongetsu_meisai
+  [ $(gyo $tmp-yokugetsu_meisai) = 0 ] && echo "@"                                > $tmp-yokugetsu_meisai
+
+  Ehexcel < ${TEMPLA} 1 g1 ${tmp}-today            \
+                      1 a5 $tmp-hyodai             \
+                      1 c10 $tmp-shimei            \
+                      1 c12 $tmp-ginko_shiten      \
+                      1 d13 $tmp-kouza_bangou      \
+                      1 c14 $tmp-kouza_meiginin    \
+                      1 b19 $tmp-henkan_kingaku    \
+                      1 b23 $tmp-shiharai_kigen    \
+                      1 b16 $tmp-wake              \
+                      1 f3  $tmp-user_shisetsu     \
+                      2 ab2 $tmp-today             \
+                      2 h2  $tmp-seet2_title       \
+                      2 f5  $tmp-shimei            \
+                      2 b15 $tmp-goukeigyo_koumoku \
+                      2 h15 $tmp-goukeigyo_azukari \
+                      2 o15 $tmp-goukeigyo_riyougaku \
+                      2 w15 $tmp-goukeigyo_biko    \
+                      2 f7  $tmp-taizai_kikan      \
+                      2 f9  $tmp-heya_ban          \
+                      2 c38 $tmp-shirarai_kigen_seet2    \
+                      2 d40 $tmp-furikomimeigi     \
+                      3 a3  $tmp-shimei            \
+                      3 a13 $tmp-kongetsubun       \
+                      3 a25 $tmp-yokugetsubun      \
+                      3 b13 $tmp-kongetsu_meisai   \
+                      3 b25 $tmp-yokugetsu_meisai  > ${download_dir}/${current_time}_${userid}/${member}_${userid}_$$.download.xls
+  
+done
+
+cd ${download_dir} 
+zip ${userid}_$$.download.zip -r ./${current_time}_${userid} > /dev/null
+
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.zip","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.zip"
+
+rm -f ${tmp}-*
+exit 0
+

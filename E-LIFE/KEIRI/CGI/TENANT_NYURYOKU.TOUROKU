@@ -1,0 +1,274 @@
+#!/bin/bash
+#
+# TENANT_TENANT_TOUROKU.TOUROKU :
+#
+# Usage : TENANT_TENANT_TOUROKU.TOUROKU
+#
+# Written by aoyagi
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/KEIRI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+
+# データ作成
+echo ${tenant_name} ${nengetsu} ${denkidai} ${suidodai} ${kutyo} ${parking} ${tyurinjo} ${internet} ${kureru} |
+awk '{gsub(/-/,"",$2);print}'                      |
+awk '{print $0,"1","'${sdaytime}'","'${userid}'"}' |
+# 1:マスタid  2:年月    3:電気代         4:水道代         5:空調時間
+# 6:駐車場    7:駐輪場  8:インターネット 9:クレールホール 10:有効フラグ
+# 11:処理時間 12:userid
+LANG=C sort -k1,2            > $tmp-getsuji_input
+
+if [ "${tenant_name}" = "00008" ];then
+  echo ${tenant_name} ${nengetsu} "73" ${nisu_1_5} ${time_1_5} ${sdaytime} ${userid} > $tmp-1_5
+  echo ${tenant_name} ${nengetsu} "70" ${nisu_1_6} ${time_1_6}  ${sdaytime} ${userid} > $tmp-1_6
+  cat $tmp-1_5 $tmp-1_6
+else
+  echo ${tenant_name} ${nengetsu} "0 0 0" ${sdaytime} ${userid}
+fi                                                        > $tmp-kutyo_input
+# 1:マスタid 2:年月 3:単価 4:日数 5:時間 6:更新時間 7:userid
+
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+TENANT_GETSUJI TENANT_GETSUJI
+FIN
+
+input_detail_dir=TENANT_MASTER/${shisetsu}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+getsuji TENANT_GETSUJI 2 11 12 ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu} ${input_dir}
+kutyo KUTYO_GETSUJI 3 6 7 ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 3 -l 10 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_exit "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+NENGETSU=$(echo $nengetsu | sed 's/-//g')
+cat /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_GETSUJI |
+awk '{if($1=="'${tenant_name}'"&&$2=="'${NENGETSU}'"){$(NF-2)=9};print}'            |
+cat - $tmp-getsuji_input                                                            |
+LANG=C sort -k1,2 -k11,11                                                           |
+getlast 1 2                                                                         > $tmp-pompa_new
+#--------------------------------------------------------------
+cat /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/KUTYO_GETSUJI |
+cat - $tmp-kutyo_input                                                             |
+LANG=C sort -k1,3 -k6,6                                                            |
+getlast 1 3                                                                         > $tmp-kutyopompa_new
+mv -f $tmp-kutyopompa_new /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/KUTYO_GETSUJI
+# 列数チェック
+[ $(retu $tmp-pompa_new) -ne 12 ] && : > $tmp-err
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-pompa_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+# 明細ファイル作成
+park=$(awk '$1=="'${tenant_name}'" && $(NF-2)!=9{print $(NF-4)}' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SEIKYUSHO)
+awk '$(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_ZENTAI_SETTEI |
+# 1:電気代単価 2:水道代単価 3:駐車場代   4:駐輪場代 5:インターネット代
+# 6:パーク24   7:自販機     8:有効フラグ 9:更新時間 10:userid
+if [ ${park} = 1 ];then
+  awk '{$1=$6;print}'
+else
+  awk '{$7="0";print}'
+fi                                                                 |
+self 1/5 7                                                         |
+awk '{print "'${tenant_name}'",$0}'                                > $tmp-zentai
+# 1:テナントID       2:電気代単価 3:水道代単価 4:駐車場代 5:駐輪場代
+# 6:インターネット代 7:自販機
+cp $tmp-zentai ${work_dir}/zentai
+
+awk '$1=="'${tenant_name}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_TENANT_MASTER |
+self 1 6/8                                                         > $tmp-tenant_settei
+# 1:テナントid 2:賃料 3:共益費 4:クレールホール使用料
+cp $tmp-tenant_settei ${work_dir}/zentaiii
+
+awk '$1=="'${tenant_name}'" && $2=="'${NENGETSU}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_GETSUJI |
+# 1:テナントID 2:年月     3:電気使用料     4:水道使用料     5:空調時間
+# 6:駐車場代   7:駐輪場代 8:インターネット 9:クレールホール 10:有効フラグ
+# 11:更新時間  12:userid
+self 1/9                                                            > $tmp-getsuji
+# 1:テナントID 2:年月     3:電気使用料     4:水道使用料 5:空調時間
+# 6:駐車場代   7:駐輪場代 8:インターネット 9:クレールホール
+cp $tmp-getsuji ${work_dir}/getsuuji
+
+awk '$1=="'${tenant_name}'"&&$(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SETTEI_MASTER |
+self 1/4                                                            > $tmp-kutyo
+# 1:テナントID 2:従量単価 3:空調時間 4:固定料金
+cp $tmp-kutyo ${work_dir}/kyuuuuu
+
+# 別区画の空調費
+cat /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/KUTYO_GETSUJI |
+awk '$1=="'${tenant_name}'"&&$2=="'${nengetsu}'"'                                  > $tmp-kutyo_base
+awk 'NR==1' $tmp-kutyo_base             |
+lcalc '$1,$3*$4*$5'                     |
+marume 2.0                              > $tmp-saisho
+awk 'NR==2' $tmp-kutyo_base             |
+lcalc '$1,$3*$4*$5'                     |
+marume 2.0                              > $tmp-last
+cat $tmp-saisho $tmp-last               |
+sm2 1 1 2 2                             > $tmp-kukaku
+cp $tmp-kukaku ${work_dir}/kutyo
+[ $(gyo $tmp-kutyo) = 0 ] && echo "${tenant_name} 0" > $tmp-kukaku
+
+loopj num=1 $tmp-getsuji $tmp-zentai $tmp-tenant_settei $tmp-kutyo $tmp-kukaku           |
+# 1:テナントID  2:年月      3:電気使用料            4:水道使用料             5:空調時間
+# 6:駐車場代    7:駐輪場代  8:インターネット        9:クレールホール利用回数 10:電気代単価
+# 11:水道代単価 12:駐車場代 13:駐輪場代             14:インターネット代      15:自販機
+# 16:賃料       17:共益費   18:クレールホール使用料 19:従量単価              20:空調時間
+# 21:固定料金   22:区画の空調費
+lcalc '$1,$2,$16,$17,$6*$12,$3*$10,$4*$11,$21,$19*$20*$5+$22,$7*$13,$8*$14,$9*$18,$15' |
+# 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+# 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+# 11:インターネット 12:クレールホール 13:自販機
+marume -sage 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 11.0 12.0 13.0                       | 
+awk '{print $0,"1","'${sdaytime}'","'${userid}'"}'                                 > $tmp-meisai_input
+# 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+# 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+# 11:インターネット 12:クレールホール 13:自販機   14:有効フラグ 15:更新時間
+# 16:userid
+
+cp $tmp-meisai_input ${work_dir}/meisai_input
+
+cat <<- FIN > $tmp-koushin_pompa
+meisai TENANT_MEISAI 2 15 16 ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu} ${input_dir}
+FIN
+
+cat /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_MEISAI  |
+awk '{if($1=="'${tenant_name}'"&&$2=="'${NENGETSU}'"){$(NF-2)=9};print}'            |
+cat - $tmp-meisai_input                                                             |
+LANG=C sort -k1,2 -k15,15                                                           |
+getlast 1 2                                                                         > $tmp-pompa_meisai
+#--------------------------------------------------------------
+
+# 列数チェック
+[ $(retu $tmp-pompa_meisai) -ne 16 ] && : > $tmp-err
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-pompa_meisai ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

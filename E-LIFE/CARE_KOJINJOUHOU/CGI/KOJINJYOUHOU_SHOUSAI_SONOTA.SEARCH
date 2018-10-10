@@ -1,0 +1,116 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.SEARCH
+# 個人情報詳細(介護保険)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+
+#-------------------------------------------------------------
+# 医療保険テーブルの取得
+# 1:利用者(入居者)ID  2:利用者医療保健ID    3:種類                4:医療保健名称      5:保険者番号
+# 6:記号番号          7:受給者番号          8:資格取得日：元号    9:資格取得日：年    10:資格取得日：月
+# 11:資格取得日：日   12:資格取得日：西暦   13:有効期限(至)：元号 14:有効期限(至)：年 15:有効期限(至)：月
+# 16:有効期限(至)：日 17:有効期限(至)：西暦 18:福祉医療名
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_IRYOUHOKEN  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+
+  # 更新日時の整形
+  awk '{print $0,$20!="_"?substr($20,1,4)"/"substr($20,5,2)"/"substr($20,7,2)"<br>"substr($20,9,2)":"substr($20,11,2):"_",$NF}' |
+  self 1/11 13/16 18 NF-1 NF  |
+  LANG=C sort -k3,3        |
+  # 医療保健種類名の取得
+  join1 key=3 ${tbl_dir}/CONFIG/IRYOUHOKEN_SHURUI - |
+# 1:利用者(入居者)ID  2:利用者医療保健ID 3:種類                4:種類名            5:医療保健名称
+# 6:保険者番号        7:記号番号         8:受給者番号          9:資格取得日：元号  10:資格取得日：年
+# 11:資格取得日：月   12:資格取得日：日  13:有効期限(至)：元号 14:有効期限(至)：年 15:有効期限(至)：月
+# 16:有効期限(至)：日 17:福祉医療名
+  awk '{if($5!="_"){print $0,$5}else{print $0,"(名称なし)"}
+       }'                            |
+  self 1/4 NF 6/NF-1                 |
+  awk '{print "Iryouhoken",$0}'      > $tmp-iryouhoken
+
+#--------------------------------------------------------------------
+
+# 身体障害者手帳情報テーブルの取得
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県   4:手帳番号   5:種類
+# 6:法別表           7:交付日：元号     8:交付日：年 9:交付日：月 10:交付日：日
+# 11:障害名称など    12:基礎疾患
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_SHINSHOU    |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}'  |
+  awk '{print $0,$14!="_"?substr($14,1,4)"/"substr($14,5,2)"/"substr($14,7,2)"<br>"substr($14,9,2)":"substr($14,11,2):"_",$NF}' |
+  self 1/12 NF-1 NF |
+
+  # 都道府県名の取得
+  LANG=C sort -k3,3              |
+  join2 +"_" key=3 ${tbl_dir}/CONFIG/TODOUFUKEN_TABLE  - |
+  delf 5 |
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県     4:都道府県名 5:手帳番号
+# 6:種類             7:法別表           8:交付日：元号 9:交付日：年 10:交付日：月
+# 11:交付日：日      12:障害名称など    13:基礎疾患    14:更新日    15:UseId
+  awk '{print "Shinshou",$0}' > $tmp-shinshou
+#----------------------------------------------------------------------
+
+# 加算給付
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KASANKYUUFU  |
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "Kasankyuufu",$0}' > $tmp-kasankyuufu
+# 1:利用者(入居者)ID 2:個別機能訓練 3:夜間看護体制 4:医療機関連携 5:看取加算同意 6:その他備考
+
+# # 該当データ
+ if [ -s "$tmp-iryouhoken" -o -s "$tmp-shinshou" -o -s "$tmp-kasankyuufu" ] ; then    
+   cat - $tmp-iryouhoken $tmp-shinshou $tmp-kasankyuufu
+ fi 
+
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

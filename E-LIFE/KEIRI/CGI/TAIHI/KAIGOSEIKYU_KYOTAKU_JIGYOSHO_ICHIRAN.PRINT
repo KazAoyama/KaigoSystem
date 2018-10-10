@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU_JIGYOSHO_ICHIRAN.PRINT : 事業所別利用状況一覧EXCEL出力
+#
+# Usage : KAIGOSEIKYU_KYOTAKU_JIGYOSHO_ICHIRAN.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ダウンロードディレクトリ
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+
+# 給付管理票データ呼出
+# $hani_toから半年前までに処理した給付管理票データの中から指定年月のものだけを処理する
+TSUKI=$(mdate ${hani_to} ${hani_from})
+mdate -e ${hani_to}m/-${TSUKI}     |
+yarr                            > $tmp-nengetsu_list
+
+hani_month=$(mdate ${hani_to}m/+1)
+mdate -e ${hani_month}m/-5         |
+yarr                            > $tmp-month_list
+
+for month in $(cat $tmp-month_list);do
+  for nengetsu in $(cat $tmp-nengetsu_list);do
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${month}/${nengetsu}.KYUFUKANRI                         |
+    # 合計行を除く
+    awk '$10!="99"'
+  done
+done                             |
+tee ${work}/iyoyo |
+cat > $tmp-pripri
+
+# サービス種類毎に処理
+cat $tmp-pripri                  |
+self 21                          |
+tee ${work}/sakana  |
+LANG=C sort -u -k1,1n            > $tmp-shurui_list
+
+for SHURUI in $(cat $tmp-shurui_list | yarr);do
+  cat $tmp-pripri                    |
+  # 1:利用者ID 2:登録時間 3:識別番号 4:対象年月 5:保険者番号
+  # 6:事業所番 7:給付管理票作成区分 8:給付管理票作成年月日 9:給付管理票種別区分 10:連番
+  # 11:被保険者番号 12:被保険者生年月日 13:性別 14:要介護状態区分 15:限度額有効期間開始日
+  # 16:限度額有効期間終了日 17:居宅介護予防支給限度額（明細行では0を設定） 18:居宅サービス計画作成区分 19:サービス事業所事業所番号 20:指定基準該地域密着型サービス識別コード
+  # 21:サービス種類コード 22:計画単位数 23:0 24:0 25:0 26:給付計画合計単位数(明細行では0を設定) 27:担当ケアマネ番号(明細行では0を設定)
+  awk '$21=="'${SHURUI}'"'           > $tmp-shukeimoto
+
+  # 事業所の数と割合
+  cat $tmp-shukeimoto                |
+  # 1:利用者ID 2:登録時間 3:識別番号 4:対象年月 5:保険者番号
+  # 6:事業所番 7:給付管理票作成区分 8:給付管理票作成年月日 9:給付管理票種別区分 10:連番
+  # 11:被保険者番号 12:被保険者生年月日 13:性別 14:要介護状態区分 15:限度額有効期間開始日
+  # 16:限度額有効期間終了日 17:居宅介護予防支給限度額（明細行では0を設定） 18:居宅サービス計画作成区分 19:サービス事業所事業所番号 20:指定基準該地域密着型サービス識別コード
+  # 21:サービス種類コード 22:計画単位数 23:0 24:0 25:0 26:給付計画合計単位数(明細行では0を設定) 27:担当ケアマネ番号(明細行では0を設定)
+  self 19                            |
+  LANG=C sort -u -k1,1n              > $tmp-jigyoshogoto_list
+
+  for JIGYOSHO in $(cat $tmp-jigyoshogoto_list | yarr);do
+    cat $tmp-shukeimoto                   |
+    awk '$19=="'${JIGYOSHO}'"'            > $tmp-only_jigyosho
+    KENSU="$(cat $tmp-only_jigyosho | gyo)"
+    ALL="$(gyo $tmp-shukeimoto)"
+    echo "${SHURUI}" "${JIGYOSHO}" "${KENSU}" "${ALL}"    |
+    lcalc '$1,$2,$3,$3/$4*100'                            |
+    marume 4.1
+  done
+done                                 > $tmp-base
+# 1:サービス種類 2:サービス事業所事業所番号 3:件数 4:割合
+cp $tmp-base ${work}/kokoesuka
+# マスタ準備
+
+# 事業所情報
+cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER                       |
+join1 key=1 <(echo ${shisetsu})                                                  |
+self 2                                                                           > $tmp-jigyosho_joho
+
+# マスタ準備
+cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER                       |
+# 1:事業所ID 2:サービス供給事業者番号 3:サービス供給事業社名 4:サービス種類 5:事業所区分
+#(1:指定事業所 2:基準該当事業所 3:相当サービス事業所 4:その他 5:地域密着型事業所 6:混在型事業所１ 7:混在型事業所２)
+self 2 3                                           |
+LANG=C sort -k1,1                                  > $tmp-jigyosho_master
+# 1:サービス供給事業者番号 2:サービス供給事業社名
+
+cat ${hometbl_dir}/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+# 1:サービスコード種類 2:サービスタイプ 3:サービス種類
+self 1 3                                           |
+LANG=C sort -k1,1                                  > $tmp-service_type_master
+# 1:サービスコード種類 2:サービス種類
+
+# マスタデータ合体
+cat $tmp-base                                      |
+LANG=C sort -k2,2                                  |
+join1 key=2 $tmp-jigyosho_master                   |
+LANG=C sort -k1,1                                  |
+join1 key=1 $tmp-service_type_master               > $tmp-nakami
+
+# 年月データの整形
+echo ${hani_from} ${hani_to}                       |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月～"substr($2,1,4)"年"substr($2,5,2)"月"}' > $tmp-month_hyoji
+
+TEMPLA=${temp_dir}/JIGYOSHO_ICHIRAN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 e2 $tmp-jigyosho_joho           \
+                    1 a2 $tmp-month_hyoji             \
+                    1 a5 ${tmp}-nakami                > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,203 @@
+#!/bin/bash
+#
+# TATEKAEKIN.EXCEL : 立替金管理EXCEL出力
+#
+# Usage : TATEKAEKIN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    > $tmp-riyosha_status
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                  > $tmp-all
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1n                                                |
+  join1 key=1 $tmp-riyosha_master                                   |
+  cat $tmp-all -                                                    |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME
+  join0 key=1 <(echo "${riyosha_name}")                             |
+  self 2                                                            > ${tmp}-riyosha_name
+else
+  :                                                                 > ${tmp}-riyosha_name
+fi
+
+# 施設の取得
+if [ -n "${shisetsu}" -a "${shisetsu}" != "_" ];then
+  echo "0" "全て"                                              |
+  cat - ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON              |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${shisetsu})                              |
+  self 2                                                       > ${tmp}-shisetsu_name
+else
+  :                                                            > ${tmp}-shisetsu_name
+fi
+
+# 建屋
+if [ "${tateya}" = "01" ];then
+  echo "シニア" > $tmp-tateya
+else
+  echo "ケア" > $tmp-tateya
+fi
+
+
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_floor
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         |
+  LANG=C sort -k1,1n                                           |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  join0 key=1 <(echo ${floor})                                 |
+  self 2                                                       > ${tmp}-floor_name
+else
+  :                                                            > ${tmp}-floor_name
+fi
+
+# 年月
+echo ${text_kensaku_hiduke_from}                         > $tmp-from
+echo ${text_kensaku_hiduke_to}                           > $tmp-end
+
+# サービスマスターの取得
+cat ${master_tbl_dir}/SERVICE_MASTER |
+# 1:施設         2:建屋      3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価      8:表示順     9:課税               10:有効フラグ
+# 11:処理時間    12:ユーザID
+
+LANG=C sort -k1,1n -k2,2n            |
+join0 key=1 <(echo ${shisetsu})      |
+join0 key=2 <(echo ${tateya})        |
+self 8 3 5                           |
+# 1:表示順 2:サービスID 3:サービス名
+LANG=C sort -k1,1n                   |
+self 2 3                             > ${tmp}-service_basemas
+echo "0" "全て"                      |
+cat - ${tmp}-service_basemas         |
+awk '{print $0,"'${serch_service_koumoku}'"}' |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-service_master
+cat $tmp-service_master              |
+awk '$3=="selected"'                 |
+self 2                               > $tmp-service
+
+cat $tmp-service_basemas             |
+LANG=C sort -k1,1n                   > $tmp-sort_service
+# searchfileの処理
+cat $tmp-riyosha_status              |
+LANG=C sort -k6,7                    |
+self 6 5                             |
+getlast 1 1                          > $tmp-riyosha_status_room
+cat ${searchfile}                                        |
+LANG=C sort -k1,1n  |
+join1 key=1 $tmp-riyosha_master |
+join2 key=1 $tmp-riyosha_status_room |
+LANG=C sort -k5,5n  |
+join1 key=5 $tmp-sort_service |
+self 4 2 3 6/NF-1             |
+LANG=C sort -k2,2 -k1,1       |
+awk '{if($NF=="_"){$NF="@"};print}' > $tmp-search_data
+
+
+TEMPLA=${temp_dir}/SERVICE_TOUROKU_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 $tmp-from                       \
+                    1 b5 $tmp-tateya                     \
+                    1 d5 $tmp-floor_name                 \
+                    1 b7 $tmp-service                    \
+                    1 d4 $tmp-end                        \
+                    1 d6 $tmp-riyosha_name               \
+                    1 a13 ${tmp}-search_data             > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

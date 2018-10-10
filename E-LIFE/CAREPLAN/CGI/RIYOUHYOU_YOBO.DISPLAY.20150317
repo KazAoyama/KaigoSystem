@@ -1,0 +1,617 @@
+#!/bin/bash
+#
+# RIYOUHYOU_YOBO.DISPLAY : 利用票表示
+#
+# Usage : RIYOUHYOU_YOBO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+check_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_riyouhyou
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# 本日の日付
+curday=$hdTaishouYear$taishoumonth"01"
+#curday=$(mdate today | self 1)
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+# 施設と従業員の紐付け
+# 1:施設ID 2:ユーザID 3: 4: 5:
+cp $tmp-user_mst $work_dir/user
+cp $tmp-shisetsu $work_dir/shisetsu
+
+# 退職者対応
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_KIHON    |
+awk '$4<="'$today'"&&"'$today'"<=$5'               |
+LANG=C sort -k1,1                                   |
+self 1                                             > $tmp-yuko-jyuugyouin
+
+# ケアマネ抽出
+#cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+# 施設で絞込み + 特別所属（20140602）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU ${home_dir}/TBL/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+LANG=C sort -k2,2                                   |
+join1 key=2 ${tmp}-shisetsu                         |
+awk '$6=="1"{print $1}'                             |
+LANG=C sort -k1,1                                   |
+join1 key=1 $tmp-user_mst                           |
+join0 key=1 $tmp-yuko-jyuugyouin                    |
+self 1 2                                            > $tmp-caremanager_tmplist
+
+#self 1/8 ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+#cat ${home_dir}/TBL/CONFIG/USER_SHISETSU |
+# awk '$6=="1"'                                      |
+#LANG=C sort -k2,2                                   |
+#join1 key=2 $tmp-shisetsu                           |
+#LANG=C sort -k1,1                                   |
+# 1:施設ID 2:ユーザID 3:ユーザ名 4: 5: 6:
+#join1 key=1 $tmp-user_mst                           |
+#self 1 2                                            > $tmp-caremanager_tmplist
+
+
+# 今月の最初の日付
+firstday=$(mdate ${hdTaishouYear}${taishoumonth}m | tateyoko | head -1)
+# 今月の最後の日付
+lastday=$(mdate ${hdTaishouYear}${taishoumonth}m | tateyoko | tail -1)
+
+# 入居者情報(仮)
+# 介護度マスタ
+# 1:介護度 2:介護度名 3:単位
+cat ${home_dir}/TBL/CONFIG/KAIGODO_MASTER          |
+awk '$4<="'$curday'"&&$5>"'$curday'"{print $1,$2,$3}'     |
+LANG=C sort -k1,1 > $tmp-kaigodo_master
+
+# 介護保険情報
+# 1:利用者ID            2:介護度              3:保険者名                    4:認定年和暦              5:認定年
+# 6:認定月              7:認定日              8:認定年月日西暦              9:認定有効期間開始年和暦  10:認定有効期間開始年
+# 11:認定有効期間開始月 12:認定有効期間開始日 13:認定有効期間開始年月日西暦     14:認定有効期間終了年和暦 15:認定有効期間終了年
+# 16:認定有効期間終了月 17:認定有効期間終了日 18:認定有効期間終了年月日西暦
+self 1 3 5 14/28 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN   |
+join1 key=1 ${tmp}-riyoushaid   >     $tmp-riyousha_kaigohoken_master
+
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${curday}'"&&$18>="'${curday}'"'                  |
+# 1:利用者ID               2:介護度 3:保険者名 4:認定年月日 5:有効期間開始年月日
+# 6:認定有効期間終了年月日
+self 1/3 8 13 18    |                    
+LANG=C sort -k5,6   |
+getlast 1 1         > $tmp-cur_riyousha_kaigohoken
+
+# 月初めの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${firstday}'"&&$18>="'${firstday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-first_riyousha_kaigohoken
+
+# 月終わりの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${lastday}'"&&$18>="'${lastday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-last_riyousha_kaigohoken
+
+prekaigodo=$(self 2 $tmp-first_riyousha_kaigohoken)
+curkaigodo=$(self 2 $tmp-cur_riyousha_kaigohoken)
+postkaigodo=$(self 2 $tmp-last_riyousha_kaigohoken)
+
+# 介護度が途中から始まっている場合
+if [ -z "$prekaigodo" ] ; then
+  prekaigodo=$postkaigodo
+  curkaigodo=$postkaigodo
+fi
+
+if [ -z "$postkaigodo" ] ; then
+  postkaigodo=$curkaigodo
+fi
+
+if [ ${prekaigodo} -eq ${postkaigodo} ] ; then
+   preafterkbn="0"
+#   cat $tmp-cur_riyousha_kaigohoken |
+#   awk '{print $2,"'${preafterkbn}'","_","_"}' > $tmp-riyousha_kaigohoken
+   echo "${curkaigodo}" "${preafterkbn}" "_" "_" > $tmp-riyousha_kaigohoken
+elif [ ${prekaigodo} -gt ${postkaigodo}  ] ; then
+   preafterkbn="2"
+   endday=$(self 6 $tmp-first_riyousha_kaigohoken)
+   kirikaebi=$(mdate ${endday}/+1)
+   echo "${prekaigodo}" "${preafterkbn}" "${kirikaebi}" "${postkaigodo}" > $tmp-riyousha_kaigohoken
+else
+   preafterkbn="1"
+   kirikaebi=$(self 5 $tmp-last_riyousha_kaigohoken)
+   echo "${postkaigodo}" "${preafterkbn}" "${kirikaebi}" "${prekaigodo}" > $tmp-riyousha_kaigohoken
+fi
+
+cp $tmp-riyousha_kaigohoken $work_dir/riousha_kaigohoken
+
+# 1:重い介護度 2:区分 3:切り替え日 4:軽い介護度
+cat $tmp-riyousha_kaigohoken                       |
+# 1:重い介護度 2:介護度名 3:単位 4:区分 5:切り替え日
+# 6:軽い介護度
+join1 key=1 $tmp-kaigodo_master -                  |
+# 1:重い介護度 2:介護度名 3:単位 4:区分 5:切り替え日
+# 6:軽い介護度 7:介護度名 8:単位
+join2 key=6 $tmp-kaigodo_master -                  |
+tee $work_dir/riousha_kaigohoken2 |
+# 予防入れれるようにする(2014/7/2)
+awk '{gendo=$3;if($4!="0"){gendo=$3*1.0};if($4!="0"&&$1>2&&$6<3){$1=$6};print $2,gendo,$1,$4,substr($5,7,2),$7}'    |
+# 1:重い方の介護度名 2:単位 3:介護度 4:区分 5:切替日
+# 6:軽い介護度名
+marume 2.0                                         > $tmp-riyousha_kaigodo_info
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)-1}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+cat $tmp-gengou_master |
+LANG=C sort -k3,3r     > $tmp-gengou_mst
+
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:和暦開始 5:和暦終了
+# 6:誕生日年 7:誕生日月   8:誕生日 9:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+# 展開情報ボタン可、不可制御
+tenkaibuttondisabled=""
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+  init )
+     : > $tmp-listdata
+     : > $tmp-tenkaidata
+  ;;
+
+  # 検索結果
+  search)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+      tenkaibuttondisabled="disabled"
+    else
+      : > $tmp-listdata
+    fi
+    : > $tmp-tenkaidata
+  ;;
+
+  # 展開情報反映
+  tenkai)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-tenkaidata
+      tenkaibuttondisabled="disabled"
+    else
+      : > $tmp-tenkaidata
+    fi
+    : > $tmp-listdata
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${check_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+      if [ "$(gyo ${result_data})" != 0 ] ; then
+        cat ${result_data}        > $tmp-listdata
+        tenkaibuttondisabled="disabled"
+      else
+        : > $tmp-listdata
+      fi
+      : > $tmp-tenkaidata
+    else
+      message=$(awk '$1=="message"{print $2}' ${check_data})
+      [ -z "${message}" ] && message="処理エラー"
+      : > $tmp-listdata
+      : > $tmp-tenkaidata
+    fi
+    tenkaibuttondisabled="disabled"
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+cat ${tmp}-listdata |
+awk '$1=="l"'       |
+# 福祉用具貸与は一番下(2014/6/19)
+awk '{if($3=="67"){$2="9"}else{$2="1"};print $0}'      |
+LANG=C sort -k2,2 -k10,10 -k8,8 -k9,9   |
+delf 1              > ${tmp}-riyouhyoudata
+
+cat ${tmp}-listdata |
+awk '$1=="k"'       |
+delf 1              > ${tmp}-riyouhyoukihon
+
+
+cat ${tmp}-tenkaidata |
+awk '$1=="l"'       |
+# 福祉用具貸与は一番下(2014/6/19)
+awk '{if($3=="67"){$2="9"}else{$2="1"};print $0}'      |
+LANG=C sort -k2,2 -k10,10 -k8,8 -k9,9   |
+delf 1              > ${tmp}-tenkailistdata_work
+
+
+# 時期によって有効なサービスコードの年月日を出す。
+ls -F ${KYOUTSU_TBL}/SERVICECODE |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-dir_date
+
+dir_date=$(cat $tmp-dir_date)
+
+# 負荷を少しでも軽くするための対応(同一)
+dispDouitsu="1"
+# 超過
+dispChouka="1"
+
+# サービスコードをセットし、表示
+# 訪問介護サービス区分レコード取得
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKAIGO_YOBO    |
+awk '{print $2,$3,$4,"_","_",$6,$5,"_",$8,$7,"_","_",$10,$11,"_","_","_"}' > ${tmp}-servicecode_houmonkaigo
+# 訪問入浴
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONNYUYOKU_YOBO    |
+awk '{print $2,$3,$4,"_","_","_","_","_","_",$5,"_","_",$6,$7,"_","_","_"}' > ${tmp}-servicecode_houmonnyuyoku
+# 訪問看護
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKANGO_YOBO    |
+awk '{print $2,$3,$4,$6,$7,"_","_",$5,"_",$10,$11,$12,$13,$14,"_","_","_"}' > ${tmp}-servicecode_houmonkango
+# 通所介護
+# 1:表示順   2:事業者タイプ 3:サービスコード 4:サービス名 5:超過
+# 6:欠員 7:介護度       8:集計単位       9:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TSUSHOKAIGO_YOBO    |
+awk '{print $2,$3,$4,"_","_",$7,"_","_","_","_","_","_",$8,$9,"_","_","_"}' > ${tmp}-servicecode_tsushokaigo
+# 短期入所生活介護
+# 1:ID     2:サービスコード種類     3:サービスコード項目   4:サービス名   5:施設等の区分
+# 6:多床室 7:ユニット型準個室 8:ユニットケア減算 9:夜間体制減算 10:超過
+# 11:欠員  12:介護度          13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUKYO_SEIKATSU_YOBO    |
+awk '{print $2,$3,$4,"_","_",$12,"_",$5,"_","_","_","_",$13,$14,$11,$8,$9}' > ${tmp}-servicecode_tankinyusho
+# 短期入所療養介護老短
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTAN_YOBO    |
+if [ "$dispChouka" = "1" ] ; then
+  awk '$10=="1"'
+fi |
+awk '{print $2,$3,$4,"_","_",$10,"_",$5,"_","_","_","_",$11,$12,$9,$6,$7}' > ${tmp}-servicecode_tankinyusho_ryouyou_routan
+# 短期入所療養介護療養型
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTANIGAI_YOBO    |
+if [ "$dispChouka" = "1" ] ; then
+  awk '$10=="1"'
+fi |
+awk '{print $2,$3,$4,"_","_",$10,"_",$5,"_","_","_","_",$11,$12,$9,$6,$7}' > ${tmp}-servicecode_tankinyusho_ryouyou_routan_igai
+# 訪問リハビリ
+# 1:表示順   2:事業者タイプ 3:サービスコード 4:サービス名 5:施設タイプ 6:同一 7:集計単位 8:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONRIHABIRI_YOBO |
+awk '{print $2,$3,$4,"_","_","_","_",$5,"_",$6,"_","_",$7,$8,"_","_","_"}' >  ${tmp}-servicecode_houmonrihabiri
+# 福祉用具レンタル
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_FUKUSHIYOUGU_TAIYO_YOBO   |
+awk '{print $2,$3,$4,"_","_","_","_","_","_","_","_","_",$5,$6,"_","_","_"}' > ${tmp}-servicecode_fukushiyougu_taiyo
+# 通所リハビリ
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TSUSHORIHABIRI_YOBO   |
+awk '{print $2,$3,$4,"_","_",$7,"_","_","_","_","_","_",$8,$9,"_","_","_"}' > ${tmp}-servicecode_tsushorihabiri
+# 居宅療養管理
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_KYOTAKU_RYOUYOU_KANRI_YOBO |
+awk '{print $2,$3,$4,"_","_","_","_","_","_","_","_","_",$6,$7,"_","_","_"}' > ${tmp}-servicecode_kyotaku_ryouyou
+# 加算
+# 1:事業者タイプ 2:サービスコード 3:サービス名 28:単位数
+# 1:サービスコード種類 2:サービスコード区分 3:サービス名       4:提供体制加算設定 5:訪問看護特別管理加算設定
+# 6:訪問看護緊急時加算 7:対象介護度         8:個別機能訓練加算 9:加算区分         10:若年性加算
+# 11:栄養改善加算      12:口腔機能改善加算  13:単位            14:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_ADD_YOBO   |
+awk '$29=="1"{print $1,$2,$3,$11,$22,$7,$25,$13,"ADD",$14,$15,$16,$26,$28,"_","_","_"}' > ${tmp}-servicecode_add_yobo
+
+# 1:サービスコード種類 2:サービスコード区分 3:サービス名     4:最小時間 5:最大時間
+# 6:対象介護度         7:対象事業規模       8:対象事業者種類 9:サ責２級 10:同一施設
+# 11:朝夜              12:深夜              13:ユニット      14:単位
+# 各サービスコードをマージ
+cat ${tmp}-servicecode_houmonkaigo ${tmp}-servicecode_houmonnyuyoku ${tmp}-servicecode_houmonkango ${tmp}-servicecode_tsushokaigo ${tmp}-servicecode_houmonrihabiri ${tmp}-servicecode_fukushiyougu_taiyo ${tmp}-servicecode_tsushorihabiri |
+# 事業所同一の項目を外す(負荷を軽くするため)
+if [ "$dispDouitsu" = "1" ] ; then
+  awk '$10=="1" || $10=="_"'
+fi |
+cat - ${tmp}-servicecode_add_yobo > $tmp-servicecode
+
+cat ${tmp}-servicecode_tankinyusho ${tmp}-servicecode_tankinyusho_ryouyou_routan ${tmp}-servicecode_tankinyusho_ryouyou_routan_igai ${tmp}-servicecode_kyotaku_ryouyou |
+# 事業所同一の項目を外す(負荷を軽くするため)
+if [ "$dispDouitsu" = "1" ] ; then
+  awk '$10=="1" || $10=="_"'
+fi |
+cat - > $tmp-servicecode2
+
+:> ${tmp}-tenkailistdata
+if [ "$(gyo ${tmp}-tenkailistdata_work)" != "0" ] ; then
+# 展開情報の個別単位を取得
+  cat ${tmp}-servicecode ${tmp}-servicecode2 |
+  LANG=C sort -k1,2                          |
+  self 1 2 14                                > $tmp-servicecodeall
+# 1:表示順   2:サービス種類コード 3:サービスコード 4:設定     5:開始時間
+# 6:終了時間 7:事業所ID           8:保険対象       9:付随費用 10:合計単位数
+  cat ${tmp}-tenkailistdata_work             |
+# 1:表示順   2:サービス種類コード 3:サービスコード 4:設定     5:開始時間
+# 6:終了時間 7:事業所ID           8:保険対象       9:付随費用 10:合計単位数
+  LANG=C sort -k2,3                          |
+  join1 key=2/3 $tmp-servicecodeall -        |
+# 1:表示順      2:サービス種類コード 3:サービスコード 4:単位     5:設定
+# 6:開始時間    7:終了時間           8:事業所ID       9:保険対象 10:付随費用
+# 11:合計単位数
+  awk '{if($4=="0"){$11=$11}else{$11=$4};print $0}'   |
+  self 1/3 5/11                              |
+#  self 1/3 5/10 4                            |
+# 1:表示順   2:サービス種類コード 3:サービスコード 4:設定     5:開始時間
+# 6:終了時間 7:事業所ID           8:保険対象       9:付随費用 10:単位
+  LANG=C sort -k1n,1n                        > ${tmp}-tenkailistdata
+fi
+
+
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear="$(date +%Y)"
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth="$(date +%m)"
+formatdate="'"${hdTaishouYear}"/"${taishoumonth}"/1'"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${tmp}-riyouhyoukihon)
+#--------------------------------------------------------
+
+[ "${YoteiKakuteiFlg}" = "1" ] && YoteiKakutei="checked" || YoteiKakutei=""
+[ "${JissekiKakuteiFlg}" = "1" ] && JissekiKakutei="checked" || JissekiKakutei=""
+[ "${JissekiKakuteiFlg}" = "1" ] && tourokubuttondisabled="disabled" || tourokubuttondisabled=""
+
+: > $tmp-tantou_caremanager
+# ケアマネージャ設定
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KYOTAKU_JIGYOUSHO   |
+awk '$1=="'$Riyoushaid'"&&$6<="'$today'"&&"'$today'"<=$7&&$(NF-2)!="9"{print $4}'  > $tmp-tantou_caremanager
+
+[ -z "$CareManager" -o "$CareManager" = "_" ] && CareManager=$(cat $tmp-tantou_caremanager)
+
+# サービス種類を取得
+cat ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE     |
+# 介護系の種類をはずす
+awk '$2!="1"'                                          |
+# 介護保険対象外、一部介護系の種類をはずす
+awk '$1!="aa"&&$1!="32"&&$1!="38"&&$1!="44"&&$1!="46"&&$1!="71"&&$1!="72"&&$1!="73"&&$1!="76"&&$1!="77"{print $1,$3}'  > $tmp-servicetype_mst
+
+
+echo "CAREPLAN_MENU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID###  ${Riyoushaid}
+###RIYOUSHAMEI### $Riyoushamei
+###YOTEIKAKUTEI###  ${YoteiKakutei}
+###JISSEKIKAKUTEI###  ${JissekiKakutei}
+###TAISHOUMONTH###  ${formatdate}
+###DISABLED###  ${tenkaibuttondisabled}
+###TOUROKUDISABLED###  ${tourokubuttondisabled}
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###SELECT_SHISETSU### $select_shisetsu
+###HDKENSAKUDATE### $hdkensakudate
+FIN
+
+# 地域単価を抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGOHOKEN_TIIKI_TANKA          |
+awk '$4<="'$curday'"&&$5>="'$curday'"{print $1,$2,$3}'    |
+LANG=C sort -k1,2                                         > ${tmp}-base_tiikitanka
+
+# 施設による事業所マスタフィルタリング
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/SHISETSU_JIGYOUSHO_MASTER  |
+awk '$2=="'${shisetsu}'"&&$(NF-2)!="9"{print $1}'                |
+LANG=C sort -k1,1                                   > $tmp-shisetsu_jigyousho
+
+# 表示順グランクレールケアサービス横浜、馬事公苑
+# 横浜
+echo "0073" "1" > $tmp-jigyousho-sort
+# 馬事公苑
+echo "0107" "1" >> $tmp-jigyousho-sort
+
+# 事業所マスタを抽出
+cat ${KYOUTSU_TBL}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER             |
+awk '$(NF-2)!="9"' |
+LANG=C sort -k1,1  |
+# 施設による事業所マスタの絞込み
+join0 key=1 $tmp-shisetsu_jigyousho |
+# 事業所同一の項目を外す(負荷を軽くするため)
+if [ "$dispDouitsu" = "1" ] ; then
+  awk '$17=="1" || $17=="_"'
+fi |
+LANG=C sort -k4,4                                         |
+# 予防のみ抽出
+# 4:サービス事業者タイプ 5:サービス事業者カテゴリ 6:サービスタイプ名
+join1 key=4 ${KYOUTSU_TBL}/CONFIG/KAIGOHOKEN_SERVICE_TYPE |
+awk '$5=="2"||$4=="37"||$4=="39"||$4=="74"||$4=="75"'     |
+delf 5 6                                                  |
+self 4 7 0                                                |
+LANG=C sort -k1,2                                         |
+# 1:サービス事業者タイプ                  2:地域区分                              3:地域単価                    4:事業所ID                      5:事業者番号
+# 6:事業者名称                            7:サービス事業者タイプ                  8:事業者区分                  9:指定基準事業所区分            10:地域区分
+# 11:生活保護指定                         12:割引率                               13:施設等の区分               14:特別地域加算                 15:特定事業所加算
+# 16:中山間地域などの小規模事業所（地域） 17:中山間地域などの小規模事業所（規模） 18:日中の身体介護20分未満体制 19:サービス提供責任者体制の減算 20:同一建物に居住する利用者の減算
+# 21:介護職員処遇改善加算                 22:緊急時訪問看護加算                   23:特別管理体制               24:ターミナルケア体制           25:サービス提供体制強化加算
+# 26:時間延長サービス体制                 27:個別機能訓練体制                     28:入浴介助体制               29:職員の欠員による減算         30:栄養改善体制
+# 31:口腔機能向上体制                     32:若年性認知症利用（入所）者受入加算   33:機能訓練指導体制           34:夜間勤務条件基準             35:送迎体制
+# 36:ユニット型個室の有無                 37:ユニット型順個室の有無               38:従来型個室の有無           39:多床室の有無                 40:療養食加算
+# 41:ユニットケア体制                     42:看護体制加算                         43:夜勤職員配置加算           44:緊急短期入所体制確保加算     45:運動機能向上加算
+# 46:事業所評価加算（申出）の有無         47:生活機能向上グループ活動加算         48:24時間通報体制加算
+join1 key=1/2 ${tmp}-base_tiikitanka   |
+# 表示順対応
+LANG=C sort -k4,4                      |
+join2 +"0" key=4 $tmp-jigyousho-sort                |
+LANG=C sort -k5,5nr -k51nr,51nr                     |
+delf 5                                 |
+#LANG=C sort -k50nr,50nr                                      |
+# 1:事業所ID          2::事業者名称                  3:サービス事業者タイプ  4:特定事業所加算      5:施設等の区分
+# 6:地域単価          7:サービス提供責任者体制の減算 8:同一建物              9:欠員                10:ユニット
+# 11:夜間体制         12:サービス提供体制加算        13:特別管理体制         14:緊急時訪問看護加算 15:運動向上体制
+# 16:若年性認知症加算 17:栄養改善体制加算            18:口腔機能向上体制加算
+self 4 6 7 15 13 3 19 20 29 41 34 25 23 22 45 32 30 31                   |
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18}' > ${tmp}-jigyousho_master
+
+cat $tmp-caremanager_tmplist                                 |
+awk '{if($1=="'$CareManager'"){$3="selected"}else{$3="_"};print $0}'> $tmp-caremanager_list
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/RIYOUHYOU_YOBO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###KAIGODOJOUHOU### - $tmp-riyousha_kaigodo_info |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+mojihame -l###SERVICETYPE### - ${tmp}-servicetype_mst |
+mojihame -l###KYOUKYUSHA### - ${tmp}-jigyousho_master |
+mojihame -l###CAREMANAGERLIST### - $tmp-caremanager_list |
+mojihame -l###RIYOUHYOUDATA### - ${tmp}-riyouhyoudata |
+mojihame -l###TENKAIDATA### - ${tmp}-tenkailistdata |
+mojihame -l###TAISHOUWAREKI### - ${tmp}-gengou_mst |
+mojihame -l###SERVICECODE2### - ${tmp}-servicecode2 |
+mojihame -l###SERVICECODE### - ${tmp}-servicecode |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

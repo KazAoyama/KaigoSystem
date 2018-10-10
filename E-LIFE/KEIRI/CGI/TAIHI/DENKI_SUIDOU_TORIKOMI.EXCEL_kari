@@ -1,0 +1,122 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.EXCEL : 電気水道料金EXCEL出力
+#
+# Usage : DENKI_SUIDOU_TORIKOMI.EXCEL namefile datafile
+#
+# Written by J.MIKAMI(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/DENKI_SUIDOU"
+input_dir="${app_dir}/INPUT/DENKI_SUIDOU"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${kikan_month_select} >${tmp}-select_month
+echo ${syubetsu_select} > ${tmp}-syubetsu_select
+echo ${kikan_month_select}  |
+self 1.1.4 1.5              |
+awk '{print $1"/"$2}'       >${tmp}-select_month2
+select_month="$(cat ${tmp}-select_month)"
+
+
+if [ ${syubetsu_select} = "1"  ]; then
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${userid}_denki_*.download.xls
+# 電気の出力
+TEMPLA=${temp_dir}/DENKI_DATA.xls
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month} |
+delf 2                                                                                   >${tmp}-search
+Ehexcel < ${TEMPLA} 1 a1 ${tmp}-select_month2               \
+                    1 a4 ${tmp}-search                      > ${download_dir}/${userid}_denki_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_denki_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+#echo "${userid}_$$.download.xls"
+cat ${tmp}-html.html
+
+else
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${userid}_suidou_*.download.xls
+# 水道の出力
+TEMPLA=${temp_dir}/SUIDOU_DATA.xls
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month}  |
+delf 2                                                                                     >${tmp}-search
+Ehexcel < ${TEMPLA} 1 a1 ${tmp}-select_month2               \
+                    1 a4 ${tmp}-search                      > ${download_dir}/${userid}_suidou_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_suidou_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+fi
+
+# ファイル名をはく
+cat ${tmp}-html.html
+ 
+rm -f ${tmp}-*
+exit 0
+

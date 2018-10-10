@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# SHOKUJI_SHOUSAI_TOUROKU.SEARCH
+# 食事詳細検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+today=$(date +%Y%m%d)
+riyousha_dir="${data_dir}/UNEI/RIYOUSHA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+USERID=$(nameread  "userid"  $namedata)
+SHISETSUID=$(nameread  "shisetsu"  $namedata)
+Shisetsu="${SHISETSUID}"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+#[ -z "${Floor}" -o "${Floor}" = "_" ] && Floor=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $3}' ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS | head -1)
+#[ -z "${Kyoshitsu}" -o "${Kyoshitsu}" = "_" ] && Kyoshitsu=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="'${Floor}'"&&$(NF-2)!="9"{print $5}' ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS | head -1)
+#[ -z "${Nyuukyosha}" -o "${Nyuukyosha}" = "_" ] && Nyuukyosha=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="'${Floor}'"&&$(NF-2)!="9"{print $6}' ${riyousha_dir}/SHISETSU_RIYOUSHA_STATUS | head -1)
+# 利用者情報が飛んできていたら検索
+awk '$1=="'${Nyuukyosha}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHOUSAI > $tmp-data
+# 1:利用者ID             2:食事詳細ID      3:期間FROM             4:期間TO                    5:形態
+# 6:主食                 7:副食            8:指示食：糖尿病       9:指示食：糖尿病カロリーcal 10:指示食：減塩食
+# 11:指示食：減塩食塩分g 12:指示食：肝臓食 13:指示食：肝臓食塩分g 14:指示食：肝臓蛋白g        15:食事アレルギー
+# 16:禁止食              17:その他
+
+if [ -s $tmp-data ] ; then
+  cat $tmp-data
+fi
+## 終了
+rm -f $tmp-*
+exit 0

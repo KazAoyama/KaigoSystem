@@ -1,0 +1,131 @@
+#!/bin/bash
+#
+# NYU_TAISHUTSU_KANRI.SEARCH : サーチ
+#
+# Usage : NYU_TAISHUTSU_KANRI.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+
+# initの時は渡ってきたnameをクリア
+if [ ${MODE} = "init" ];then
+  floor="0"
+  room="0"
+  riyosha_name="00"
+else
+  :
+fi
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   > $tmp-riyosha_status
+
+self 6 5 7 $tmp-riyosha_status                               |
+LANG=C sort -k3,3                                            |
+getlast 1 1                                                  |
+self 1 2                                                     |
+LANG=C sort -k1,1                                            |
+join1 key=1 $tmp-riyosha_master                              > $tmp-riyosha_room
+# 1:利用者id 2:利用者名 3:居室
+
+# SHISETSU_RIYOUSAH_STATUS
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+awk '$1=="'${shisetsu}'"&&$8>="'${today}'"{print $3,$5,$6}' > $tmp-status
+# 1:フロア 2:居室 3:利用者ID
+
+[ ${MODE} = "init" -o ${MODE} = "touroku" -o ${MODE} = "new_touroku" ] && riyosha_name="00"
+
+cat $tmp-status                                              |
+if [ ${floor} -ne 0 ];then
+  awk '$1=="'${floor}'"'
+else
+  cat -
+fi                                                           |
+if [ ${room} -ne 0 ];then
+  awk '$2=="'${room}'"'
+else
+  cat -
+fi                                                           |
+if [ ${riyosha_name} != "00" ];then
+  awk '$3=="'${riyosha_name}'"'
+else
+  cat -
+fi                                                           |
+self 3                                                       |
+LANG=C sort -u                                               > $tmp-riyosha_status
+
+month=$(echo $nengappi | awk '{print substr($1,1,4)substr($1,6,2)}')
+awk '$(NF-2)!=9&&$2=="'${nengappi}'"' ${pompa_dir}/NYU_TAISHUTSU_KANRI/${shisetsu}/${month}/NYU_TAISHUTSU_MONTH > $tmp-monthly
+# 1:入退出管理id      2:外出日 3:フロア      4:居室      5:入居者id
+# 6:外出区分番号      7:鍵     8:外出時間    9:戻り日    10:戻り時間
+# 11:フロント担当者id 12:備考  13:有効フラグ 14:更新時間 15:userid
+awk '$(NF-2)!=9' ${pompa_dir}/NYU_TAISHUTSU_KANRI/${shisetsu}/NYU_TAISHUTSU_NO_RETURN |
+# 1:入退出管理id      2:外出日 3:フロア      4:居室      5:入居者id
+# 6:外出区分番号      7:鍵     8:外出時間    9:戻り日    10:戻り時間
+# 11:フロント担当者id 12:備考  13:有効フラグ 14:更新時間 15:userid
+if [ $MODE = "no_return" ];then
+  cat -
+else
+  cat $tmp-monthly -
+fi |
+if [ $floor != "0" ];then
+  awk '$3=="'${floor}'"'
+else
+  cat -
+fi |
+if [ $room != "0" ];then
+  awk '$4=="'${room}'"'
+else
+  cat -
+fi |
+if [ $riyosha_name != "00" ];then
+  awk '$5=="'${riyosha_name}'"'
+else
+  cat -
+fi
+
+rm -f ${tmp}-*
+exit 0
+

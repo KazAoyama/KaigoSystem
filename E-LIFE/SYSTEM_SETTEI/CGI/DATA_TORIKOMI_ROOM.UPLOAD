@@ -1,0 +1,248 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_KOUZA.UPLOAD
+#
+# データ取込：口座情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE2" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE2/'       |
+sed 's/^.*filename2="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+cat ${excel} |
+e2t2 2 a2 r-  > $tmp-data
+# 1:UserID           2:ServiceType    3:HomeID             4:建屋ID         5:FloorID
+# 6:部屋ID           7:BedID          8:ContractStartDay   9:ContractEndDay 10:RoomStartDay
+# 11:RoomEndDay      12:InFlg         13:OutFlg            14:AutoNo        15:AfterLeaveStateCode
+# 16:AfterLeaveStateOther 17:BeforeApartmentStateCode      18:BeforeApartmentStateOther
+
+[ -s "$tmp-data" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#------------------------------
+# SHISETSU_RIYOUSHA_STATUS
+#------------------------------
+cat $tmp-data      |
+self 1 4/6 10 11   |
+# 1:UserID     2:建屋ID 3:FloorID 4:部屋ID 5:RoomStartDay
+# 6:RoomEndDay
+
+if [ "$(awk '$5~/\//' $tmp-data | gyo)" = "0" ] ; then
+  awk '{print $0,"'${Shisetsu}'","_","1","2014070100000000","00078"}' |
+  self NF-4 2 3 NF-3 4 1 5 6 NF-2/NF |  
+# 1:施設ID  2:建屋ID       3:FloorID    4:UNITID     5:部屋ID
+# 6:UserID  7:RoomStartDay 8:RoomEndDay 9:削除フラグ 10:更新時間
+# 11:更新者
+  maezero 2.2      
+else
+  sed 's/\// /g'           |
+  maezero 6.2 7.2 9.2 10.2 |
+# 1:UserID      2:建屋ID      3:FloorID   4:部屋ID    5:RoomStart年
+# 6:RoomStart月 7:RoomStart日 8:RoomEnd年 9:RoomEnd月 10:RoomEnd日
+  awk '{print "'${Shisetsu}'",$2,$3,"_",$4,$1,$5$6$7,$8$9$10,"1","2014070100000000","00078"}' |
+  maezero 2.2
+fi |
+awk '{print $0,$8=="99981231"?"99999999":$8}' |
+self 1/7 NF 9/NF-1         |
+LANG=C sort -k6,6          > $tmp-shisetsu_riyousha_status_before
+# 1:施設ID  2:建屋ID       3:FloorID    4:UNITID     5:部屋ID
+# 6:UserID  7:RoomStartDay 8:RoomEndDay 9:削除フラグ 10:更新時間
+# 11:更新者
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 利用者IDをくっつける
+[ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu}" ] || error_exit "新利用者IDをひも付けるテーブルがありません"
+
+[ -s $tmp-shisetsu_riyousha_status_before -a "$(retu $tmp-shisetsu_riyousha_status_before)" = "11" ] || error_exit 
+
+cat $tmp-shisetsu_riyousha_status_before |
+cjoin1 +ng key=6 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-shisetsu_riyousha_status_ok 2>$tmp-shisetsu_riyousha_status_ng
+
+
+# 利用者マスタの準備
+  cat /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_MASTER_${Shisetsu} |
+  self 1 NF-2    |
+  LANG=C sort -u > $tmp-riyousha_master
+# 1:利用者ID  2:削除フラグ
+
+# 削除フラグは利用者マスタに従う
+  cat $tmp-shisetsu_riyousha_status_ok |
+# 1:施設ID    2:建屋ID      3:FloorID      4:UNITID     5:部屋ID
+# 6:UserID    7:New利用者ID 8:RoomStartDay 9:RoomEndDay 10:削除フラグ
+# 11:更新時間 12:更新者
+  delf 6                               |
+  cjoin1 key=6 $tmp-riyousha_master -  |
+# 1:施設ID    2:建屋ID      3:FloorID      4:UNITID     5:部屋ID
+# 6:利用者ID  7:削除フラグ  8:RoomStartDay 9:RoomEndDay 10:削除フラグ
+# 11:更新時間 12:更新者
+  self 1/6 8/NF-3 7 NF-1 NF            |
+  LANG=C sort -u                       > $tmp-shisetsu_riyousha_status_${Shisetsu}
+
+#cp $tmp-* /home/hands/work/okuda 
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+result_gyo="$(gyo $tmp-shisetsu_riyousha_status_${Shisetsu})"
+
+[ -s $tmp-shisetsu_riyousha_status_${Shisetsu} -a "$(gyo $tmp-shisetsu_riyousha_status_ok)" = "${result_gyo}"  ] || error_exit
+[ "$(retu $tmp-shisetsu_riyousha_status_${Shisetsu})" = "11" ] || error_exit
+
+#-----------------------
+# 利用者契約情報(正式な契約情報がないため仮の)
+#----------------------^
+
+# 準備
+cat /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA//RIYOUSHA_KEIYAKU |
+self 1 2    |
+getlast 1 1 > $tmp-riyousha_keiyaku
+# 1:利用者ID  2:契約ID 
+
+
+# 施設利用者情報を元につくる
+cat $tmp-shisetsu_riyousha_status_${Shisetsu} |
+# 1:施設ID   2:建屋ID       3:FloorID    4:UNITID     5:部屋ID
+# 6:利用者ID 7:RoomStartDay 8:RoomEndDay 9:削除フラグ 10:更新時間
+# 11:更新者
+awk '{print $6,$1,$2,$3,$4,$5,"_","004",$7,"_",$7,$8=="99981231"?"99999999":$8,"_","_","システム移行データ","_","_","_","_","_",$(NF-2),$(NF-1),$NF}' |
+# 1:利用者(入居者)ID 2:施設ID      3:建屋ID     4:フロアID      5:ユニットID
+# 6:居室ID           7:入居時年齢  8:契約種類ID 9:契約日        10:引渡し日
+# 11:契約開始日      12:契約終了日 13:退去理由  14:退去理由詳細 15:備考
+# 16:予備1           17:予備2      18:予備3     19:予備4        20:予備5
+# 21:削除フラグ      22:更新日     23:更新者
+LANG=C sort -u |
+### 現在の最新契約idをつける
+##cjoin2 +"000" key=1 $tmp-riyousha_keiyaku -  |
+awk '{print "'${Shisetsu}'"*100,$0}'                       |
+rank ref=2     |
+# 1:利用者ごとの番号 2:利用者(入居者)ID 3:利用者ごとの最新契約id 4:施設ID      5:建屋ID
+# 6:フロアID         7:ユニットID       8:居室ID                 9:入居時年齢  10:契約種類ID
+# 11:契約日          12:引渡し日        13:契約開始日            14:契約終了日 15:退去理由
+# 16:退去理由詳細    17:備考            18:予備1                 19:予備2      20:予備3
+# 21:予備4           22:予備5           23:削除フラグ            24:更新日     25:更新者
+##awk '{print $1+$3,$0}'                       |
+awk '{print $1+$2,$0}'                       |
+maezero 1.3    |
+##self 3 1 5/NF  > $tmp-riyousha_keiyaku_${Shisetsu}
+self 4 1 5/NF  > $tmp-riyousha_keiyaku_${Shisetsu}
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+#------------------------
+# 所定の場所へこぴー
+cp -p $tmp-shisetsu_riyousha_status_${Shisetsu} /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SHISETSU_RIYOUSHA_STATUS_${Shisetsu}
+cp -p $tmp-riyousha_keiyaku_${Shisetsu} /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKU_${Shisetsu}
+
+cp $tmp-*ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}
+#-------------------------
+# 現在のデータと合体！
+
+# 施設利用者STATUS
+cat $tmp-shisetsu_riyousha_status_${Shisetsu} /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+LANG=C sort -u |
+getlast 1 6    > $tmp-shisetsu_riyousha_status_result
+# 1:施設ID  2:建屋ID       3:FloorID    4:UNITID     5:部屋ID
+# 6:UserID  7:RoomStartDay 8:RoomEndDay 9:削除フラグ 10:更新時間
+# 11:更新者
+
+# 利用者契約
+cat $tmp-riyousha_keiyaku_${Shisetsu} /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKU |
+LANG=C sort -u |
+getlast 1 2    > $tmp-riyousha_keiyaku_result
+
+# -------------------------
+# データ更新
+
+  # 施設利用者STATUS
+  cp $tmp-shisetsu_riyousha_status_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/SHISETSU_RIYOUSHA_STATUS
+  cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/SHISETSU_RIYOUSHA_STATUS_${cur_time}
+
+  cp -p $tmp-shisetsu_riyousha_status_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS
+  cp -p $tmp-shisetsu_riyousha_status_result /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS
+
+
+  # 利用者契約
+  cp -p $tmp-riyousha_keiyaku_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KEIYAKU
+  cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKU /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_KEIYAKU_${cur_time}
+
+ cp -p $tmp-riyousha_keiyaku_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKU
+ cp -p $tmp-riyousha_keiyaku_result /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKU
+#cp $tmp-* /home/hands/work/okuda
+#-------------------------------------------------------------
+
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,105 @@
+#!/bin/bash
+#
+# KAZOKUKOUSEI.DISPLAY : 家族構成図
+#
+# Usage : KAZOKUKOUSEI.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/KYOUTSU/CGI/KYOUTSU.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+
+
+cat /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2                                            > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+##データ出力先設定
+
+case "${RiyouCGI}" in
+   IKOU_ASSESSMENT )
+     save_dir=${home_dir}/UNEI/POMPA/IKOU_ASSESSMENT/${Riyoushaid}
+     disp_dir=${home_dir}/UNEI/HTML/IKOU/${Riyoushaid}
+     ;;
+   KANGO_KAIGO_YOUYAKU )
+     save_dir=${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KANGO_KAIGO_YOUYAKU/${Riyoushaid}
+     disp_dir=${home_dir}/SHISETSU_KAIGOKIROKU/HTML/${Riyoushaid}
+     ;;
+   RIYOUSHA_KIHON_JOUHOU )
+     save_dir=${home_dir}/CAREPLAN/POMPA/CAREPLAN_YOBO/${Riyoushaid}
+     disp_dir=${home_dir}/CAREPLAN/HTML/RIYOUSHA_KIHON/${Riyoushaid}
+     ;;
+   * )
+     save_dir=${home_dir}/KYOUTSU/POMPA/${Riyoushaid}
+     disp_dir=${home_dir}/KYOUTSU/HTML/${Riyoushaid}
+     ;;
+esac
+
+contents1=$(cat ${save_dir}/kazokukosei-231 | sed 's/ /###HANKAKUSPACE###/g' | awk 'NR==1')
+contents2=$(cat ${save_dir}/kazokukosei-231 | sed 's/ /###HANKAKUSPACE###/g' | awk 'NR==2')
+contents3=$(cat ${save_dir}/kazokukosei-231 | sed 's/ /###HANKAKUSPACE###/g' | awk 'NR==3')
+contents4=$(cat ${save_dir}/kazokukosei-231 | ctail -2 | sed 's/ /###HANKAKUSPACE###/g' | awk 'NR>=4' | tateyoko | sed 's/ /###HANKAIGYO###/g')
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID###  ${Riyoushaid}
+###RIYOUCGI###  ${RiyouCGI}
+###RIYOUSHAMEI### $Riyoushamei
+###CONTENTS1### $contents1
+###CONTENTS2### $contents2
+###CONTENTS3### $contents3
+###CONTENTS4### $contents4
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+mkdir -p ${disp_dir}
+
+# HTMLの作成
+cat ${html_dir}/DISP_KAZOKUKOSEI.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/###HANKAKUSPACE###/ /g' |
+sed 's/###HANKAIGYO###/\\n/g' |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > ${disp_dir}/output-kazokukousei.html
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

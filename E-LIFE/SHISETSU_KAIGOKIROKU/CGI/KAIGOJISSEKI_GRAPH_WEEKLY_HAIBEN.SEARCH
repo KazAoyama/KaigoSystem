@@ -1,0 +1,307 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_GRAPH_MONTHLY_HAIBEN.SEARCH : 月間排便グラフ検索用CGI
+#
+# Usage : KAIGOJISSEKI_GRAPH_MONTHLY_HAIBEN.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# サーチする日にちの取得
+mdate -e ${hd_sakuseibi}/-6  > ${tmp}-days
+# サーチする年月の取得
+cat ${tmp}-days              |
+tarr                         |
+awk '{print substr($1,1,6)}' |
+LANG=C sort -u -k1,1n        |
+yarr                         > ${tmp}-nengetsu
+
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 検索する
+for nengetsu in $(cat ${tmp}-nengetsu);do
+  cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU           |
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  LANG=C sort -k4,4n                                                      |
+  join0 key=4 <(echo "2")                                                 |
+  LANG=C sort -k5,5                                                       |
+  tee ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "排便介助")                                          |
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k2,2n                                                      > ${tmp}-taisho_data
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  cat ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "下剤与薬")                                          |
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k2,2n                                                      > ${tmp}-gezai_data
+  cat ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "排尿介助")                                          |
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k2,2n                                                      > ${tmp}-hainyo_data
+  cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU           |
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  LANG=C sort -k4,4n                                                      |
+  join0 key=4 <(echo "1")                                                 |
+  LANG=C sort -k5,5                                                       |
+  tee ${tmp}-jisseki                                                      |
+  join0 key=5 <(echo "水分摂取")                                          |
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k2,2n                                                      > ${tmp}-suibun_data
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+
+  # まわしてsearchdata作成
+  for day in $(cat ${tmp}-days);do
+  ##### 排便の処理
+    cat ${tmp}-taisho_data             |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=2 <(echo $day)           > ${tmp}-totyu
+    if [ "$(gyo ${tmp}-totyu)" = 0 ];then
+      echo "${day}" "0" "0" "0" "0" "0" "0" >> ${tmp}-daydata
+    else
+      cat ${tmp}-totyu                   |
+      self 7                             |
+      sed 's/+++/ /g'                    |
+      # 1:haiben_ryo2 2:【量】 3:haiben_ryo2のvalue 4:多量 5:hainyo_kubun2 6:【介助区分】 7:hainyo_kubun2のvalue 8:オムツ交換 9:haiben_keijou 10:【形状】
+      # 11:haiben_keijouのvalue 12:普通 13:hainyo_shurui2 14:【排泄種類】 15:hainyo_shurui2のvalue 16:オムツ
+      self 11 3                          |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue
+      awk '{print  $0,"0","0","0","0","0","0"}' |
+      # 1:haiben_keijouのvalue 2:haiben_ryo2のvalue 3:形状フラグ普通 4:形状フラグ軟便 5:形状フラグ不消化便 6:形状フラグ水様便 7:形状フラグ硬便 8:形状フラグ血便
+      awk '{if($1=="1"){$3=$2;print}else if($1=="2"){$4=$2;print}else if($1=="3"){$5=$2;print}else if($1=="4"){$6=$2;print}else if($1=="5"){$7=$2;print}else{$8=$2;print}}' |
+      awk '{print $3,$4,$5,$6,$7,$8}'    |
+      # 1:形状フラグ普通の量 2:形状フラグ軟便 3:形状フラグ不消化便 4:形状フラグ水様便 5:形状フラグ硬便 6:形状フラグ血便
+      ## 量の計算
+      awk '{if($1==1){$1=3;print}else if($1==2){print}else if($1==3){$1=1;print}else if($1==4){$1=0.1;print}else if($1==5){$1=0;print}else{print}}' |
+      awk '{if($2==1){$2=3;print}else if($2==2){print}else if($2==3){$2=1;print}else if($2==4){$2=0.1;print}else if($2==5){$2=0;print}else{print}}' |
+      awk '{if($3==1){$3=3;print}else if($3==2){print}else if($3==3){$3=1;print}else if($3==4){$3=0.1;print}else if($3==5){$3=0;print}else{print}}' |
+      awk '{if($4==1){$4=3;print}else if($4==2){print}else if($4==3){$4=1;print}else if($4==4){$4=0.1;print}else if($4==5){$4=0;print}else{print}}' |
+      awk '{if($5==1){$5=3;print}else if($5==2){print}else if($5==3){$5=1;print}else if($5==4){$5=0.1;print}else if($5==5){$5=0;print}else{print}}' |
+      awk '{if($6==1){$6=3;print}else if($6==2){print}else if($6==3){$6=1;print}else if($6==4){$6=0.1;print}else if($6==5){$6=0;print}else{print}}' |
+      awk '{print "'${day}'",$0}'        |
+      sm2 1 1 2 7                        |
+      # 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 7:血便の量
+      ### 重ねて表示するために足し算をする
+      awk '{futu=$2+$3+$4+$5+$6+$7;nanben=$3+$4+$5+$6+$7;fushoka=$4+$5+$6+$7;suiyo=$5+$6+$7;katai=$6+$7;ketsu=$7;print $1,futu,nanben,fushoka,suiyo,katai,ketsu}'                               >> ${tmp}-daydata
+    fi
+  [ -e ${tmp}-original ] &&  rm ${tmp}-original
+  
+  ##### 排尿の処理
+    cat ${tmp}-hainyo_data                |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=2 <(echo $day)             > ${tmp}-hainyo_totyu
+    if [ "$(gyo  ${tmp}-hainyo_totyu)" = 0 ];then
+      echo "${day}" "0"                 |
+      awk '{print substr($1,7,2),$2}'    >> ${tmp}-dayhainyo
+    else
+      cat ${tmp}-hainyo_totyu             |
+      self 7                             |
+      sed 's/+++/ /g'                    |
+      # 1:haiben_ryo 2:【尿量】 3:haiben_ryoのvalue 4:多量 5:hainyo_kubun 6:【介助区分】 7:hainyo_kubun2のvalue 8:オムツ交換 9:hainyo_keijou 10:【形状】
+      # 11:hainyo_keijouのvalue 12:普通 13:hainyo_shurui 14:【排泄種類】 15:hainyo_shuruiのvalue 16:オムツ
+      self 3                             |
+      # 1:haiben_ryoのvalue
+      awk '{if($1==1){$1=3;print}else if($1==2){print}else if($1==3){$1=1;print}else if($1==4){$1=0.1;print}else if($1==5){$1=0;print}else{print}}' |
+      awk '{print "'${day}'",$0}'        |
+      sm2 1 1 2 2                        |
+      awk '{print substr($1,7,2),$2}'    >> ${tmp}-dayhainyo
+    fi
+  ##### 下剤の処理
+    cat ${tmp}-gezai_data                |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=2 <(echo $day)             > ${tmp}-gezai_totyu
+    if [ "$(gyo  ${tmp}-gezai_totyu)" = 0 ];then
+      echo "${day}" "-1"                 |
+      awk '{print substr($1,7,2),$2}'    >> ${tmp}-daygezai
+    else
+      cat ${tmp}-gezai_totyu             |
+      awk '{print substr($2,7,2),"0.1"}' >> ${tmp}-daygezai
+      # 1:日 2:0.1
+    fi
+  ##### 水分摂取の処理
+    cat ${tmp}-suibun_data                |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+    join0 key=2 <(echo $day)             > ${tmp}-suibun_totyu
+    if [ "$(gyo  ${tmp}-suibun_totyu)" = 0 ];then
+      echo "${day}" "0"                 |
+      awk '{print substr($1,7,2),$2}'    >> ${tmp}-daysuibun
+    else
+      cat ${tmp}-suibun_totyu             |
+      self 7                             |
+      sed 's/+++/ /g'                    |
+      # 1:suibun_yoryo 2:【容量(cc)】 3:value 4:suibun_shurui 5:【種類】 6:value 7:普通
+      self 3                             |
+      # 1:suibun_yoryoのvalue
+      awk '{print "'${day}'",$0}'        |
+      sm2 1 1 2 2                        |
+      awk '{print substr($1,7,2),$2}'    >> ${tmp}-daysuibun
+    fi
+  done
+done
+# 日にちを日だけに
+awk '{print substr($1,7,2),$2,$3,$4,$5,$6,$7}' ${tmp}-daydata > ${tmp}-data
+# データを整形
+## 普通
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 2                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "futu",$0}'             > ${tmp}-futu
+## 軟便
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 3                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "nanben",$0}'             > ${tmp}-nanben
+
+## 不消化便
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 4                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "fushoka",$0}'            > ${tmp}-fushoka
+
+## 水様便
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 5                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "suiyo",$0}'              > ${tmp}-suiyo
+
+## 硬便
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 6                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "katai",$0}'              > ${tmp}-katai
+
+## 血便
+cat ${tmp}-data                       |
+# 1:日にち 2:普通の量 3:軟便の量 4:不消化便の量 5:水様便の量 6:硬便の量 6:血便の量
+self 1 7                              |
+# 1:日にち 2:普通の量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "ketsu",$0}'              > ${tmp}-ketsu
+
+## 下剤
+cat ${tmp}-daygezai                   |
+# 1:日にち 2:0.1 or -1
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "gezai",$0}'              > ${tmp}-gezai
+
+## 排尿
+cat ${tmp}-dayhainyo                   |
+# 1:日にち 2:量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "hainyo",$0}'              > ${tmp}-hainyo
+
+## 水分摂取
+cat ${tmp}-daysuibun                   |
+# 1:日にち 2:量
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "suibun",$0}'              > ${tmp}-suibun
+
+
+cat ${tmp}-futu ${tmp}-nanben ${tmp}-fushoka ${tmp}-suiyo ${tmp}-katai ${tmp}-ketsu ${tmp}-gezai ${tmp}-hainyo ${tmp}-suibun
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

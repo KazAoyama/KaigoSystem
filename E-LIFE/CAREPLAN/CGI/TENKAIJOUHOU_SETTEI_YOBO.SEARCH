@@ -1,0 +1,144 @@
+#!/bin/bash
+#
+# TENKAIJOUHOU_SETTEI_YOBO.DISPLAY
+# 展開情報設定（予防）　表示用CGI
+#
+# Written by K.Aoyama :20131125
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明で>
+す"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+txtareaTokubetsuBiko
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+# 事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER |
+# 特定予防事業所をなくす
+awk '$4!="44"&&$4!="46"' |
+self 1 4 |
+LANG=C sort -k1,2 > $tmp-jigyousho_mst
+
+# 最新日付を取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_YOBO   |
+awk '$1=="'${Riyoushaid}'"&&$19!="9"'   |
+self 1 2                      |
+LANG=C sort -k1,2             |
+uniq                          |
+getlast 1 2                   > ${tmp}-lastdate
+lastdate=$(awk '{print $2}' ${tmp}-lastdate)
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_YOBO |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$19!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${hdKijunDate}" -o "${hdKijunDate}" = "_" ] ; then
+  awk '$2=="'${lastdate}'"'
+else
+  awk '$2=="'${hdKijunDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 1:表示順 2:サービス内容 3:回数 4:単位 5:介護保険金額 6:自己負担額
+# 7:限度額 8:サービスコード種類 9:サービスコード項目 10:サービス実施週曜日
+# 11:サービス開始時刻 12:サービス終了時刻 13:供給者ID 14:介護保険対象区分
+# 15:付随費用単価 16:加算内容
+self 5 6 13 14 17 16 15 3 4 9 10 11 8 7 18 12         |
+sort -k1,1n    |
+tee ${tmp}-tenkai_num    |
+yarr > ${tmp}-tenkai_value
+
+cp ${tmp}-tenkai_num $work_dir/tenkainum
+
+# 支援計画表２より反映
+if [ "$(gyo ${tmp}-tenkai_num)" = "0" ] ; then
+  if [ -s ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_MOKUHYOU ] ; then
+     cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_MOKUHYOU  |
+      awk '$1=="'${Riyoushaid}'"&&$28!="9"'   |
+      if [ -z "${hdKijunDate}" -o "${hdKijunDate}" = "_" ] ; then
+        awk '$2=="'${lastdate}'"'
+      else
+        awk '$2=="'${hdKijunDate}'"'
+      fi |
+      awk '{print $8"/"$9,$12"/"$13,$16"/"$17,$20"/"$21,$24"/"$25}' |
+      tarr |
+      sed 's/\// /g'   |
+      LANG=C sort -k2,2   |
+      awk '$2!="_"'       |
+      join1 key=2 $tmp-jigyousho_mst |
+      awk '{print "@","@","@","@","@","@","@",$3,"@","@","@","@",$2,$1,"@","@"}' > $tmp-tenkai_num
+  fi
+fi
+
+# ヘッダ設定
+#tenkainum=$(gyo ${tmp}-tenkai_num)
+#echo "tenkaiNum" "${tenkainum}" > ${tmp}-tenkainum
+#seq ${tenkainum} |
+#while read tenknum ; do
+#tnum=$((tenknum-1))
+#cat <<- FIN >> ${tmp}-header_tenkai
+#Sort$tnum
+#ServiceNaiyou$tnum
+#ServiceKaisu$tnum
+#$tnum
+#FIN
+#done
+
+#cat ${tmp}-header_tenkai |
+#tateyoko                 |
+#cat - ${tmp}-kazoku_value |
+#tateyoko                 > ${tmp}-assessment_kazoku
+
+cat ${tmp}-tenkai_num
+
+## 終了
+rm -f $tmp-*
+exit 0

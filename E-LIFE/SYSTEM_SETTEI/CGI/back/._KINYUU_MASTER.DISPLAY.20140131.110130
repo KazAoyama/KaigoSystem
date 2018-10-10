@@ -1,0 +1,139 @@
+#!/bin/bash
+#
+# KINYUU_MASTER.DISPLAY : 金融マスタ
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+#rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${test_tbl_dir}/STAFF_NAME                     |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${test_tbl_dir}/SHISETSU_NAME                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 表示の処理
+
+# 金融機関テーブルは全て表示
+self 1 3 ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME |
+LANG=C sort > ${tmp}-kikan_data
+# 1:金融機関コード 2:金融機関名
+
+# 支店テーブルはメッセージ表示
+echo "@ 金融機関名を指定してください。" > ${tmp}-shiten_data
+
+# MODE=regist時のみ処理
+case "${MODE}" in
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${koushin_data})
+    # メッセージ作成
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${koushin_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+  ;;
+esac
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html_alert
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 共通設定項目
+# DROPDOWN_ACTIVE:メニューのどのドロップダウンが選択されているか
+# LI_SYSTEMSETTEIi:ドロップダウン内のどこが選択されているか
+# KIKAN_ACTIVE:金融機関名インデックスの選択(みため) ＊支店名インデックスは初期に支店を表示しないので選択しない
+# 初期表示ではテキストボックスに入力が無い状態なので空
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI15### active
+###KIKAN_ACTIVE0### active
+###KIKAN_CODE###
+###KIKAN_NAME###
+###KIKAN_NAME_KANA###
+###SHITEN_CODE###
+###SHITEN_NAME###
+###SHITEN_NAME_KANA###
+###KIKAN_CODE_DISABLED###
+###KIKAN_NAME_DISABLED###
+###KIKAN_NAME_KANA_DISABLED###
+###SHITEN_CODE_DISABLED###
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+cat ${html_dir}/KINYUU_MASTER1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/KINYUU_MASTER2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER_NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l"KINYUU_KIKAN_TBL" - ${tmp}-kikan_data |
+mojihame -l"KINYUU_KIKAN_SHITEN_TBL" - ${tmp}-shiten_data |
+#sed 's/###KAIGYO###/\n/g'     |
+#sed 's/###SPACE###/ /g' |
+if [ -e $tmp-html_alert ] ; then
+  cat - $tmp-html_alert
+else
+  cat -
+fi
+#formhame -d"_" - ${namedata}
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

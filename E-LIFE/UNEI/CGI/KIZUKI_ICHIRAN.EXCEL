@@ -1,0 +1,221 @@
+#!/bin/bash
+#
+# KIZUKI_ICHIRAN.EXCEL
+# 気づき一覧エクセルCGI
+#
+# Written by K.Aoyama :2014/08/21
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+tbl_dir="/home/hands/E-LIFE/TBL"
+cgi_name="$(basename ${0})"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+#"${shisetsu}"
+#-------------------------------------------------------------
+# 選択している
+Shubetsu=$(nameread      "Shubetsu"       $namedata)
+Shisetsu=$(nameread      "Shisetsu"       $namedata)
+HasseibiFrom=$(nameread "HasseibiFrom"  $namedata | sed 's/\///g')
+HasseibiTo=$(nameread   "HasseibiTo"  $namedata | sed 's/\///g')
+shisetsu=$(nameread "shisetsu"  $namedata)
+[ -z "${Shisetsu}" ] && Shisetsu="${shisesu}"
+# 全てを追加＆JIGYOUSHO_GROUP_MASTERとSHISETSU_KIHONを統合
+echo "_" "全て" > $tmp-all-shisetsu
+cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON $tmp-all-shisetsu |
+self 1 2 > $tmp-full-shisetsu
+
+SHISETSUNAME="$(awk '$1=="'${Shisetsu}'"{print $2}' $tmp-full-shisetsu | head -1)"
+
+# if [ $(echo "${Shisetsu}" | awk '$1~/^1/{print substr($1,1,1)}') = "1" ] ; then
+#    SHISETSUNAME="$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+#  else
+#    SHISETSUNAME="$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+#  fi
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                     > ${tmp}-usermei
+
+
+
+
+
+#-----------------------------------------------------------
+#-------------------------------------------------------------
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           |
+## formhame 前に、キーワードが "_" のみの場合、消去
+awk '{if($1~/SEARCH_WORD*/){if($2~/^_$/){$2=""};}print}' |
+# formhame 前に、キーワード検索ボックスの空白を、"_"から" "に戻す
+awk '{if($1~/SEARCH_WORD*/){gsub(/_/," ",$2)};print}'    > $tmp-namedata
+
+  # 準備
+  # 種別名
+cat << FINN >> $tmp-shubetsu
+1 クレーム
+2 不満
+3 おほめ
+4 期待・要望
+5 その他
+6 サンクス
+FINN
+
+cat << FIN2 >> $tmp-jouhougen
+1 ご入居者様
+2 ご家族
+3 自分自身
+4 他スタッフ
+5 協力業者
+6 その他
+FIN2
+
+cat << FIN3 >> $tmp-taishou
+1 施設・設備面
+2 スタッフ対応面
+3 ルールや仕事のやり方
+4 ご入居者
+5 その他
+FIN3
+
+echo "$SHISETSUNAME" > $tmp-shisetsumei
+echo "気づきカード" > $tmp-shubetsumei
+cat $tmp-shubetsu | awk '$1=="'$Shubetsu'"{print $2}' > $tmp-naiyoumei
+echo "$HasseibiFrom" > $tmp-hasseistartdate
+echo "$HasseibiTo" > $tmp-hasseienddate
+
+#-------------------------------------------------------------
+########################################################################################################
+   if [ "$(gyo ${data})" != "0" ] ; then
+
+
+  # 報告者
+  self 1 2 ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER > $tmp-houkokusha
+
+
+  cat ${data} |
+# 1:固有ID    2:発生日                3:発生時間      4:記入日  5:記入時間
+# 6:報告者    7:気づき内容            8:対象          9:情報源  10:気づき詳細
+# 11:対応状況 12:管理者フィードバック 13:サンクス内容 14:施設ID 15:施設名
+# 16:詳細情報２ 17:対応状況２           18:仕掛け・終了
+  # 情報源
+  cjoin2 key=9 $tmp-jouhougen - |  
+  delf 9      |
+  # 報告者
+  cjoin1 +ng key=6 $tmp-houkokusha - > $tmp-ok-houkokusha_data 2> $tmp-ng-houkokusha_data
+
+  self 1/6 6/NF $tmp-ng-houkokusha_data > $tmp-ok2-houkokusha_data
+
+  cat $tmp-ok-houkokusha_data $tmp-ok2-houkokusha_data |
+  delf 6      |
+  # 対象
+  cjoin2 key=8 $tmp-taishou - |
+  delf 8      |
+  # 内容
+  cjoin2 key=7 $tmp-shubetsu -  |
+  delf 7      |
+  self 2/13 15/18   |
+  awk '{print $13,int(substr($1,5,2))"月"int(substr($1,7,2))"日",int(substr($2,1,2))":"substr($2,4,2),int(substr($3,5,2))"月"int(substr($3,7,2))"日",int(substr($4,1,2))":"substr($4,4,2),$5,$6,$7,$8,$9,$14,$10,$15,$11,$16,$12}' |
+  sed 's/###KAIGYO###/　/g'     |
+  sed 's/ _ / @ /g'             |
+  sed 's/ _ / @ /g'             |
+  sed 's/^_ /@ /g'              |
+  sed 's/ _$/ @/g' > $tmp-listdata
+# 1:施設名        2:発生日     3:発生時間   4:記入日                5:記入時間
+# 6:報告者        7:気づき内容 8:対象       9:情報源                10:気づき詳細
+# 11:気づき詳細２ 12:対応状況  13:対応状況2 14:管理者フィードバック 15:仕掛け・終了
+# 16:サンクス内容
+   else
+     : > $tmp-listdata
+   fi
+#################################################################################################
+
+# 最大行
+  cat $tmp-listdata |
+  gyo                > $tmp-saidai_gyo
+
+# 表示行と表示データの用意
+  cat $tmp-listdata |
+  head -500         > $tmp-list_result
+
+  gyo $tmp-list_result >$tmp-hyouji_gyo
+
+saidai_gyo="$(cat $tmp-saidai_gyo)"
+hyouji_gyo="$(cat $tmp-hyouji_gyo)"
+
+# Excel出力
+download_dir=$home_dir/UNEI/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${userid}_kizuki_*_download.xls
+
+TEMPLA=${home_dir}/UNEI/TEMPLATE/KIZUKI_ICHIRAN_KENSAKU_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-shisetsumei               \
+                    1 b5 $tmp-shubetsumei          \
+                    1 b6 $tmp-naiyoumei                  \
+                    1 b7 $tmp-hasseistartdate            \
+                    1 d7 $tmp-hasseienddate              \
+                    1 a12 ${tmp}-list_result            > ${download_dir}/${userid}_kizuki_$$_download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/UNEI/DOWNLOAD/${userid}_kizuki_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+# 終了
+rm -f $tmp-*
+exit 0
+

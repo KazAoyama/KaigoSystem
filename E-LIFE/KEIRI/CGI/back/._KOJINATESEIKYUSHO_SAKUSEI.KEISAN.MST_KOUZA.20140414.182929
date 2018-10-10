@@ -1,0 +1,215 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.MST_KOUZA 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 請求先設定情報と口座情報の取得
+
+# -------------------------------
+# 請求先設定情報
+
+# ${home_tbl_dir}/SEIKYUSAKI_SETTEI/${shisetsu}/SEIKYUSAKI_SETTEI.${shisetsu}
+# -
+# 1:利用者ID   2:月額利用料項目ID 3:適用月FROM 4:適用月TO 5:請求先
+# 6:削除フラグ 7:更新時間         8:更新者
+
+# ファイルがあったときだけファイル取得処理はいる
+if [ -e ${home_tbl_dir}/SEIKYUSAKI_SETTEI/${shisetsu}/SEIKYUSAKI_SETTEI.${shisetsu} ] ; then
+  # -------------------
+  # 請求先設定を取得する
+  join0 key=1 ${tmp}-member ${home_tbl_dir}/SEIKYUSAKI_SETTEI/${shisetsu}/SEIKYUSAKI_SETTEI.${shisetsu} |
+  awk '$6!="9"' -            |
+  # 処理月を含むものを抽出
+  awk '$3<="'${seikyu_syori_month}'" && $4>="'${seikyu_syori_month}'"' - |
+  # 請求先がアンスコの場合があるので除く(設定なしにした場合)
+  cjoin0 key=5 <(echo "_") - |
+  self 1/2 5                 |
+  # 1:利用者ID 2:月額利用料項目ID 3:請求先
+  LANG=C sort                > ${tmp}-riyousha_getugaku_settei
+  # -------------------
+
+  # -------------------
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+  # -------------------
+
+  # -------------------
+  # 後続処理のjoinで落ちるのでファイル作成
+  if [ ! -s ${tmp}-riyousha_getugaku_settei ] ; then
+    echo "@ @ @" > ${tmp}-riyousha_getugaku_settei
+  fi
+  # -------------------
+else
+  # 後続処理のjoinで落ちるのでファイル作成
+  echo "@ @ @" > ${tmp}-riyousha_getugaku_settei
+fi
+# -------------------------------
+
+# -------------------------------
+# 口座情報
+
+# ${riyosha_dir}/RIYOUSHA_KOUZA
+# -
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:予備       17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード
+# 1:全請求 2:施設請求 3:居宅訪問介護請求
+#   ！補足！請求期間で絞込みしたときに「全請求と他」がヒットすることはありえない（入力時に制御入れてるはず）。同じ期間に「施設」と「居宅」が一緒になることはありえる。
+# -
+# 他入居者との一括請求
+# 0:なし 1:あり
+# -
+# 一括請求入居者ID
+# 他入居者との一括請求が1のときにここのIDの人に請求させる
+# -
+# 一括請求書フラグ
+# 他入居者との一括請求が1のときにここのフラグに従い請求書宛名表示を変える
+# 0:なし 1:連名 2:請求入居者名義
+
+# --------------
+# 口座情報から支払先設定を取得
+
+# ファイルがあったら処理はいる
+if [ -s ${riyosha_dir}/RIYOUSHA_KOUZA ] ; then
+  # -------------------
+  # 有効なものに絞る
+  cjoin1 key=1 ${tmp}-member ${riyosha_dir}/RIYOUSHA_KOUZA |
+  # 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+  # 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+  # 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+  # 16:予備       17:予備                 18:予備             19:予備             20:予備
+  # 21:削除フラグ 22:更新時間             23:更新者
+  awk '$21!="9"
+       {$8=substr($8,1,6);
+        $9=substr($9,1,6);
+        print}' -                              |
+  # 請求期間の月が処理月を含んでいるものを表示
+  awk '$8<="'${seikyu_syori_month}'" && $9>="'${seikyu_syori_month}'"' - |
+  # 請求内容コードが「全請求」と「施設」に絞り込む(利用者IDにつき一行しかヒットしないはず)
+  cjoin0 key=5 <(echo "1 2" | tarr) -          |
+  tee ${tmp}-RIYOUSHA_KOUZA                    |
+  self 1 12/14                                 |
+  # 1:利用者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ
+  LANG=C sort                                  > ${tmp}-kouza_kari
+  # -------------------
+
+  # -------------------
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+  # -------------------
+
+  # -------------------
+  # 後続処理のjoinで落ちるのでファイル作成
+  if [ ! -s ${tmp}-kouza_kari ] ; then
+    echo "@ @ @" > ${tmp}-kouza_kari
+  fi
+  # -------------------
+else
+  # 後続処理のjoinで落ちるのでファイル作成
+  echo "@ @ @ @" > ${tmp}-kouza_kari
+fi
+# --------------
+
+# --------------
+# 他入居者選択した人が落ちるので拾う
+join0 +ng key=1 ${tmp}-kouza_kari ${tmp}-member_heya 2>&1 1> /dev/null |
+cjoin0 key=1 - ${riyosha_dir}/RIYOUSHA_KOUZA                           |
+self 1 12/14                                                           > ${tmp}-kouza_kari2
+# --------------
+
+# -------------------
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+# -------------------
+
+# --------------
+# マスタは存在するが口座設定がされていない人が落ちるので拾う
+cat ${tmp}-kouza_kari ${tmp}-kouza_kari2 |
+LANG=C sort                              |
+join2 key=1 - ${tmp}-member_heya         |
+# 1:入居者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+# 6:建屋ID   7:フロアID             8:ユニットID       9:居室ID
+#LANG=C sort                              |
+# join2で補完されたもの(マスタがあるが口座設定なし)フィールド整える
+awk '{if($2=="_")
+        {$2="0";};
+      print}' -                          |
+awk '{if($4=="_")
+        {$4="0";};
+      print}' -                          > ${tmp}-riyousha_kouza_settei
+# --------------
+
+# -------------------
+# エラー判定
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+# -------------------
+# -------------------------------
+
+# -------------------------------
+# 列チェック
+
+cat << FIN > ${tmp}-kouza_check_file
+${tmp}-riyousha_getugaku_settei 3
+${tmp}-riyousha_kouza_settei 9
+FIN
+cat ${tmp}-kouza_check_file |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+# -------------------------------
+
+# -------------------------------
+# 請求対象者リストと口座設定リストの行数が同じか、漏れはないか
+# (月額設定はある人と無い人があるので確認しない)
+
+start_gyo="$(gyo ${tmp}-member)"
+end_gyo="$(gyo ${tmp}-riyousha_kouza_settei)"
+[ "${start_gyo}" != "${end_gyo}" ] && error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+
+join0 +ng key=1 ${tmp}-member ${tmp}-riyousha_kouza_settei > /dev/null 2> ${tmp}-kouza_ng
+[ -s ${tmp}-kouza_ng ] && error_exit "処理中にエラーが発生しました(MST_KOUZA)"
+# -------------------------------
+#---------------------------------------------------------------
+
+exit 0
+

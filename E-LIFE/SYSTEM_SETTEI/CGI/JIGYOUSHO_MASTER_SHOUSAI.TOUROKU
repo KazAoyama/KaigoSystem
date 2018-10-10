@@ -1,0 +1,1335 @@
+#!/bin/bash
+#
+# JIGYOUSHO_MASTER_SHOUSAI.TOUROKU : 事業所マスター登録
+#
+# Usage : JIGYOUSHO_MASTER_SHOUSAI.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+JIGYOUSHO_ID="_"
+JigyoushoBangou="_"
+JigyoushoMeishou="_"
+ServiceType="_"
+JigyoushoKubun="_"
+ShiteiKijunJigyoushoKubun="_"
+ChiikiKubun="_"
+SeikatsuHogo="_"
+Waribikiritsu="_"
+# 上記項目は共通
+# 下記項目はServiceTypeによって変わる
+ShisetsuKubun="_"
+TokubetsuChiikiKasan="_"
+TokuteiJigyoushoKasan="_"
+ChusanChiiki="_"
+ChusanKibo="_"
+TwentyMiman="_"
+SasekiGensan="_"
+DouitsuGensan="_"
+ShokuinKaizenKasan="_"
+Kinkyu="_"
+Tokubetsu="_"
+Terminal="_"
+TaiseiKyouka="_"
+JikanEnchou="_"
+KobetsuKinou="_"
+NyuyokuKaijo="_"
+Shokuinketsuin="_"
+EiyouKaizen="_"
+Kouku="_"
+Jakunen="_"
+KinouKunren="_"
+YakanKinmu="_"
+Sougei="_"
+UnitKoshitsu="_"
+UnitJunKoshitsu="_"
+JuraiKoshitsu="_"
+Tashoushitsu="_"
+Ryouyoushoku="_"
+Unitcare="_"
+KangoTaisei="_"
+YakinShokuin="_"
+KinkyuNyusho="_"
+Undokinou="_"
+JigyoushoHyouka="_"
+SeikatsuKinou="_"
+TwentyFour="_"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+# 予防居宅支援の場合は電話番号、住所は必須
+
+smei=""
+if [ ${ServiceType} = "11" ] ; then
+   smei="HoumonkaigoKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   TokuteiJigyoushoKasan=$(nameread TokuteiJigyoushoKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+   TwentyMiman=$(nameread TwentyMiman $namedata | head -1)
+   SasekiGensan=$(nameread SasekiGensan$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "12" ] ; then
+   smei="HoumonnyuyokuKaigo"
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "13" ] ; then
+   smei="HoumonkangoKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+   Kinkyu=$(nameread Kinkyu$smei $namedata | head -1)
+   Tokubetsu=$(nameread Tokubetsu$smei $namedata | head -1)
+   Terminal=$(nameread Terminal$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "14" ] ; then
+   smei="HoumonrihabiriKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "15" ] ; then
+   smei="TsushokaigoKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   JikanEnchou=$(nameread JikanEnchou$smei $namedata | head -1)
+   KobetsuKinou=$(nameread KobetsuKinou$smei $namedata | head -1)
+   NyuyokuKaijo=$(nameread NyuyokuKaijo$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "16" ] ; then
+   smei="TsushorihabiriKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   NyuyokuKaijo=$(nameread NyuyokuKaijo$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "17" ] ; then
+   smei="YougutaiyoKaigo"
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+elif [ ${ServiceType} = "21" ] ; then
+   smei="TankinyushoKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   KinouKunren=$(nameread KinouKunren$smei $namedata | head -1)
+   KobetsuKinou=$(nameread KobetsuKinou$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   UnitKoshitsu=$(nameread UnitKoshitsu$smei $namedata | head -1)
+   UnitJunKoshitsu=$(nameread UnitJunKoshitsu$smei $namedata | head -1)
+   JuraiKoshitsu=$(nameread JuraiKoshitsu$smei $namedata | head -1)
+   Tashoushitsu=$(nameread Tashoushitsu$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   KangoTaisei=$(nameread KangoTaisei$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   KinkyuNyusho=$(nameread KinkyuNyusho$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "22" ] ; then
+   smei="TankinyushoRyouyouRoukenKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "23" ] ; then
+   smei="TankinyushoRyouyouRoukenigaiKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "24" ] ; then
+   smei="TankinyushoYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   KinouKunren=$(nameread KinouKunren$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   UnitKoshitsu=$(nameread UnitKoshitsu$smei $namedata | head -1)
+   UnitJunKoshitsu=$(nameread UnitJunKoshitsu$smei $namedata | head -1)
+   JuraiKoshitsu=$(nameread JuraiKoshitsu$smei $namedata | head -1)
+   Tashoushitsu=$(nameread Tashoushitsu$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   KangoTaisei=$(nameread KangoTaisei$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "25" ] ; then
+   smei="TankinyushoRyouyouRoukenYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "26" ] ; then
+   smei="TankinyushoRyouyouRoukenigaiYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Sougei=$(nameread Sougei$smei $namedata | head -1)
+   Ryouyoushoku=$(nameread Ryouyoushoku$smei $namedata | head -1)
+   Unitcare=$(nameread Unitcare$smei $namedata | head -1)
+   YakinShokuin=$(nameread YakinShokuin$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "31" ] ; then
+   smei=""
+elif [ ${ServiceType} = "32" ] ; then
+   smei="NinchiTaiouTankigaiKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "34" ] ; then
+   smei=""
+elif [ ${ServiceType} = "37" ] ; then
+   smei="NinchiTaiouTankigaiYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "38" ] ; then
+   smei="NinchiTaiouTankiKaigo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "39" ] ; then
+   smei="NinchiTaiouTankiYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   YakanKinmu=$(nameread YakanKinmu$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "41" ] ; then
+   smei=""
+elif [ ${ServiceType} = "43" ] ; then
+   smei="KyotakuKaigoshienKaigo"
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   TokuteiJigyoushoKasan=$(nameread TokuteiJigyoushoKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+elif [ ${ServiceType} = "46" ] ; then
+   smei="KyotakuKaigoshienYobo"
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   TokuteiJigyoushoKasan=$(nameread TokuteiJigyoushoKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+elif [ ${ServiceType} = "61" ] ; then
+   smei="HoumonkaigoYobo"
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+   SasekiGensan=$(nameread SasekiGensan$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "62" ] ; then
+   smei="HoumonnyuyokuYobo"
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "63" ] ; then
+   smei="HoumonkangoYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+   Kinkyu=$(nameread Kinkyu$smei $namedata | head -1)
+   Tokubetsu=$(nameread Tokubetsu$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "64" ] ; then
+   smei="HoumonrihabiriYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "65" ] ; then
+   smei="TsushokaigoYobo"
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+   Undokinou=$(nameread Undokinou$smei $namedata | head -1)
+   JigyoushoHyouka=$(nameread JigyoushoHyouka$smei $namedata | head -1)
+   SeikatsuKinou=$(nameread SeikatsuKinou$smei $namedata | head -1)
+elif [ ${ServiceType} = "66" ] ; then
+   smei="TsushorihabiriYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "67" ] ; then
+   smei="YougutaiyoYobo"
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+elif [ ${ServiceType} = "71" ] ; then
+   smei="HoumonkaigoYakan"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TwentyFour=$(nameread TwentyFour$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "72" ] ; then
+   smei="TsushokaigoNinchi"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   JikanEnchou=$(nameread JikanEnchou$smei $namedata | head -1)
+   KobetsuKinou=$(nameread KobetsuKinou$smei $namedata | head -1)
+   NyuyokuKaijo=$(nameread NyuyokuKaijo$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "73" ] ; then
+   smei="ShoukiboTakinouKaigo"
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "74" ] ; then
+   smei="TsushokaigoNinchiYobo"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   JikanEnchou=$(nameread JikanEnchou$smei $namedata | head -1)
+   KobetsuKinou=$(nameread KobetsuKinou$smei $namedata | head -1)
+   NyuyokuKaijo=$(nameread NyuyokuKaijo$smei $namedata | head -1)
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   EiyouKaizen=$(nameread EiyouKaizen$smei $namedata | head -1)
+   Kouku=$(nameread Kouku$smei $namedata | head -1)
+   Jakunen=$(nameread Jakunen$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "75" ] ; then
+   smei="ShoukiboTakinouYobo"
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   ShokuinKaizenKasan=$(nameread ShokuinKaizenKasan$smei $namedata | head -1)
+elif [ ${ServiceType} = "76" ] ; then
+   smei="TeikiZuiji"
+   ShisetsuKubun=$(nameread ShisetsuKubun$smei $namedata | head -1)
+   TokubetsuChiikiKasan=$(nameread TokubetsuChiikiKasan$smei $namedata | head -1)
+   ChusanChiiki=$(nameread ChusanChiiki$smei $namedata | head -1)
+   ChusanKibo=$(nameread ChusanKibo$smei $namedata | head -1)
+   Kinkyu=$(nameread Kinkyu$smei $namedata | head -1)
+   Tokubetsu=$(nameread Tokubetsu$smei $namedata | head -1)
+   Terminal=$(nameread Terminal$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "77" ] ; then
+   smei="Fukugou"
+   Shokuinketsuin=$(nameread Shokuinketsuin$smei $namedata | head -1)
+   Kinkyu=$(nameread Kinkyu$smei $namedata | head -1)
+   Tokubetsu=$(nameread Tokubetsu$smei $namedata | head -1)
+   Terminal=$(nameread Terminal$smei $namedata | head -1)
+   TaiseiKyouka=$(nameread TaiseiKyouka$smei $namedata | head -1)
+   DouitsuGensan=$(nameread DouitsuGensan$smei $namedata | head -1)
+elif [ ${ServiceType} = "aa"  ] ; then
+   :
+fi
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+
+# 重複データのチェック
+# 事業者番号とサービスコード種類でユニーク
+: > $tmp-choufuku_check
+if [ "$MODE" = "regist" -a "${ServiceType}" != "aa" ] ; then
+if [ -s ${pompa_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER ] ; then
+   # 1:事業所ID 2:事業者番号 3:事業者名称 4:サービスコード種類(事業者タイプ) 5:事業者区分・・・
+   cat ${pompa_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER |
+   awk '$1!="'${JIGYOUSHO_ID}'"&&$2=="'${JigyoushoBangou}'"&&$4=="'${ServiceType}'"&&$(NF-2)!="9"' > $tmp-choufuku_check
+fi
+fi
+
+[ "$(gyo $tmp-choufuku_check)" = "0" ] || error_exit "事業者番号が重複しています"
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 事業所ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ "$MODE" = "regist" -a "${ServiceType}" != "aa" ] ; then
+if [ -z "${JIGYOUSHO_ID}" -o "${JIGYOUSHO_ID}" = "_" ] ; then
+last_no="1"
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/JIGYOUSHO_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/JIGYOUSHO_ID ] || echo "0001" > ${kanri_dir}/JIGYOUSHO_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 9999 ] && echo "0001" > ${kanri_dir}/JIGYOUSHO_ID
+get_no ${last_no} ${kanri_dir}/JIGYOUSHO_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+JIGYOUSHO_ID=$(cat $tmp-id_all)
+fi
+fi
+#---------------------------------------------------------------
+# 今回取得するID数(オリジナル事業所マスタ)
+if [ "$MODE" = "regist" -a "${ServiceType}" = "aa" ] ; then
+if [ -z "${JIGYOUSHO_ID}" -o "${JIGYOUSHO_ID}" = "_" ] ; then
+last_no="1"
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/CUSTOM_JIGYOUSHO_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/CUSTOM_JIGYOUSHO_ID ] || echo "001" > ${kanri_dir}/CUSTOM_JIGYOUSHO_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/CUSTOM_JIGYOUSHO_ID
+get_no ${last_no} ${kanri_dir}/CUSTOM_JIGYOUSHO_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+JIGYOUSHO_ID=$(cat $tmp-id_all)
+fi
+fi
+
+# データ作成
+# 1:事業所ID                      2:事業者番号                      3:事業者名称                            4:サービス事業者タイプ                  5:事業者区分
+# 6:指定基準事業所区分            7:地域区分                        8:生活保護指定                          9:割引率                                10:施設等の区分
+# 11:特別地域加算                 12:特定事業所加算                 13:中山間地域などの小規模事業所（地域） 14:中山間地域などの小規模事業所（規模） 15:日中の身体介護20分未満体制
+# 16:サービス提供責任者体制の減算 17:同一建物に居住する利用者の減算 18:介護職員処遇改善加算                 19:緊急時訪問看護加算                   20:特別管理体制
+# 21:ターミナルケア体制           22:サービス提供体制強化加算       23:時間延長サービス体制                 24:個別機能訓練体制                     25:入浴介助体制
+# 26:職員の欠員による減算         27:栄養改善体制                   28:口腔機能向上体制                     29:若年性認知症利用（入所）者受入加算   30:機能訓練指導体制
+# 31:夜間勤務条件基準             32:送迎体制                       33:ユニット型個室の有無                 34:ユニット型順個室の有無               35:従来型個室の有無
+# 36:多床室の有無                 37:療養食加算                     38:ユニットケア体制                     39:看護体制加算                         40:夜勤職員配置加算
+# 41:緊急短期入所体制確保加算     42:運動機能向上加算               43:事業所評価加算（申出）の有無         44:生活機能向上グループ活動加算         45:24時間通報体制加算
+echo "${JIGYOUSHO_ID}" "${JigyoushoBangou}" "${JigyoushoMeishou}" "${ServiceType}" "${JigyoushoKubun}" \
+"${ShiteiKijunJigyoushoKubun}" "${ChiikiKubun}" "${SeikatsuHogo}"  \
+"${Waribikiritsu}" "${ShisetsuKubun}" "${TokubetsuChiikiKasan}" \
+"${TokuteiJigyoushoKasan}" "${ChusanChiiki}" "${ChusanKibo}" "${TwentyMiman}" \
+"${SasekiGensan}" "${DouitsuGensan}" "${ShokuinKaizenKasan}" "${Kinkyu}" \
+"${Tokubetsu}" "${Terminal}" "${TaiseiKyouka}" "${JikanEnchou}" "${KobetsuKinou}" \
+"${NyuyokuKaijo}" "${Shokuinketsuin}" "${EiyouKaizen}" "${Kouku}" "${Jakunen}" \
+"${KinouKunren}" "${YakanKinmu}" "${Sougei}" "${UnitKoshitsu}" "${UnitJunKoshitsu}" \
+"${JuraiKoshitsu}" "${Tashoushitsu}" "${Ryouyoushoku}" "${Unitcare}" "${KangoTaisei}" \
+"${YakinShokuin}" "${KinkyuNyusho}" "${Undokinou}" "${JigyoushoHyouka}" \
+"${SeikatsuKinou}" "${TwentyFour}" > ${tmp}-jigyoushodata
+
+# 1:事業所ID 2:電話番号 3:住所
+echo "${JIGYOUSHO_ID}" "${DenwaBangou}" "${JigyoushoJusho}" > ${tmp}-jigyoushoinfo
+
+# 1:ログインユーザ 2:更新日時
+if [ "$MODE" = "regist" ] ; then
+   echo "1" "${sdaytime}" "${USER_ID}" > ${tmp}-format
+else
+   echo "9" "${sdaytime}" "${USER_ID}" > ${tmp}-format
+fi
+
+:> ${tmp}-jigyousho_master_input
+:> ${tmp}-custom_jigyousho_master_input
+
+# オリジナルの事業所マスタ作成の場合は"aa"
+if [ "${ServiceType}" == "aa" ] ; then
+  ycat ${tmp}-jigyoushodata ${tmp}-format > ${tmp}-custom_jigyousho_master_input
+  cp ${tmp}-custom_jigyousho_master_input ${tmp}-custom_jigyousho_master2_input
+  cp ${tmp}-custom_jigyousho_master_input ${tmp}-custom_jigyousho_master3_input
+  cp ${tmp}-custom_jigyousho_master_input $work_dir/custom_jigyousho_master_input
+else
+  ycat ${tmp}-jigyoushodata ${tmp}-format > ${tmp}-jigyousho_master_input
+  ycat ${tmp}-jigyoushoinfo ${tmp}-format > ${tmp}-jigyousho_info_input
+  cp ${tmp}-jigyousho_master_input ${tmp}-jigyousho_master2_input
+  cp ${tmp}-jigyousho_master_input ${tmp}-jigyousho_master3_input
+  cp ${tmp}-jigyousho_master_input $work_dir/jigyousho_master_input
+  cp ${tmp}-jigyousho_info_input ${tmp}-jigyousho_info2_input
+  cp ${tmp}-jigyousho_info_input ${tmp}-jigyousho_info3_input
+fi
+
+
+# 本日の日付
+curday=$(date +%Y%m%d | self 1)
+
+# 時期によって有効なサービスコードの年月日を出す。
+ls -F ${home_dir}/TBL/SERVICECODE |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-dir_date
+
+dir_date=$(cat $tmp-dir_date)
+
+####### 加算レコードの追加
+### 加算（介護）テーブル取得
+cat ${home_dir}/TBL/SERVICECODE/${dir_date}/SERVICECODE_ADD_KAIGO   |
+# 1:事業者タイプ      2:サービスコード        3:サービス名        4:特別地域加算         5:小規模事業所加算
+# 6:中山間地域加算    7:緊急時加算            8:初回加算          9:生活機能向上連携加算 10:介護職員改善加算
+# 11:サービス提供体制 12:通所介護入浴介助     13:個別機能訓練     14:若年性認知症        15:通所介護栄養改善
+# 16:通所介護口腔機能 17:短期生活機能訓練体制 18:短期生活看護体制 19:短期生活夜勤配置    20:短期生活緊急体制確保
+# 21:療養食           22:特別管理体制         23:集計単位         24:計算単位            25:単位数
+# 26:限度額管理対象有無(0:対象外 1:対象内)
+LANG=C sort -k1,1                                       > $tmp-master_add
+# 特別地域加算
+if [ -z "${TokubetsuChiikiKasan}" -o "${TokubetsuChiikiKasan}" = "_" ] ; then
+: > $tmp-add1
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$4=="'${TokubetsuChiikiKasan}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add1
+fi
+
+# 小規模事業所加算(規模と地域が２つセットされた時に加算となる)
+if [ -z "${ChusanKibo}" -o "${ChusanKibo}" = "_" -o -z "${ChusanChiiki}" -o "${ChusanChiiki}" = "_" ] ; then
+: > $tmp-add2
+else
+if [ "${ChusanKibo}" = "2" -a "${ChusanChiiki}" = "2" ] ; then
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$5=="2"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add2
+else
+: > $tmp-add2
+fi
+fi
+
+# 中山間地域加算
+#if [ -z "${ChusanChiiki}" -o "${ChusanChiiki}" = "_" ] ; then
+#: > $tmp-add3
+#else
+#cat $tmp-master_add                                      |
+#awk '$1=="'${ServiceType}'"&&$6=="'${ChusanChiiki}'"'    |
+#awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add3
+#fi
+
+# 介護職員改善加算
+if [ -z "${ShokuinKaizenKasan}" -o "${ShokuinKaizenKasan}" = "_" ] ; then
+: > $tmp-add4
+else
+  # 短期入所療養（サービスコード種類：23）
+  if [ "$ServiceType" = "23" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add4
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add4
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add4
+    fi
+  else
+    cat $tmp-master_add                                      |
+    awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+    awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add4
+  fi
+fi
+
+# サービス提供体制
+if [ -z "${TaiseiKyouka}" -o "${TaiseiKyouka}" = "_" ] ; then
+: > $tmp-add5
+else
+  # 短期入所療養（サービスコード種類：23）
+  if [ "$ServiceType" = "23" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add5
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add5
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add5
+    fi
+  else
+    cat $tmp-master_add                                      |
+    awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+    awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add5
+  fi
+fi
+
+# 通所介護入浴介助
+if [ -z "${NyuyokuKaijo}" -o "${NyuyokuKaijo}" = "_" ] ; then
+: > $tmp-add6
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$12=="'${NyuyokuKaijo}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add6
+fi
+
+# 個別機能訓練
+if [ -z "${KobetsuKinou}" -o "${KobetsuKinou}" = "_" ] ; then
+: > $tmp-add7
+# 機能訓練加算が２つある場合もあるらしい。
+elif [ "${KobetsuKinou}" = "4" ] ; then
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&($13=="2"||$13=="3")'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add7
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$13=="'${KobetsuKinou}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add7
+fi
+
+# 若年性認知症
+if [ -z "${Jakunen}" -o "${Jakunen}" = "_" ] ; then
+: > $tmp-add8
+else
+  # 短期入所療養（サービスコード種類：23）
+  if [ "$ServiceType" = "23" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add8
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add8
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add8
+    fi
+  else
+    cat $tmp-master_add                                      |
+    awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+    awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add8
+  fi
+fi
+
+# 通所介護栄養改善
+if [ -z "${EiyouKaizen}" -o "${EiyouKaizen}" = "_" ] ; then
+: > $tmp-add9
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$15=="'${EiyouKaizen}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add9
+fi
+
+# 通所介護口腔機能
+if [ -z "${Kouku}" -o "${Kouku}" = "_" ] ; then
+: > $tmp-add10
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$16=="'${Kouku}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add10
+fi
+
+# 短期生活機能訓練体制
+if [ -z "${KinouKunren}" -o "${KinouKunren}" = "_" ] ; then
+: > $tmp-add11
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$17=="'${KinouKunren}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add11
+fi
+
+# 短期生活看護体制
+if [ -z "${KangoTaisei}" -o "${KangoTaisei}" = "_" ] ; then
+: > $tmp-add12
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$18=="'${KangoTaisei}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add12
+fi
+
+# 短期生活夜勤配置
+if [ -z "${YakinShokuin}" -o "${YakinShokuin}" = "_" ] ; then
+: > $tmp-add13
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$19=="'${YakinShokuin}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add13
+fi
+
+# 短期生活緊急体制確保
+if [ -z "${KinkyuNyusho}" -o "${KinkyuNyusho}" = "_" ] ; then
+: > $tmp-add14
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$20=="'${KinkyuNyusho}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add14
+fi
+
+# 療養食
+if [ -z "${Ryouyoushoku}" -o "${Ryouyoushoku}" = "_" ] ; then
+: > $tmp-add15
+else
+  # 短期入所療養（サービスコード種類：23）
+  if [ "$ServiceType" = "23" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add15
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add15
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add15
+    fi
+  else
+    cat $tmp-master_add                                      |
+    awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+    awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add15
+  fi
+fi
+
+# 特別管理体制
+if [ -z "${Tokubetsu}" -o "${Tokubetsu}" = "_" ] ; then
+: > $tmp-add16
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$22=="'${Tokubetsu}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add16
+fi
+
+# 緊急
+if [ -z "${Kinkyu}" -o "${Kinkyu}" = "_" ] ; then
+: > $tmp-add17
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$7=="'${Kinkyu}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add17
+fi
+
+# ターミナルケア加算(訪問看護)
+if [ -z "${Terminal}" -o "${Terminal}" = "_" ] ; then
+: > $tmp-add18
+else
+cat $tmp-master_add                                      |
+awk '$1=="'${ServiceType}'"&&$2=="7000"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$23,$24,$25,"_",$26}'      > $tmp-add18
+fi
+
+cat $tmp-add1 $tmp-add2 $tmp-add3 $tmp-add4 $tmp-add5 $tmp-add6 $tmp-add7 $tmp-add8 $tmp-add9 $tmp-add10 $tmp-add11 $tmp-add12 $tmp-add13 $tmp-add14 $tmp-add15 $tmp-add16 $tmp-add17 $tmp-add18 |
+# 1:事業者コード 2:サービスコード 3:サービス名     4:集計単位   5:計算単位
+# 6:単位数       7:介護度         8:限度額対象有無 9:有効フラグ 10:処理時間
+# 11:ユーザID
+awk '{print $0,"1","'${sdaytime}'","'${USER_ID}'"}' > $tmp-service_kasan_input_kaigo
+
+
+### 加算（介護）テーブル取得
+cat ${home_dir}/TBL/SERVICECODE/${dir_date}/SERVICECODE_ADD_YOBO   |
+# 1:事業者タイプ      2:サービスコード        3:サービス名        4:特別地域加算         5:小規模事業所加算
+# 6:中山間地域加算    7:緊急時加算            8:初回加算          9:生活機能向上連携加算 10:介護職員改善加算
+# 11:サービス提供体制 12:通所介護入浴介助     13:個別機能訓練     14:若年性認知症        15:通所介護栄養改善
+# 16:通所介護口腔機能 17:短期生活機能訓練体制 18:短期生活看護体制 19:短期生活夜勤配置    20:短期生活緊急体制確保
+# 21:療養食           22:特別管理体制         23:運動機能向上     24:事業所評価          25:介護度
+# 26:集計単位         27:計算単位             28:単位数           29:限度額対象有無
+LANG=C sort -k1,1                                       > $tmp-master_add2
+# 特別地域加算
+if [ -z "${TokubetsuChiikiKasan}" -o "${TokubetsuChiikiKasan}" = "_" ] ; then
+: > $tmp-add21
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$4=="'${TokubetsuChiikiKasan}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add21
+fi
+
+# 小規模事業所加算
+if [ -z "${ChusanKibo}" -o "${ChusanKibo}" = "_" -o -z "${ChusanChiiki}" -o "${ChusanChiiki}" = "_" ] ; then
+: > $tmp-add22
+else
+if [ "${ChusanKibo}" = "2" -a "${ChusanChiiki}" = "2" ] ; then
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$5=="2"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add22
+else
+: > $tmp-add22
+fi
+fi
+
+# 中山間地域加算
+#if [ -z "${ChusanChiiki}" -o "${ChusanChiiki}" = "_" ] ; then
+#: > $tmp-add23
+#else
+#cat $tmp-master_add2                                      |
+#awk '$1=="'${ServiceType}'"&&$6=="'${ChusanChiiki}'"'    |
+#awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add23
+#fi
+
+# 介護職員改善加算
+# 短期入所療養の場合は細かい設定が必要！
+if [ -z "${ShokuinKaizenKasan}" -o "${ShokuinKaizenKasan}" = "_" ] ; then
+: > $tmp-add24
+else
+  # 介護予防短期入所療養（サービスコード種類：26）
+  if [ "$ServiceType" = "26" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add2                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add24
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add2                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add24
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add2                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add24
+    fi
+  else
+      cat $tmp-master_add2                                      |
+      awk '$1=="'${ServiceType}'"&&$10=="'${ShokuinKaizenKasan}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add24
+  fi
+fi
+
+# サービス提供体制
+# 短期入所療養の場合は細かい設定が必要！
+if [ -z "${TaiseiKyouka}" -o "${TaiseiKyouka}" = "_" ] ; then
+: > $tmp-add25
+else
+  # 介護予防短期入所療養（サービスコード種類：26）
+  if [ "$ServiceType" = "26" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add2                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add25
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add2                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add25
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add2                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add25
+    fi
+  else
+      cat $tmp-master_add2                                      |
+      awk '$1=="'${ServiceType}'"&&$11=="'${TaiseiKyouka}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add25
+  fi
+fi
+
+# 通所介護入浴介助
+if [ -z "${NyuyokuKaijo}" -o "${NyuyokuKaijo}" = "_" ] ; then
+: > $tmp-add26
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$12=="'${NyuyokuKaijo}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add26
+fi
+
+# 個別機能訓練
+if [ -z "${KobetsuKinou}" -o "${KobetsuKinou}" = "_" ] ; then
+: > $tmp-add27
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$13=="'${KobetsuKinou}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add27
+fi
+
+# 若年性認知症
+# 短期入所療養の場合は細かい設定が必要！
+if [ -z "${Jakunen}" -o "${Jakunen}" = "_" ] ; then
+: > $tmp-add28
+else
+  # 介護予防短期入所療養（サービスコード種類：26）
+  if [ "$ServiceType" = "26" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add2                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add28
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add2                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add28
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add2                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add28
+    fi
+  else
+      cat $tmp-master_add2                                      |
+      awk '$1=="'${ServiceType}'"&&$14=="'${Jakunen}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add28
+  fi
+fi
+
+# 通所介護栄養改善
+if [ -z "${EiyouKaizen}" -o "${EiyouKaizen}" = "_" ] ; then
+: > $tmp-add29
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$15=="'${EiyouKaizen}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add29
+fi
+
+# 通所介護口腔機能
+if [ -z "${Kouku}" -o "${Kouku}" = "_" ] ; then
+: > $tmp-add30
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$16=="'${Kouku}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add30
+fi
+
+# 短期生活機能訓練体制
+if [ -z "${KinouKunren}" -o "${KinouKunren}" = "_" ] ; then
+: > $tmp-add31
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$17=="'${KinouKunren}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add31
+fi
+
+# 短期生活看護体制
+if [ -z "${KangoTaisei}" -o "${KangoTaisei}" = "_" ] ; then
+: > $tmp-add32
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$18=="'${KangoTaisei}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add32
+fi
+
+# 短期生活夜勤配置
+if [ -z "${YakinShokuin}" -o "${YakinShokuin}" = "_" ] ; then
+: > $tmp-add33
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$19=="'${YakinShokuin}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add33
+fi
+
+# 短期生活緊急体制確保
+if [ -z "${KinkyuNyusho}" -o "${KinkyuNyusho}" = "_" ] ; then
+: > $tmp-add34
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$20=="'${KinkyuNyusho}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add34
+fi
+
+# 療養食
+# 短期入所療養の場合は細かい設定が必要！
+if [ -z "${Ryouyoushoku}" -o "${Ryouyoushoku}" = "_" ] ; then
+: > $tmp-add35
+else
+  # 介護予防短期入所療養（サービスコード種類：26）
+  if [ "$ServiceType" = "26" ] ; then
+    if [ "${ShisetsuKubun}" = "1" -o "${ShisetsuKubun}" = "6" -o "${ShisetsuKubun}" = "A" -o "${ShisetsuKubun}" = "C" ] ; then
+      cat $tmp-master_add2                                      |
+      # 病院は先頭の文字が"2"
+      awk 'substr($2,1,1)=="2"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add35
+    elif [ "${ShisetsuKubun}" = "2" -o "${ShisetsuKubun}" = "7" -o "${ShisetsuKubun}" = "B" ] ; then
+      cat $tmp-master_add2                                      |
+      # 診療所は先頭の文字が"3"
+      awk 'substr($2,1,1)=="3"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add35
+    elif [ "${ShisetsuKubun}" = "3" -o "${ShisetsuKubun}" = "8" ] ; then
+      cat $tmp-master_add2                                      |
+      # 認知症疾患は先頭の文字が"4"
+      awk 'substr($2,1,1)=="4"'                                |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add35
+    fi
+  else
+      cat $tmp-master_add2                                      |
+      awk '$1=="'${ServiceType}'"&&$21=="'${Ryouyoushoku}'"'    |
+      awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add35
+  fi
+fi
+
+# 特別管理体制
+if [ -z "${Tokubetsu}" -o "${Tokubetsu}" = "_" ] ; then
+: > $tmp-add36
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$22=="'${Tokubetsu}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add36
+fi
+
+# 運動機能向上
+if [ -z "${Undokinou}" -o "${Undokinou}" = "_" ] ; then
+: > $tmp-add37
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$23=="'${Undokinou}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add37
+fi
+
+# 事業所評価
+if [ -z "${JigyoushoHyouka}" -o "${JigyoushoHyouka}" = "_" ] ; then
+: > $tmp-add38
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$24=="'${JigyoushoHyouka}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add38
+fi
+
+# 緊急
+if [ -z "${Kinkyu}" -o "${Kinkyu}" = "_" ] ; then
+: > $tmp-add39
+else
+cat $tmp-master_add2                                      |
+awk '$1=="'${ServiceType}'"&&$7=="'${Kinkyu}'"'    |
+awk '{print "'${JIGYOUSHO_ID}'",$2,$3,$26,$27,$28,$25,$29}'      > $tmp-add39
+fi
+
+
+cat $tmp-add21 $tmp-add22 $tmp-add23 $tmp-add24 $tmp-add25 $tmp-add26 $tmp-add27 $tmp-add28 $tmp-add29 $tmp-add30 $tmp-add31 $tmp-add32 $tmp-add33 $tmp-add34 $tmp-add35 $tmp-add36 $tmp-add37 $tmp-add38 $tmp-add39 |
+# 1:事業者コード 2:サービスコード 3:サービス名     4:集計単位   5:計算単位
+# 6:単位数       7:介護度         8:限度額対象有無 9:有効フラグ 10:処理時間
+# 11:ユーザID
+awk '{print $0,"1","'${sdaytime}'","'${USER_ID}'"}' > $tmp-service_kasan_input_yobo
+
+
+cat $tmp-service_kasan_input_kaigo $tmp-service_kasan_input_yobo > $tmp-service_kasan_input
+
+
+cp $tmp-service_kasan_input $work_dir/service_kasan_input
+cp $tmp-service_kasan_input $tmp-service_kasan3_input
+
+
+# ケアサービス横浜、馬事公苑の事業所色分け
+# 3フィールド目は空きフィールド
+# ケアサービス横浜
+:> $tmp-shisetsu_jigyousho_input
+# 横浜、馬事どちらもチェック
+if [ "$YokohamaCheck" = "1004" -a "$BajiCheck" = "1005" ]; then
+   echo "$JIGYOUSHO_ID" "1004" "_" "1" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+# 共通は消す
+   echo "$JIGYOUSHO_ID" "0000" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+   echo "$JIGYOUSHO_ID" "1005" "_" "1" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+fi
+# ケアサービス馬事公苑のみ
+if [ "$BajiCheck" = "1005" -a "$YokohamaCheck" != "1004" ]; then
+   echo "$JIGYOUSHO_ID" "1005" "_" "1" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+# 共通は消す
+   echo "$JIGYOUSHO_ID" "0000" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+   echo "$JIGYOUSHO_ID" "1004" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+fi
+# ケアサービス横浜のみ
+if [ "$BajiCheck" != "1005" -a "$YokohamaCheck" = "1004" ]; then
+   echo "$JIGYOUSHO_ID" "1005" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+# 共通は消す
+   echo "$JIGYOUSHO_ID" "0000" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+   echo "$JIGYOUSHO_ID" "1004" "_" "1" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+fi
+# 横浜、馬事どちらもチェックが無い場合
+if [ "$BajiCheck" != "1005" -a "$YokohamaCheck" != "1004" ]; then
+   echo "$JIGYOUSHO_ID" "0000" "_" "1" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+   echo "$JIGYOUSHO_ID" "1004" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+   echo "$JIGYOUSHO_ID" "1005" "_" "9" "${sdaytime}" "${USER_ID}" >> $tmp-shisetsu_jigyousho_input
+fi
+
+cp $tmp-shisetsu_jigyousho_input $tmp-shisetsu_jigyousho2_input
+cp $tmp-shisetsu_jigyousho_input $tmp-shisetsu_jigyousho3_input
+
+
+# 時期によって有効な事業所マスタの年月日を出す。
+ls -F ${home_dir}/TBL/JIGYOUSHO_MASTER |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-master_dir_date
+
+master_dir_date=$(cat $tmp-master_dir_date)
+
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+JIGYOUSHO_MASTER JIGYOUSHO_MASTER
+CUSTOM_JIGYOUSHO_MASTER CUSTOM_JIGYOUSHO_MASTER
+SHISETSU_JIGYOUSHO_MASTER
+JIGYOUSHO_INFO JIGYOUSHO_INFO
+FIN
+
+input_detail_dir=JIGYOUSHO_MASTER
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+jigyousho_master JIGYOUSHO_MASTER 1 47 48 ${home_dir}/TBL/JIGYOUSHO_MASTER ${input_dir}
+jigyousho_master2 JIGYOUSHO_MASTER 1 47 48 ${pompa_dir}/JIGYOUSHO_MASTER ${input_dir}
+jigyousho_master3 JIGYOUSHO_MASTER 1 47 48 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date} ${input_dir}
+jigyousho_info JIGYOUSHO_INFO 1 5 6 ${home_dir}/TBL/JIGYOUSHO_MASTER ${input_dir}
+jigyousho_info2 JIGYOUSHO_INFO 1 5 6 ${pompa_dir}/JIGYOUSHO_MASTER ${input_dir}
+jigyousho_info3 JIGYOUSHO_INFO 1 5 6 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date} ${input_dir}
+custom_jigyousho_master CUSTOM_JIGYOUSHO_MASTER 1 47 48 ${home_dir}/TBL/JIGYOUSHO_MASTER ${input_dir}
+custom_jigyousho_master2 CUSTOM_JIGYOUSHO_MASTER 1 47 48 ${pompa_dir}/JIGYOUSHO_MASTER ${input_dir}
+custom_jigyousho_master3 CUSTOM_JIGYOUSHO_MASTER 1 47 48 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date} ${input_dir}
+shisetsu_jigyousho SHISETSU_JIGYOUSHO_MASTER 2 5 6 ${home_dir}/TBL/JIGYOUSHO_MASTER ${input_dir}
+shisetsu_jigyousho2 SHISETSU_JIGYOUSHO_MASTER 2 5 6 ${pompa_dir}/JIGYOUSHO_MASTER ${input_dir}
+shisetsu_jigyousho3 SHISETSU_JIGYOUSHO_MASTER 2 5 6 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+service_kasan JIGYOUSHO_ADD 1 10 11 ${home_dir}/TBL/JIGYOUSHO_MASTER ${input_dir}
+service_kasan3 JIGYOUSHO_ADD 1 10 11 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date} ${input_dir}
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 3 -l 10 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_exit "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${JIGYOUSHO_ID}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

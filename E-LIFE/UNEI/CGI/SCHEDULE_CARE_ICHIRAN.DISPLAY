@@ -1,0 +1,257 @@
+#!/bin/bash
+#
+# SCHEDULE_CARE_ICHIRAN.DISPLAY : スケジュール一覧表示
+#
+# Usage : SCHEDULE_CARE_ICHIRAN.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_pompa_dir="${home_dir}/SYSTEM_SETTEI/POMPA/KENGEN_KANRI"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    : > $tmp-listdata
+  ;;
+
+  # 検索結果
+#  search)
+#    if [ "$(gyo ${result_data})" != 0 ] ; then
+#      cat ${result_data}        |
+      # 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終>更新日時
+      # 6:最終更新者
+#      LANG=C sort -k6,6nr       |
+#      self 1 2 3 4 5            |
+#      rank                      |
+#      head -100                  > $tmp-listdata
+#    else
+#      : > $tmp-listdata
+#    fi
+#  ;;
+
+esac
+
+[ -z "${displayShisetsu}" -o "${displayShisetsu}" = "_" ] && displayShisetsu=$shisetsu
+
+echo ${displayShisetsu} > $tmp-displayShisetsu
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+# 建屋設定
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR   |
+awk '$1=="'$shisetsu'"{print $2}'                                |
+LANG=C sort -k1,1                                                |
+getlast 1 1                                                      |    
+join1 key=1 <(self 1 3 ${home_dir}/TBL/SHISETSU_MASTER/TATEYA_NAME)  |
+awk '{print int($1),$2}'      > $tmp-select_tateya
+
+
+echo "SCHEDULE_ICHIRAN.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+join0 key=1 $tmp-shisetsu > $tmp-shisetsu_list
+
+# 建屋設定
+
+if [ -z "$EventTateya" -o "$EventTateya" = "_" ] ; then
+self 1/8 ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU   |
+join1 key=1 $tmp-user                                      |
+self 3                                                     |
+awk '{if($1!="02"){$1="01"};print int($1)}' > $tmp-taishou_tateya
+EventTateya=$(self 1 $tmp-taishou_tateya)
+fi
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+##else
+##cat << FIN > $tmp-html2
+##    <script type="text/javascript" language="javascript">
+##      window.close();
+##    </script>
+##FIN
+fi
+#--------------------------------------------------------------
+
+###################################
+# スケジュール種類
+###################################
+CGI_NAME="SCHEDULE_CARE"
+schedule_code=$(awk '$(NF-2)!="9"&&$3=="'$CGI_NAME'"{print $1}' ${home_dir}/TBL/CONFIG/SCHEDULE_SHURUI | tail -1)
+
+
+###################################
+# スケジュールタイプマスタ
+###################################
+
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCEDULE_TYPE_MASTER |
+awk '$(NF-2)!="9"&&$4=="'$schedule_code'"&&$5=="'$displayShisetsu'"'       |
+# 1:集計グループID 2:集計グループ
+#--------------------------------------------------------------
+delf NF-2/NF  > ${tmp}-scheduletype_master
+
+###################################
+# スケジュールマスタ
+###################################
+# 1:施設       2:スケジュールID 3:スケジュール 4:スケジュールタイプ 5:費用
+# 6:有効フラグ 7:処理時間       8:ユーザID
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCHEDULE_MASTER |
+awk '$(NF-2)!="9"&&$1=="'$displayShisetsu'"' |
+LANG=C sort -k4,4                            |
+join0 key=4 ${tmp}-scheduletype_master       |
+#--------------------------------------------------------------
+# 1:スケジュールID 2:スケジュール 3:費用 4:スケジュールタイプ 5:課税区分
+self 2 3 5 4 > ${tmp}-schedule_master
+
+
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###RIYOUSHAMEI### $Riyoushamei
+###EVENTTATEYA### $EventTateya
+###DROPDOWN_ACTIVE1### active
+###LI_UNEI4### active
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+cat $checkfile >> $tmp-calsed
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+: > $tmp-list
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/SCHEDULE_CARE_ICHIRAN1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/SCHEDULE_CARE_ICHIRAN2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###SHISETSU_NAME### - $tmp-shisetsu_list |
+mojihame -l###SCHEDULELIST### - $tmp-list |
+mojihame -l###SCHEDULE### - $tmp-schedule_master |
+mojihame -l###SCHEDULETYPE### - $tmp-scheduletype_master |
+mojihame -l###SELECTTATEYA### - $tmp-select_tateya |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+#formhame -d"_" - ${namedata}  |
+cat -
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

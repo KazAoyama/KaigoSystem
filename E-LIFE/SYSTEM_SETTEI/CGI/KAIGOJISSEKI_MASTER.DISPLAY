@@ -1,0 +1,283 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_MASTER.DISPLAY : 介護実績マスター登録画面表示.DISPLAY
+#
+# Usage : KAIGOJISSEKI_MASTER.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+kyoutsu_dir=${home_dir}/KYOUTSU/HTML
+apptbl_dir=${home_dir}/SHISETSU_KAIGOKIROKU/TBL
+test_tbl_dir=${home_dir}/TEST/TBL
+test_pompa_dir=${home_dir}/TEST/POMPA
+hometbl_dir="${home_dir}/TBL"
+
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -n "${userid}" ];then
+  :
+else
+  userid="00000077"
+fi
+if [ -n "${password}" ];then
+  :
+else
+  password="aoyagi"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+# 表示させる施設も同じ
+echo "###SHISETSU_NAME###" "$(cat ${tmp}-user_shisetsu)" >> ${tmp}-calsed1
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KAIGOJISSEKI_MASTER.CGI"{print $1,$9}'                                           |
+LANG=C sort -u -k2,2n                                                                      |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" -o "$(cat $tmp-btn_kengen)" = "2" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+### 食事水分等摂取テーブル ###
+# 主食容量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHUSHOKUYORYO |
+self 2                                       > ${tmp}-shushoku_yoryo
+# 副食容量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/FUKUSHOKU_YORYO |
+self 2                                       > ${tmp}-shushoku_yoryo2
+# 主食形態
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHUSHOKU_KEITAI |
+self 2                                       > ${tmp}-shushoku_keitai
+# 介助場所
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KAIJO_PLACE |
+self 2                                       > ${tmp}-kaijo_place
+# 副食形態
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/FUKUSHOKU_YORYO1 |
+self 2                                       > ${tmp}-fukushoku_keitai
+# おやつ種類
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHUSHOKU_SHURUI2 |
+self 2                                       > ${tmp}-oyatsu_shurui
+# 水分種類
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SUIBUN_SHURUI |
+self 2                                       > ${tmp}-suibun_shurui
+
+### 排泄関係テーブル ###
+# 排尿量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAIBEN_RYO |
+self 2                                       > ${tmp}-hainyo_ryo
+# 排尿形状
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAINYO_KEIJOU |
+self 2                                       > ${tmp}-hainyo_keijou
+# 排便形状
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAIBEN_KEIJOU |
+self 2                                       > ${tmp}-haiben_keijou
+# 排便量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAIBEN_RYO2 |
+self 2                                       > ${tmp}-haiben_ryo
+# 介助区分
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAINYO_KUBUN |
+self 2                                       > ${tmp}-kaijo_kubun
+# 排泄種類
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAINYO_SHURUI |
+self 2                                       > ${tmp}-hainyo_shurui
+# 下剤種類
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/HAIBEN_RYO3 |
+self 2                                       > ${tmp}-gezai_shurui
+
+### 入浴・清拭テーブル ###
+# 入浴その他
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/NYUYOKU_SONOTA |
+self 2                                       > ${tmp}-nyuyoku_sonota
+# 入浴区分
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/NYUYOKU_KUBUN |
+self 2                                       > ${tmp}-nyuyoku_kubun
+
+### 洗面・整容テーブル ###
+# 詳細
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SENMEN_SHOSAI |
+self 2                                       > ${tmp}-senmen_shousai
+
+### 基本動作・リハビリテーブル ###
+# 種目
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KIHON_RIHA_SHUMOKU |
+self 2                                       > ${tmp}-kihonriha_shumoku
+# 場所
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KIHON_KAIJO_PLACE |
+self 2                                       > ${tmp}-kihonriha_place
+
+### 医療・健康テーブル ###
+# 内服薬用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/NAIFUKU_SELECT |
+self 2                                       > ${tmp}-naifuku_yoho
+# 内服薬量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/NAIFUKU_YORYO |
+self 2                                       > ${tmp}-naifuku_yoryo
+# 介助場所
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/IRYO_KAIJO_PLACE |
+self 2                                       > ${tmp}-iryo_place
+# 処置用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHOTITOU |
+self 2                                       > ${tmp}-shotitou
+# 医療用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/IRYO_IRYO_SELECT |
+self 2                                       > ${tmp}-iryo_yoho
+# 医療容量
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/IRYO_IRYO_SHOTI |
+self 2                                       > ${tmp}-iryo_yoryo
+# 頓用(用法)
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/TONYOU_SELECT |
+self 2                                       > ${tmp}-tonyou_select
+# 頓用(処置)
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/TONYOU_SHOTI |
+self 2                                       > ${tmp}-tonyou_shoti
+# 外用薬用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/GAIYOUYAKU_SELECT |
+self 2                                       > ${tmp}-gaiyouyaku_yoho
+# 測定・観察用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SOKUTEI_SELECT |
+self 2                                       > ${tmp}-sokutei_yoho
+# 通院介助用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/TUUIN_KAIJO_SELECT |
+self 2                                       > ${tmp}-tuuin_yoho
+# 通院介助処置
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/TUUIN_KAIJO_SHOTI |
+self 2                                       > ${tmp}-tuuin_shoti
+# 往診用法
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/OUSHIN_SELECT |
+self 2                                       > ${tmp}-oushin_yoho
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI11### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###FILE_NAME### ${FILE_NAME}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/KAIGOJISSEKI_MASTER1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KAIGOJISSEKI_MASTER2.html   |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###SHUSHOKU_YORYO### - ${tmp}-shushoku_yoryo |
+mojihame -l###FUKUSHOKU_YORYO### - ${tmp}-shushoku_yoryo2 |
+mojihame -l###SHUSHOKU_KEITAI### - ${tmp}-shushoku_keitai |
+mojihame -l###KAIJO_PLACE### - ${tmp}-kaijo_place |
+mojihame -l###FUKUSHOKU_KEITAI### - ${tmp}-fukushoku_keitai |
+mojihame -l###OYATSU_SHURUI### - ${tmp}-oyatsu_shurui |
+mojihame -l###SUIBUN_SHURUI### - ${tmp}-suibun_shurui |
+mojihame -l###HAINYO_RYO### - ${tmp}-hainyo_ryo |
+mojihame -l###HAINYO_KEIJOU### - ${tmp}-hainyo_keijou |
+mojihame -l###HAIBEN_KEIJOU### - ${tmp}-haiben_keijou |
+mojihame -l###HAIBEN_RYO### - ${tmp}-haiben_ryo |
+mojihame -l###KAIJO_KUBUN### - ${tmp}-kaijo_kubun |
+mojihame -l###HAISETSU_SHURUI### - ${tmp}-hainyo_shurui |
+mojihame -l###GEZAI_SHURUI### - ${tmp}-gezai_shurui |
+mojihame -l###NYUYOKU_SONOTA### - ${tmp}-nyuyoku_sonota |
+mojihame -l###NYUYOKU_KUBUN### - ${tmp}-nyuyoku_kubun |
+mojihame -l###SENMEN_SHOSAI### - ${tmp}-senmen_shousai |
+mojihame -l###KIHONRIHA_SHUMOKU### - ${tmp}-kihonriha_shumoku |
+mojihame -l###KIHONRIHA_PLACE### - ${tmp}-kihonriha_place |
+mojihame -l###NAIFUKU_YOHO### - ${tmp}-naifuku_yoho |
+mojihame -l###NAIFUKU_YORYO### - ${tmp}-naifuku_yoryo |
+mojihame -l###IRYO_PLACE### - ${tmp}-iryo_place |
+mojihame -l###SHOTITOU### - ${tmp}-shotitou |
+mojihame -l###IRYO_YOHO### - ${tmp}-iryo_yoho |
+mojihame -l###IRYO_YORYO### - ${tmp}-iryo_yoryo |
+mojihame -l###TONYOU_SELECT### - ${tmp}-tonyou_select |
+mojihame -l###TONYOU_SHOTI### - ${tmp}-tonyou_shoti |
+mojihame -l###GAIYOUYAKU_YOHO### - ${tmp}-gaiyouyaku_yoho |
+mojihame -l###SOKUTEI_YOHO### - ${tmp}-sokutei_yoho |
+mojihame -l###TUUIN_YOHO### - ${tmp}-tuuin_yoho |
+mojihame -l###TUUIN_SHOTI### - ${tmp}-tuuin_shoti |
+mojihame -l###OUSHIN_YOHO### - ${tmp}-oushin_yoho |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed - 
+# HTMLの作成
+
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,366 @@
+#!/bin/bash
+#
+# RESTAURANT_CHUMON_KAKUNIN.TOUROKU : レストラン注文カート登録
+#
+# Usage : RESTAURANT_CHUMON_KAKUNIN.TOUROKU
+#
+# Written by R.Ssuzuki Date:2015/05/15
+
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+#--------------------------------------------------------------
+
+
+# ディレクトリ設定
+#test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+#checkfile=$2
+#result_data=$3
+#koushin_data=$4
+today="$(date +%Y%m%d)"
+
+current_time="$(date +%H%M)"
+
+current_time_s="$(date +%H%M%S)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#------------------------------------------------------------
+
+
+: <<'#__COMENTOUT__'
+#数量指定画面廃止に伴い不要となったロジック（ひとまずコメントアウトで保持しておく）
+
+# 処理の分岐
+case "${MODE}" in
+
+  #登録
+  regist )
+
+    #入居者、ゲストともに数量指定がゼロの場合登録しない
+    if [ $select_menu_suryo_nyukyosha -eq 0 ] && [ $select_menu_suryo_guest -eq 0 ] ; then
+      exit 1
+    fi
+
+    #注文カートファイルがない場合は0バイトで作成
+    touch ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+ 
+    #ユニークIDの生成
+     #カートにレコードがある場合は既存レコードのユニークID最大値＋１
+    if [ $(gyo ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  ) -gt 0 ] ; then
+       uniq_id=$(self 1 ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |LANG=C sort -k1,1nr  | head -n 1 | lcalc '$1+1'| maezero 1.4 )
+
+       #注文番号と注文受付時刻の取得（全レコード共通値）　※注文一覧を起点にカート生成したときだけ値がセットされる
+       chumon_no=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 7 | getlast 1 1 )
+       chumon_hhmmss=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 8 | getlast 1 1 )
+
+    else
+      uniq_id="0001"
+    fi
+
+    if [ "$chumon_no" = " " -o "$chumon_no" = "" ] ; then
+      chumon_no="_"
+    fi
+
+    if [ "$chumon_hhmmss" = " " -o "$chumon_hhmmss" = "" ] ; then
+      chumon_hhmmss="_"
+    fi
+
+    #注文カートをバックアップ
+    cp -p  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type.bk
+
+#    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | 
+    #最下行に追加レコードをセット
+    awk '{print $0 }END{ print "'$uniq_id'","'$nyukyosha_id'","'$select_menu_id'",'$select_menu_suryo_nyukyosha','$select_menu_suryo_guest',"_","'$chumon_no'","'$chumon_hhmmss'","'$target_day'","'$target_shokuji_jikantai'","_","_","1","'$(date +%Y%m%d)'","'$(date +%H%M%S)'"}' \
+    ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type > $tmp-resutaurant-wk-cart.$nyukyosha_id.new
+    # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号 8:注文受付時刻 9:注文受付日付 10:食事時間帯
+    #  11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+
+    #更新した注文カートに差し替え
+    mv $tmp-resutaurant-wk-cart.$nyukyosha_id.new ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    #バックアップ削除
+    rm  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type.bk
+
+    ;;
+
+
+
+  #削除
+  delete )
+
+    #注文カートファイルがない場合は0バイトで作成
+    touch ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    #更新レコード作成
+#    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | 
+    #最下行に追加レコードをセット
+    awk '$1=="'$select_menu_seq_id'" && $3=="'$select_menu_id'"' ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |
+    LANG=C sort -k1,3 -k14,15      |
+    getlast 1 3   |
+    #無効レコード作成
+    awk '{$4=0;$5=0;$(NF-2)="9";$(NF-1)="'$(date +%Y%m%d)'"; $(NF)="'$(date +%H%M%S)'"; print $0; }' > $tmp-resutaurant-wk-cart.$nyukyosha_id.input
+
+    # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号 8:注文受付時刻 
+    # 9:注文受付日付 10:食事時間帯 11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+
+    #キー単位で最新レコードを取得
+    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type $tmp-resutaurant-wk-cart.$nyukyosha_id.input |
+#    LANG=C sort -k1,1 -k12,13 |
+    LANG=C sort -k1,3 -k14,15 |
+    getlast 1 3 > $tmp-resutaurant-wk-cart.$nyukyosha_id.new
+
+    #更新した注文カートに差し替え
+    mv $tmp-resutaurant-wk-cart.$nyukyosha_id.new ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+
+    ;;
+
+  #修正
+  modify )
+
+    #注文カートファイルがない場合は0バイトで作成
+    touch ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    #更新レコード作成
+    #最下行に追加レコードをセット
+    awk '$1=="'$select_menu_seq_id'" && $3=="'$select_menu_id'"' ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |
+    LANG=C sort -k1,3 -k14,15      |
+    getlast 1 3   |
+    #数量修正レコード作成
+    awk '{$4='$select_menu_suryo_nyukyosha';$5='$select_menu_suryo_guest';$11="1";$(NF-1)="'$(date +%Y%m%d)'"; $(NF)="'$(date +%H%M%S)'"; print $0; }' > $tmp-resutaurant-wk-cart.$nyukyosha_id.input
+
+
+    # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号 8:注文受付時刻 
+    # 9:注文受付日付 10:食事時間帯 11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+
+    #キー単位で最新レコードを取得
+    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type $tmp-resutaurant-wk-cart.$nyukyosha_id.input |
+#    LANG=C sort -k1,1 -k12,13 |
+    LANG=C sort -k1,3 -k14,15 |
+     getlast 1 3 > $tmp-resutaurant-wk-cart.$nyukyosha_id.new
+
+    #更新した注文カートに差し替え
+    mv $tmp-resutaurant-wk-cart.$nyukyosha_id.new ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    ;;
+
+#__COMENTOUT__
+
+# 処理の分岐
+case "${MODE}" in
+
+  delete )
+
+    #注文カートファイルがない場合は0バイトで作成
+    touch ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    #更新レコード作成
+#    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  |
+    #最下行に追加レコードをセット
+    awk '$1=="'$select_menu_seq_id'" && $3=="'$select_menu_id'"' ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |
+    LANG=C sort -k1,3 -k14,15      |
+    getlast 1 3   |
+    #無効レコード作成
+    awk '{$4=0;$5=0;$(NF-2)="9";$(NF-1)="'$(date +%Y%m%d)'"; $(NF)="'$(date +%H%M%S)'"; print $0; }' > $tmp-resutaurant-wk-cart.$nyukyosha_id.input
+
+    # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号 8:注文受付時刻
+    # 9:注文受付日付 10:食事時間帯 11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+
+    #キー単位で最新レコードを取得
+    cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type $tmp-resutaurant-wk-cart.$nyukyosha_id.input |
+#    LANG=C sort -k1,1 -k12,13 |
+    LANG=C sort -k1,3 -k14,15 |
+    getlast 1 3 > $tmp-resutaurant-wk-cart.$nyukyosha_id.new
+
+    #更新した注文カートに差し替え
+    mv $tmp-resutaurant-wk-cart.$nyukyosha_id.new ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+
+    ;;
+
+
+
+
+  #登録（改善版：メニュー画面からまとめてバージョン）
+  registall )
+
+    #注文カートファイルがない場合は0バイトで作成
+    touch ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+    #注文カート内にすでにレコードがある場合、カートから注文番号と受付時刻を取得
+    if [ $(gyo ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  ) -gt 0 ] ; then
+       #注文番号と注文受付時刻の取得（全レコード共通値）　※注文一覧を起点にカート生成したときだけ値がセットされる
+       chumon_no=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 7 | getlast 1 1 )
+       receive_time=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 8 | getlast 1 1 )
+    fi
+
+    # メニュー数量が指定されている場合のみ処理
+    if [ $select_menu_id_array != "_" ] ; then
+#
+#     :>  $tmp-update-cart-data.$nyukyosha_id
+#
+#    else
+
+      #注文番号が空の場合、アンスコに変換
+      if [ "$chumon_no" = " " -o "$chumon_no" = "" ] ; then
+        chumon_no="_"
+      fi
+
+      if [ "$receive_time" = " " -o "$receive_time" = "" ] ; then
+        receive_time="_"
+      fi
+
+      ########################################################################
+      # メニュー画面の注文数量データをファイル化（新規と注文訂正でファイル分離）
+      ########################################################################
+
+      #数量が入力されているメニュー(または、カートに存在していたメニュー)の一覧作成
+      echo "" | awk '{print "'$select_menu_seq_id_array'"; print "'$select_menu_id_array'"; print "'$select_menu_suryo_nyukyosha_array'"; print "'$select_menu_suryo_guest_array'";}' |
+      #
+      # 1行目:カート明細IDをカンマ区切りでつなげたデータ
+      # 2行目:メニューIDをカンマ区切りでつなげたデータ
+      # 3行目:入居者数量をカンマ区切りでつなげたデータ
+      # 4行目: ゲスト数量をカンマ区切りでつなげたデータ
+      # ※１列が１メニュー分のデータ
+#      #半角スペースをアンスコに変換
+#      calsed ' ' '_' |
+      #カンマを半角スペースに変換
+      calsed ',' ' ' |
+      #縦横入れ替え
+      tateyoko  |
+      #1:明細ID 2:メニューID 3:入居者数量 4: ゲスト数量
+      # ソート（1:明細ID 2:メニューID ）
+      LANG=C sort -k1,2  |
+      # 更新判定（メニュー新規追加、一度注文したものの訂正かを判定）
+      awk '{print $0,$1=="_"?"new":"upd"}' |
+      # 追加メニュー分と変更分でファイル分割
+      keycut $tmp-update-menu-data.$nyukyosha_id.%5
+      #1:明細ID 2:メニューID 3:入居者数量 4: ゲスト数量 5:レコード種別
+
+      #エラーチェック
+      [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文カートデータ作成前処理エラー"
+
+      # 該当レコードなしのときのためにこの時点でファイルがなければ、ここで空ファイル作成
+      touch $tmp-update-menu-data.$nyukyosha_id.new
+      touch $tmp-update-menu-data.$nyukyosha_id.upd
+
+      #############################################
+      # 注文カート分離（予約と非予約にファイル分離）
+      #############################################
+      # ソート（6:予約フラグ(スケジュールID)  1:連番 2:入居者ID 3:メニューID）
+#      LANG=C sort -k6,6  -k1,3  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |
+      # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号
+      # 8:注文受付時刻 9:予備３ 10:予備４ 11:削除フラグ 12:更新日 13:更新時刻
+      # 予約判定
+#      awk '{print $0,$6=="_"?"nrsv":"rsv"}' |
+      # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号
+      # 8:注文受付時刻 9:予備３ 10:予備４ 11:削除フラグ 12:更新日 13:更新時刻 14:レコード種別
+      # 予約と非予約でファイルを分離
+#      keycut ${tmp}-resutaurant-cart.$nyukyosha_id.$user_type.%14
+
+
+#      self 1 3 2 4/NF ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |
+#      # 1:連番 2:メニューID 3:入居者ID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号
+#      #  8:注文受付時刻 9:予備３ 10:予備４ 11:削除フラグ 12:更新日 13:更新時刻
+#      LANG=C sort -k1,2  |
+#      #ジョイン
+#      join1 +ng key=1/2   $tmp-update-menu-data.$nyukyosha_id - 1>  $tmp-update-menu-join-ok-data.$nyukyosha_id  2>  $tmp-update-menu-join-ng-data.$nyukyosha_id
+
+      ##############################################################################
+      # メニュー画面の注文数量データから注文カートデータ作成
+      ##############################################################################
+
+      #カートにレコードがある場合は既存レコードのカート明細ID最大値を取得
+      if [ $(gyo ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  ) -gt 0 ] ; then
+         uniq_id_max_numeric=$(self 1 ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type |LANG=C sort -k1,1nr  | head -n 1 | lcalc '$1' )
+      else
+         uniq_id_max_numeric=0
+      fi 
+
+      ##################################
+      # 新規分にカート明細IDを付与
+      #
+      # 注文数量データ新規分に連番を付与
+      juni $tmp-update-menu-data.$nyukyosha_id.new |
+      # 連番にカート明細ID最大値を加算
+      awk '{$1=$1+'$uniq_id_max_numeric'; print $0 }' |
+      # 既存の明細ID列(アンスコのみセット)を削除
+      delf 2  |
+      #  連番をカート明細IDとして書式調整（前ゼロ４桁化）
+      maezero 1.4 |
+      #1:明細ID 2:メニューID 3:入居者数量 4: ゲスト数量 5:レコード種別
+      #
+      ##################################
+      # 新規・更新のマージとレイアウト調整
+      #
+      # 注文数量データ訂正分とマージ
+      cat  $tmp-update-menu-data.$nyukyosha_id.upd -  |
+      # 注文カートのレイアウトに合わせる
+      # 数量が入居者、ゲストともにゼロの場合、削除フラグは9（無効）、それ以外は1（有効）
+      #  ※注文一覧経由の場合はもとの受付時刻を維持するためreceive_timeを利用
+#      awk '{if($3=="0" && $4=="0"){delflg="9"}else{delflg="1"} ;print $1,"'$nyukyosha_id'",$2,$3,$4,"_","'$chumon_no'","'$chumon_hhmmss'","'$target_day'","'$target_shokuji_jikantai'","_","_",delflg,"'$today'","'$current_time_s'" }' |
+      awk '{if($3=="0" && $4=="0"){delflg="9"}else{delflg="1"} ;print $1,"'$nyukyosha_id'",$2,$3,$4,"_","'$chumon_no'","'$receive_time'","'$target_day'","'$target_shokuji_jikantai'","_","_",delflg,"'$today'","'$current_time_s'" }' |
+#tee $tmp-resutaurant-cart.$nyukyosha_id.$user_type.test1 | 
+      # 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号
+      # 8:注文受付時刻 9:注文受付日付 10:食事時間帯 11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+      #
+      ##################################
+      # 注文カートとマージ＆最新分のみ残す
+#      upl key=1,3  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type -  > $tmp-resutaurant-cart.$nyukyosha_id.$user_type.new
+# uplはファイルが空だとエラーになるのでNG
+      cat  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type -  |
+      LANG=C sort -k1,3 -k14,15 |
+      getlast 1 3  > $tmp-resutaurant-cart.$nyukyosha_id.$user_type.new
+
+      #エラーチェック
+      [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文カートデータ作成エラー"
+
+
+      # 注文カート更新
+      mv $tmp-resutaurant-cart.$nyukyosha_id.$user_type.new  ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+      #エラーチェック
+      [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文カート更新エラー"
+
+
+    fi
+
+    ;;
+
+  #その他の場合
+  * )
+    ;;
+esac
+
+#注文カートのデータを返す
+cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type 
+
+rm -f ${tmp}-*
+exit 0

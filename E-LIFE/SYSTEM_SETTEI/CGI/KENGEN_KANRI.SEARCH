@@ -1,0 +1,325 @@
+#!/bin/bash
+#
+# KENGEN_KANRI.SEARCH : 権限管理検索
+#
+# Usage : KENGEN_KANRI.SEARCH
+#
+# Written by aoyai(handslab.Inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+today=$(date +%Y%m%d)
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KENGEN_KANRI"
+apptbl_dir="${app_dir}/TBL"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+############################## 所属メンバーの取得 ##############################################
+# 施設マスタの準備
+awk '$(NF-2)!=9' ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2                                          > $tmp-shisetsu_kihon
+awk '$(NF-2)!=9' ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+self 1 2                                          > $tmp-jigyousho_kihon
+cat $tmp-shisetsu_kihon $tmp-jigyousho_kihon      |
+LANG=C sort -k1,1n                                > $tmp-shisetsu_master
+cat ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER   |
+# 1:SHISETSU_NAME 2:権限グループID 3:STAFF_ID
+awk '$1=="'${shisetsu_name}'"{print $2,$3}'  |
+# 1:権限グループID 2:STAFF_ID
+awk '$1=="'${kengen_name}'"{print $2}'  > ${tmp}-id
+# 1:STAFF_ID
+awk '$(NF-2)!=9' ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU  |
+self 2 1                                            |
+LANG=C sort -k2,2n                                  |
+join1 key=2 ${tmp}-id                               |
+# 1:SHISETSU_ID 2:STAFF_ID
+LANG=C sort -k1,1n                                  |
+join1 key=1 $tmp-shisetsu_master                    |
+# 1:SHISETSU_ID 2:SHISETSU_NAME 3:STAFF_ID
+LANG=C sort -k3,3n                                  |
+join1 key=3 <(awk '$(NF-2)!=9&&$5>="'${today}'"{print $1,$2}' ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON)   |
+# 1:SHISETSU_ID 2:SHISETSU_NAME 3:STAFF_ID 4:STAFF_NAME
+self 3 2 4                                 |
+# 1:STAFF_ID 2:SHISETSU_NAME 3:STAFF_NAME
+awk '{print $1,$2"："$3}'                  |
+awk '{print "MEMBER",$0}'                > ${tmp}-member
+# 1:目印(MEMBER) 2:STAFF_ID 3:STAFF_NAME
+
+
+############################## .DISPLAYに渡すnamefile用ファイルをつくろう ##############################################
+##### の前にcalsed用ファイルを作っておく
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-pre_calsed
+SCHEDULE_KANRI                          schedule_kanri_select
+GONYUKYOSHA_SCHEDULE.CGI                gonyukyosha_schedule_select
+SCHEDULE_ICHIRAN.CGI                    schedule_ichiran_select
+KIHONJYOUHOU_ICHIRAN.CGI                kihonjoho_ichiran_select
+NISSHI.CGI                              nisshi_select
+NYUUINGAIHAKU_ICHIRAN.CGI               nyuuin_gaihaku_joho_select
+MOUSHIOKURI_ICHIRAN.CGI                 moushiokuri_ichiran_select
+KEIYAKUJYOUHOU_ICHIRAN.CGI              keiyakujoho_ichiran_select
+SHOKUJI_JISSEKI_GEKKAN.CGI              shokuji_jisseki_monthly_select
+SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU.CGI  shokuji_meisai_select
+SHOKUJI_MENU_TOUROKU.CGI                shokuji_shurui_select
+SHOKUJI_YOYAKU.CGI                      shokuji_yoyaku_select
+SHOKUJI_SHUUKEI.CGI                     shokuji_shukei_select
+KESSHOKUHYOU.CGI                        kesshoku_select
+SHOKUJI_JISSEKI_ICHIRAN.CGI             shokuji_jisseki_nyukyosha_select
+SHOKUJI_SHOUSAI_TOUROKU.CGI             shokuji_shosai_select
+RIYOUSHABETSU_SERVICERYOKIN_TOUROKU.CGI kobetsu_service_select
+TATEKAEKIN.CGI                          tatekaekin_select
+KOJINATE_SEIKYU.CGI                     kojin_seikyu_select
+SEIKYU_ICHIRAN.CGI                      seikyu_ichiran_select
+SHOKYAKU_KANRI.CGI                      torikuzushi_select
+DENWA_KAKIN.CGI                         denwa_kakin_select
+FIRMBANKING.CGI                         firmbanking_select
+KAIGOSEIKYU_SHISETSU.CGI                shisetsu_care_seikyu_select
+KOKUHODATA_SAKUSEI.CGI                  kokuhodata_select
+KAIGOSEIKYU_HOUMONKAIGO.CGI             houmon_seikyu_select
+KAIGOSEIKYU_KYOTAKU.CGI                 kyotaku_seikyu_select
+KAIGOJISSEKI_IKKATSU.CGI                kaigojisseki_ikkatsu_select
+KAIGOJISSEKI_ICHIRAN_TOUROKU.CGI        kaigojisseki_ichiran_touroku_select
+SHISETSU_ASSESSMENT.CGI                 shisetsu_assessment_select
+KAIGOJISSEKI_ICHIRAN.CGI                kaigojisseki_ichiran_select
+KAIGOJISSEKI_KENSAKU.CGI                kaigojisseki_kensaku_select
+KAIGO_KANGO_YOUYAKU.CGI                 kaigo_kango_youyaku_select
+WEEKLY_VITAL_GRAPH.CGI                  weekly_vital_graph_select
+MONTHLY_VITAL_GRAPH.CGI                 monthly_vital_graph_select
+MONTHLY_HAIBEN_GRAPH.CGI                monthly_haiben_graph_select
+WEEKLY_HAIBEN_GRAPH.CGI                 weekly_haiben_graph_select
+KAIGOJISSEKI_SUIIHYO.CGI                kaigojisseki_suii_select
+MONTHLY_HAIBENHYO.CGI                   monthly_haibenhyo_select
+WEEKLY_HAIBENHYO.CGI                    weekly_haibenhyo_select
+CARECALL_RIREKI.CGI                     carecall_rireki_select
+CAREPLAN_MENU.CGI                       careplan_menu_select
+HOUMONKAIGO_MENU.CGI                    houmonkaigo_menu_select
+SCHEDULE_MASTER.CGI                     schedule_master_select
+SCHEDULE_TYPE_MASTER.CGI                schedule_type_master_select
+SHISETSUJOHO_MASTER.CGI                 shisetsujoho_master_select
+JYUGYOIN_MASTER.CGI                     jyugyoin_master_select
+KENGEN_MASTER.CGI                       kengen_master_select
+KEIYAKU_MASTER.CGI                      keiyaku_master_select
+RIYORYO_MASTER.CGI                      riyoryo_master_select
+SERVICE_MASTER.CGI                      service_master_select
+SHUKEIGROUP_MASTER.CGI                  shukeigroup_master_select
+TATEKAEKIN_MASTER.CGI                   tatekaekin_master_select
+KAIGOJISSEKI_MASTER.CGI                 kaigojisseki_master_select
+KAIGOJISSEKI_ALERT_MASTER.CGI           kaigojisseki_alert_master_select
+MOUSHIOKURI_MASTER.CGI                  moushiokuri_master_select
+ZEIRITSU_MASTER.CGI                     zeiritsu_master_select
+KINYU_MASTER.CGI                        kinyu_master_select
+HOKENSHA_MASTER.CGI                     hokensha_master_select
+JIGYOSHA_MASTER.CGI                     jigyousho_master_select
+SERVICE_JIGYOSHO_MASTER.CGI             service_jigyousho_master_select
+SEIKYUSAKI_MASTER.CGI                   seikyusaki_master_select
+MASTER_SEIKYU_SHOMEI.CGI                seikyusho_shomei_select
+SENIOR_ASSENMENT.CGI                    senior_assenment_select
+IKOU_ASSENMENT.CGI                      ikou_assenment_select
+BUTYO_SHIRYO.CGI                        butyo_shiryo_select
+JIKOHOU_TOUROKU.CGI                     jikohou_touroku_select
+JIKOHOU_ETSURAN.CGI                     jikohou_etsuran_select
+KENKOUSHINDANSHO_UPLOAD.CGI             kenkoushindan_select
+DENKI_SUIDO.CGI                         denki_suido_select
+TAIKYO_SEISAN.CGI                       taikyo_seisan_select
+KISSHOKURITSU.CGI                       kisshoku_select
+KONDATE_TOUROKU.CGI                     kondate_select
+SHUKOU_TOUROKU.CGI                      shukou_select
+FIN
+cat ${pompa_dir}/KENGEN_GROUP/KENGEN_GROUP           |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$1=="'${shisetsu_name}'"'          |
+awk '$2=="'${kengen_name}'"'            |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+self 6 8                                |
+# 1:CGI_NAME 2:権限ステータス
+calsed -f ${tmp}-pre_calsed -           |
+# 1:変数名 2:権限ステータス
+awk '{print "NAME",$0}'                 > ${tmp}-for_name
+# 1:目印(NAME) 2:変数名 3:権限ステータス
+
+
+
+
+
+############################## .DISPLAYに渡すcalsed用ファイルをつくろう ##############################################
+cat ${pompa_dir}/KENGEN_GROUP/KENGEN_GROUP           |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$1=="'${shisetsu_name}'"'          |
+awk '$2=="'${kengen_name}'"'            > ${tmp}-display_calsed_moto
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="UNEI_MENU"'                   |
+awk '{if($5=="on"){print "###unei_chk_box###",$5}}'  >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="SHOKUJI_JOHO_MENU"'           |
+awk '{if($5=="on"){print "###shokuji_chk_box###",$5}}' >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="NYUKYOSHA_SEIKYU_MENU"'       |
+awk '{if($5=="on"){print "###keiri_chk_box###",$5}}'   >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="TATEKAEKIN_MENU"'             |
+awk '{if($5=="on"){print "###tatekaekin###",$5}}'  >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="KAIGOHOKEN_SEIKYU_MENU"'      |
+awk '{if($5=="on"){print "###kaigoseikyu_chk_box###",$5}}'  >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="KANGOKAIGO_KIROKU_MENU"'      |
+awk '{if($5=="on"){print "###kankai_chk_box###",$5}}'   >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="CAREPLAN_MENU"'               |
+awk '{if($5=="on"){print "###careplan_menu###",$5}}'   >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="HOUMONKAIGO_MENU"'            |
+awk '{if($5=="on"){print "###houmonkaigo_menu###",$5}}'   >> ${tmp}-display_calsed_moto2
+
+cat ${tmp}-display_calsed_moto          |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$4=="SYSTEM_MENU"'                 |
+awk '{if($5=="on"){print "###system_settei###",$5}}'      >> ${tmp}-display_calsed_moto2
+
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-displayyou_calsed
+SCHEDULE_KANRI                          ###schedule_kanri###
+GONYUKYOSHA_SCHEDULE.CGI                ###gonyukyosha_schedule###
+SCHEDULE_ICHIRAN.CGI                    ###schedule_ichiran###
+KIHONJYOUHOU_ICHIRAN.CGI                ###kihonjoho_ichiran###
+NISSHI.CGI                              ###nisshi###
+NYUUINGAIHAKU_ICHIRAN.CGI               ###nyuuin_gaihaku_joho###
+MOUSHIOKURI_ICHIRAN.CGI                 ###moushiokuri_ichiran###
+KEIYAKUJYOUHOU_ICHIRAN.CGI              ###keiyakujoho_ichiran###
+SHOKUJI_JISSEKI_GEKKAN.CGI              ###shokuji_jisseki_monthly###
+SHOKUJI_MEISAI_IKKATSU_SHUTSURYOKU.CGI  ###shokuji_meisai###
+SHOKUJI_MENU_TOUROKU.CGI                ###shokuji_shurui###
+SHOKUJI_YOYAKU.CGI                      ###shokuji_yoyaku###
+SHOKUJI_SHUUKEI.CGI                     ###shokuji_shukei###
+KESSHOKUHYOU.CGI                        ###kesshoku###
+SHOKUJI_JISSEKI_ICHIRAN.CGI             ###shokuji_jisseki_nyukyosha###
+SHOKUJI_SHOUSAI_TOUROKU.CGI             ###shokuji_shosai###
+RIYOUSHABETSU_SERVICERYOKIN_TOUROKU.CGI ###kobetsu_service###
+KOJINATE_SEIKYU.CGI                     ###kojin_seikyu###
+SEIKYU_ICHIRAN.CGI                      ###seikyu_ichiran###
+SHOKYAKU_KANRI.CGI                      ###torikuzushi###
+DENWA_KAKIN.CGI                         ###denwa_kakin###
+FIRMBANKING.CGI                         ###firmbanking###
+KAIGOSEIKYU_SHISETSU.CGI                ###shisetsu_care_seikyu###
+KOKUHODATA_SAKUSEI.CGI                  ###kokuhodata###
+KAIGOSEIKYU_HOUMONKAIGO.CGI             ###houmon_seikyu###
+KAIGOSEIKYU_KYOTAKU.CGI                 ###kyotaku_seikyu###
+KAIGOJISSEKI_IKKATSU.CGI                ###kaigojisseki_ikkatsu###
+KAIGOJISSEKI_ICHIRAN_TOUROKU.CGI        ###kaigojisseki_ichiran_touroku###
+SHISETSU_ASSESSMENT.CGI                 ###shisetsu_assessment###
+KAIGOJISSEKI_ICHIRAN.CGI                ###kaigojisseki_ichiran###
+KAIGOJISSEKI_KENSAKU.CGI                ###kaigojisseki_kensaku###
+KAIGO_KANGO_YOUYAKU.CGI                 ###kaigo_kango_youyaku###
+WEEKLY_VITAL_GRAPH.CGI                  ###weekly_vital_graph###
+MONTHLY_VITAL_GRAPH.CGI                 ###monthly_vital_graph###
+MONTHLY_HAIBEN_GRAPH.CGI                ###monthly_haiben_graph###
+WEEKLY_HAIBEN_GRAPH.CGI                 ###weekly_haiben_graph###
+KAIGOJISSEKI_SUIIHYO.CGI                ###kaigojisseki_suii###
+MONTHLY_HAIBENHYO.CGI                   ###monthly_haibenhyo###
+WEEKLY_HAIBENHYO.CGI                    ###weekly_haibenhyo###
+CARECALL_RIREKI.CGI                     ###carecall_rireki###
+SCHEDULE_MASTER.CGI                     ###schedule_master###
+SCHEDULE_TYPE_MASTER.CGI                ###schedule_type_master###
+SHISETSUJOHO_MASTER.CGI                 ###shisetsujoho_master###
+JYUGYOIN_MASTER.CGI                     ###jyugyoin_master###
+KENGEN_MASTER.CGI                       ###kengen_master###
+KEIYAKU_MASTER.CGI                      ###keiyaku_master###
+RIYORYO_MASTER.CGI                      ###riyoryo_master###
+SERVICE_MASTER.CGI                      ###service_master###
+SHUKEIGROUP_MASTER.CGI                  ###shukeigroup_master###
+TATEKAEKIN_MASTER.CGI                   ###tatekaekin_master###
+KAIGOJISSEKI_MASTER.CGI                 ###kaigojisseki_master###
+KAIGOJISSEKI_ALERT_MASTER.CGI           ###kaigojisseki_alert_master###
+MOUSHIOKURI_MASTER.CGI                  ###moushiokuri_master###
+ZEIRITSU_MASTER.CGI                     ###zeiritsu_master###
+KINYU_MASTER.CGI                        ###kinyu_master###
+HOKENSHA_MASTER.CGI                     ###hokensha_master###
+JIGYOSHA_MASTER.CGI                     ###jigyousho_master###
+SERVICE_JIGYOSHO_MASTER.CGI             ###service_jigyousho_master###
+SEIKYUSAKI_MASTER.CGI                   ###seikyusaki_master###
+MASTER_SEIKYU_SHOMEI.CGI                ###seikyusho_shomei###
+SENIOR_ASSENMENT.CGI                    ###senior_assenment###
+IKOU_ASSENMENT.CGI                      ###ikou_assenment###
+BUTYO_SHIRYO.CGI                        ###butyo_shiryo###
+JIKOHOU_TOUROKU.CGI                     ###jikohou_touroku###
+JIKOHOU_ETSURAN.CGI                     ###jikohou_etsuran###
+KENKOUSHINDANSHO_UPLOAD.CGI             ###kenkoushindan###
+DENKI_SUIDO.CGI                         ###denki_suido###
+TAIKYO_SEISAN.CGI                       ###taikyo_seisan###
+KISSHOKURITSU.CGI                       ###kisshoku###
+KONDATE_TOUROKU.CGI                     ###kondate###
+SHUKOU_TOUROKU.CGI                      ###shukou###
+FIN
+
+
+cat ${pompa_dir}/KENGEN_GROUP/KENGEN_GROUP           |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+awk '$1=="'${shisetsu_name}'"'          |
+awk '$2=="'${kengen_name}'"'            |
+# 1:施設コード 2:権限グループコード 3:順番 4:MENU名 5:MENUフラグ 6:CGI_NAME 7:CGIフラグ 8:権限ステータス 9:登録日時間
+self 6 7                                |
+# 1:CGI_NAME 2:CGIフラグ
+calsed -f ${tmp}-displayyou_calsed -    > ${tmp}-for_display_calsed_1
+# 1:置換文字 2:CGIフラグ
+
+# 合体
+cat ${tmp}-display_calsed_moto2 ${tmp}-for_display_calsed_1   |
+# 1:置換文字 2:CGIフラグ
+awk '{gsub(/on/,"checked",$2);print}'    |
+awk '{print "CALSED",$0}'                > ${tmp}-forcalsed_display
+# 1:目印 2:置換文字 3:CGIフラグ
+
+
+############################## SEARCHファイルを完成させよう ##############################################
+cat ${tmp}-member ${tmp}-for_name ${tmp}-forcalsed_display
+
+
+rm -f ${tmp}-*
+exit 0
+

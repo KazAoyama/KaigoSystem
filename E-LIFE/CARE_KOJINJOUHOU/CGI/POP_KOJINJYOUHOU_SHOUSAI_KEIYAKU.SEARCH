@@ -1,0 +1,203 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KEIYAKU.SEARCH
+# 個人情報詳細(契約)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/11
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+if [ "$MODE" = "init" ]; then
+  KeiyakuNenrei=""
+  Keiyakubi=""
+  KeiyakuHikiwatashibi=""
+  KeiyakukikanFrom=""
+  KeiyakukikanTo=""
+  KeiyakuNyuukyobi=""
+  KeiyakuTaikyobi=""
+  KeiyakuSeikyuuKikanFrom=""
+  KeiyakuSeikyuuKikanTo=""
+  TaikyoRiyuuShousai=""
+  KeiyakuBikou=""
+  CHINRYOU=""
+  KEIYAKUID=""
+else
+  KEIYAKUID=$(nameread           "KEIYAKUID"      $namedata)
+fi
+
+USERID="$(nameread  "USERID" $namedata)"
+SHISETSUID="$(nameread  "SHISETSUID" $namedata)"
+RIYOUSHAID="$(nameread  "RIYOUSHAID" $namedata)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+
+if [ "$MODE" = "touroku" -a "KEIYAKUID" = "_" ] ; then
+ KEIYAKUID="$(cat ${result_data} | self 3)"
+fi
+
+### モードによる表示の分岐
+case "${MODE}" in
+  # 初期表示
+  search)
+
+###########
+# 契約情報の取得
+###########
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU |
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+# 利用者IDと契約IDが一致
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KEIYAKUID}'"{print $0}'  |
+awk '{print "KEIYAKU",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10!="_"?substr($10,1,4)"/"substr($10,5,2)"/"substr($10,7,2):"_",$11!="_"?substr($11,1,4)"/"substr($11,5,2)"/"substr($11,7,2):"_",$12!="_"?substr($12,1,4)"/"substr($12,5,2)"/"substr($12,7,2):"_",$13!="99999999"?substr($13,1,4)"/"substr($13,5,2)"/"substr($13,7,2):"_",$14,$15,$16}'   > $tmp-keiyaku
+# 1:KEIYAKU       2:利用者(入居者)ID 3:契約ID      4:施設ID      5:建屋ID
+# 6:フロアID      7:ユニットID       8:居室ID      9:入居時年齢  10:契約種類ID
+# 11:契約日       12:引渡し日        13:契約開始日 14:契約終了日 15:退去理由
+# 16:退去理由詳細 17:備考
+
+[ ! -s "$tmp-keiyaku" ] && error_exit
+
+# 契約金
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKUKIN |
+# 1:利用者(入居者)ID 2:施設ID      3:契約ID    4:契約金種別ID  5:番号
+# 6:償却開始日       7:償却終了日  8:金額      9:償却回数      10:非返却金額
+# 11:算出方法        12:特販ID     13:値引額   14:値引き後金額 15:特販期間FROM
+# 16:特販期間TO      17:予備1      18:予備2    19:予備3        20:予備4
+# 21:予備5           22:削除フラグ 23:更新時間 24:更新者
+
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print "keiyakukin",$0}' |
+awk '{print $0,$7!="_"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"_",$8!="99999999"?substr($8,1,4)"/"substr($8,5,2)"/"substr($8,7,2):"_",$16!="_"?substr($16,1,4)"/"substr($16,5,2)"/"substr($16,7,2):"_",$17!="99999999"?substr($17,1,4)"/"substr($17,5,2)"/"substr($17,7,2):"_"}'  | 
+self 1/6 NF-3 NF-2 9/15 NF-1 NF  > $tmp-keiyakukin
+# 1:「契約金」    2:利用者(入居者)ID 3:施設ID     4:契約ID  5:契約金種別ID
+# 6:番号          7:償却開始日       8:償却終了日 9:金額    10:償却回数
+# 11:非返却金額   12:算出方法        13:特販ID    14:値引額 15:値引き後金額
+# 16:特販期間FROM 17:特販期間TO
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print "riyouryou",$0}' |
+awk '{print $0,$7!="_"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"_",$8!="99999999"?substr($8,1,4)"/"substr($8,5,2)"/"substr($8,7,2):"_",$13!="_"?substr($13,1,4)"/"substr($13,5,2)"/"substr($13,7,2):"_",$14!="99999999"?substr($14,1,4)"/"substr($14,5,2)"/"substr($14,7,2):"_"}'  |
+self 1/6 NF-3 NF-2 9/12 NF-1 NF  > $tmp-riyouryou
+# 1:「利用料」 2:利用者(入居者)ID 3:施設ID        4:契約ID      5:利用料種別ID
+# 6:番号       7:起算開始日       8:起算終了日    9:金額        10:特販ID
+# 11:値引額    12:値引き後金額    13:特販期間FROM 14:特販期間TO
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_TOKUHAN   |
+# 1:利用者(入居者)ID 2:施設ID  3:契約ID 4:特販種別ID 5:番号
+# 6:値引金額         7:開始日  8:終了日 9:内容       10:予備1
+# 11:予備2           12:予備3  13:予備4 14:予備5     15:削除フラグ
+# 16:更新日          17:更新者
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print "tokuhan",$0}'  |
+awk '{print $0,$8!="_"?substr($8,1,4)"/"substr($8,5,2)"/"substr($8,7,2):"_",$9!="99999999"?substr($9,1,4)"/"substr($9,5,2)"/"substr($9,7,2):"_"}'  |
+self 1/7 NF-1 NF 11/NF-2 > $tmp-tokuhan
+# 1:「特販」 2:利用者(入居者)ID 3:施設ID 4:契約ID 5:特販種別ID
+# 6:番号     7:値引金額         8:開始日 9:終了日 10:内容
+
+# 包括
+cat ${pompa_dir}/RIYOUSHA/HOUKATSU_RIYOUSHA_STATUS |
+# 1:事業所ID(包括ID) 2:入居者ID   3:契約ID   4:契約種類ID 5:契約開始日
+# 6:契約終了日       7:削除フラグ 8:更新時間 9:更新者
+awk '$2=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print "houkatsu",$1}' > $tmp-houkatsu
+
+echo "result" "search_ok" |
+cat - $tmp-keiyaku        |
+
+if [ -s $tmp-keiyakukin ] ;then
+  cat - $tmp-keiyakukin    
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou ] ;then
+  cat - $tmp-riyouryou
+else
+  cat -
+fi |
+if [ -s $tmp-tokuhan ] ;then
+  cat - $tmp-tokuhan
+else
+  cat -
+fi |
+if [ -s $tmp-houkatsu ] ;then
+  cat - $tmp-houkatsu
+else
+  cat -
+fi  > $tmp-result-data
+
+
+echo "result" "search_ok" > $tmp-result
+
+  ;;
+
+  init)
+
+echo "result" "search_ng" > $tmp-result
+
+  ;;
+esac
+#cp $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+cat $tmp-result $tmp-result-data
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

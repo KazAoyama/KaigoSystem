@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.DATA_CHECK : 介護保険請求居宅データチェック
+#
+# Usage : KAIGOSEIKYU_KYOTAKU_DATA_CHECK namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 利用者のマスタ準備
+cat ${riyosha_dir}/RIYOUSHA_KIHON                         |
+self 1 2                                                 > $tmp-riyosha_kihon
+# 1:利用者ID 2:利用者名
+
+# 訪問介護の実績があるのに確定ファイルで確定されていない人を抽出
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_JISSEKI |
+# 1:利用者ID 2:年 3:月 4:日 5:開始時間
+# 6:終了時間 7:サービス種類 8:サービスコード 9:
+self 1                                                               |
+LANG=C sort -u -k1,1n                                                > $tmp-jisseki_member
+
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_KAIGO |
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/HOUMONKAIGO_RIYOUHYOUBEPPYOU_YOBO  |
+# 1:No.                   2:利用者ID                  3:利用年              4:利用月           5:事業者サービス区分
+# 6:事業者ID              7:事業所名                  8:サービスコード      9:サービスコード名 10:単位
+# 11:割引率               12:単位（割引後）回数       13:単位合計           14:種類限度額超    15:種類限度額内
+# 16:基準内限度額対象単位 17:基準外対象単位           18:地域単価           19:請求額          20:給付率
+# 21:介護保険給付額       22:個人負担額（保険対象内） 23:個人負担額（全額） 24:明細コード      25:限度額対象フラグ
+# 26:確定フラグ
+self 2                                                                              |
+LANG=C sort -u -k1,1n                                                               > $tmp-kakutei_member
+
+join0 +ng key=1 $tmp-jisseki_member $tmp-kakutei_member   > $tmp-ok_member 2> $tmp-ng_member
+
+if [ "$(gyo $tmp-ng_member)" -ne 0 ];then
+  cat $tmp-ng_member | LANG=C sort -k1,1n | join1 key=1 $tmp-riyosha_kihon
+else
+  echo "なし"
+fi                                  > $tmp-mikakutei_list
+
+
+# チェックする対象者のリスト作成
+if [ -e ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_KAIGO ];then
+  cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_KAIGO    |
+  awk '$28!=9'                                                                      > ${tmp}-seikyu_data_base
+  # 1:No.                   2:利用者ID                  3:利用年              4:利用月           5:事業者サービス区分
+  # 6:事業者ID              7:事業所名                  8:サービスコード      9:サービスコード名 10:単位
+  # 11:割引率               12:単位（割引後）回数       13:単位合計           14:種類限度額超    15:種類限度額内
+  # 16:基準内限度額対象単位 17:基準外対象単位           18:地域単価           19:請求額          20:給付率
+  # 21:介護保険給付額       22:個人負担額（保険対象内） 23:個人負担額（全額） 24:明細コード      25:限度額対象フラグ
+  # 26:確定フラグ
+else
+  exit 0
+fi
+
+cat $tmp-seikyu_data_base                                                           |
+# 1:No.                   2:利用者ID                  3:利用年              4:利用月           5:事業者サービス区分
+# 6:事業者ID              7:事業所名                  8:サービスコード      9:サービスコード名 10:単位
+# 11:割引率               12:単位（割引後）回数       13:単位合計           14:種類限度額超    15:種類限度額内
+# 16:基準内限度額対象単位 17:基準外対象単位           18:地域単価           19:請求額          20:給付率
+# 21:介護保険給付額       22:個人負担額（保険対象内） 23:個人負担額（全額） 24:明細コード      25:限度額対象フラグ
+# 26:確定フラグ
+self 2                                                                              |
+LANG=C sort -u -k1,1n                                                               > $tmp-taishosha
+
+# 介護認定の有効期限のチェック
+for member in $(cat $tmp-taishosha | yarr);do
+  cat $tmp-seikyu_data_base        |
+  awk '$2=="'${member}'"{print $3$4}' |
+  LANG=C sort -u -k1,1                |
+  tail -n1                            > $tmp-list_nengetsu
+  LIST_NENGETSU=$(cat $tmp-list_nengetsu)
+  KAISHI="$(cat $tmp-list_nengetsu | awk '{print $1"01"}')"
+  SHURYO="$(mdate ${LIST_NENGETSU}m | tarr | tail -n1)"
+
+  cat ${riyosha_dir}/RIYOUSHA_KAIGOHOKEN                             |
+  # 1:利用者ID            2:介護保険ID          3:介護度            4:保険者番号                                        5:保険者名
+  # 6:被保険者番号        7:性別                8:生年月日和暦元号  9:和暦誕生年                                        10:和暦誕生月
+  # 11:和暦誕生日         12:郵便番号           13:住所             14:認定年月和暦元号                                 15:認定和暦年
+  # 16:認定和暦月         17:認定和暦日         18:認定西暦         19:有効期間from和暦元号                             20:有効期間from和暦年
+  # 21:有効期間from和暦月 22:有効期間from和暦日 23:有効期間from西暦 24:有効期間to和暦元号                               25:有効期間to和暦年
+  # 26:有効期間to和暦月   27:有効期間to和暦日   28:有効期間to西暦   29:居宅介護支援者又は介護予防事業者及びその事業者名 30:認定審査会の意見及び>サービスの種類指定
+  # 31:備考               32:利用者負担率
+  join0 key=1 <(echo $member)                                        |
+  awk '$23<="'${SHURYO}'" && $28>="'${KAISHI}'"'                     > $tmp-list_kaigodo
+
+  if [ "$(gyo $tmp-list_kaigodo)" = 0 ];then
+    echo $member "介護認定の有効期間を確認してください"
+  else
+    :
+  fi                                                                  >> $tmp-kaigodo_check
+done
+
+
+
+
+TEMPLA=${temp_dir}/DATA_CHECK_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 $tmp-mikakutei_list             \
+                    1 a13 $tmp-kaigodo_check             > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

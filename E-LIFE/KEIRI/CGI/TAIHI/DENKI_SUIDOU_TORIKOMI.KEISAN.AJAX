@@ -1,0 +1,264 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.KEISAN.AJAX : 電気水道課金
+#
+# Written by Mikami
+
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/DENKI_SUIDOU_JYOUHOU.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+
+# パラメータの取得
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  Shisetsu_select
+  Tateya_select
+  Floor_select
+  Unit_select
+  kikan_month_select
+  syubetsu_select
+  shusei_denki_room
+  shusei_denki_shimei
+  shusei_denki_anpea
+  shusei_denki_zengetsu
+  shusei_denki_tougetsu
+  shusei_denki_kihon  
+  shusei_suidou_room
+  shusei_suidou_shimei
+  shusei_suidou_zengetsu
+  shusei_suidou_tougetsu
+FIN
+
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+
+eval $(name-source ${tmp}-name)
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${kikan_month_select} >${tmp}-select_month
+echo ${syubetsu_select} >${tmp}-syubetsu_select
+echo $shusei_denki_room > ${tmp}-shusei_denki_room
+echo $shusei_denki_shimei > ${tmp}-shusei_denki_shimei
+echo $shusei_denki_anpea > ${tmp}-shusei_denki_anpea
+echo $shusei_denki_zengetsu > ${tmp}-shusei_denki_zengetsu
+echo $shusei_denki_tougetsu >  ${tmp}-shusei_denki_tougetsu
+echo $shusei_denki_kihon > ${tmp}-shusei_denki_kihon
+echo $shusei_suidou_room > ${tmp}-shusei_suidou_room
+echo $shusei_suidou_shimei > ${tmp}-shusei_suidou_shimei
+echo $shusei_suidou_zengetsu > ${tmp}-shusei_suidou_zengetsu
+echo $shusei_suidou_tougetsu > ${tmp}-shusei_suidou_tougetsu
+
+# 税率計算
+zeiritsu="$(awk '$5!="9" && $3<="'${kikan_month_select}'" && $4>"'${kikan_month_select}'"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU | self 2)"
+zeiritsu_keisan="$(echo "${zeiritsu} + 1" | bc)"
+
+# 電気従量単価
+if [ ${kikan_month_select} -gt 201403  ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==3' |self 2)
+fi
+if [ ${kikan_month_select} -lt 201404 -a ${kikan_month_select} -gt 201208 ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==3' |self 2)
+fi
+if [ ${kikan_month_select} -lt 201209 ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==3' |self 2)
+fi
+
+siyouryo=$(cat ${tmp}-shusei_denki_room ${tmp}-shusei_denki_shimei ${tmp}-shusei_denki_anpea ${tmp}-shusei_denki_zengetsu ${tmp}-shusei_denki_tougetsu |yarr  |calc '$5-$4' 5 |self 6)
+#--------------------------------------------------------------
+select_month="$(cat ${tmp}-select_month)"
+
+#--------------------------------------------------------------
+# 計算処理
+if [ ${syubetsu_select} = "1"  ]; then 
+
+# 電気の計算 --------------------------------------------------------------------------------------------
+
+# 120kw以下の時の計算
+  if [ $siyouryo -le 120 ];then
+  cat ${tmp}-shusei_denki_room ${tmp}-shusei_denki_shimei ${tmp}-shusei_denki_anpea ${tmp}-shusei_denki_zengetsu ${tmp}-shusei_denki_tougetsu ${tmp}-shusei_denki_kihon   |
+  yarr           |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針 
+  # 6:基本料金
+  calc '$5-$4' 5 |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針 
+  # 6:使用量 7:基本料金
+  awk '{print $1,$2,$3,$4,$5,$6,'$tanka1',$7}' |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:単価 8:基本料金
+  calc '$6*$7' 8                               |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:単価 8:基本料金 9:従量料金
+  calc '$8+$9' 9                               |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:単価 8:基本料金 9:従量料金 10:請求額
+  self 1 2 3 4 5 6 8 9 10                      |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:従量料金 9:請求額
+  marume -sage 8.0 9.0                         >$tmp-120
+  
+  # 再計算を仮保存
+  shusei_denki_shiyouryou="$(cat $tmp-120 |self 6)"
+  shusei_denki_jyuryou="$(cat $tmp-120 |self 8)"
+  shusei_denki_seikyugaku="$(cat $tmp-120 |self 9)"
+  fi 
+  if [ $siyouryo -gt 120 -a $siyouryo -le 300 ];then
+  # 120～300kwの時の計算
+  cat ${tmp}-shusei_denki_room ${tmp}-shusei_denki_shimei ${tmp}-shusei_denki_anpea ${tmp}-shusei_denki_zengetsu ${tmp}-shusei_denki_tougetsu ${tmp}-shusei_denki_kihon   |
+  yarr           |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:基本料金
+  calc '$5-$4' 5 |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金
+  awk '{print $1,$2,$3,$4,$5,$6,$7,'$tanka1*120',$6-120,'$tanka2'}' |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:120の超過分 10:120単価
+  calc '$9*$10' 10                             |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:120の超過分 10:120単価
+  # 11:超過分金額
+  calc '$8+$11' 11                             |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:120の超過分 10:120単価
+  # 11:超過分金額 12:従量分
+  calc '$7+$12' 12                             |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:120の超過分 10:120単価
+  # 11:超過分金額 12:従量分13:請求分
+  self 1 2 3 4 5 6 7 12 13                     |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:従量分 9:請求分
+  marume -sage 8.0 9.0                         >$tmp-120_300
+
+  # 再計算を仮保存
+  shusei_denki_shiyouryou="$(cat $tmp-120_300 |self 6)"
+  shusei_denki_jyuryou="$(cat $tmp-120_300 |self 8)"
+  shusei_denki_seikyugaku="$(cat $tmp-120_300 |self 9)"
+  fi
+  if [ $siyouryo -gt 300 ];then
+  # 300kw～の時の計算
+  cat ${tmp}-shusei_denki_room ${tmp}-shusei_denki_shimei ${tmp}-shusei_denki_anpea ${tmp}-shusei_denki_zengetsu ${tmp}-shusei_denki_tougetsu ${tmp}-shusei_denki_kihon   |  
+  yarr           |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:基本料金
+  calc '$5-$4' 5 |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金
+  awk '{print $1,$2,$3,$4,$5,$6,$7,'$tanka1*120','$tanka2*180',$6-300,'$tanka3'}' |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:～300の分 10:300の超過分 
+  # 11:300単価
+  calc '$10*$11' 11                            |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:～120の分 9:～300の分 10:300の超過分
+  # 11:300単価 12:超過分金額 
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8+$9+$12}' |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+  # 6:使用量 7:基本料金 8:従量分
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$7+$8}'     |
+  # 1:部屋番号 2:入居者名 3:アンペア 4:開始指針 5:終端指針
+ # 6:使用量 7:基本料金 8:従量分 9:請求分
+  marume -sage 8.0 9.0                         >$tmp-300  
+  
+  # 再計算を仮保存
+  shusei_denki_shiyouryou="$(cat $tmp-300 |self 6)"
+  shusei_denki_jyuryou="$(cat $tmp-300 |self 8)"
+  shusei_denki_seikyugaku="$(cat $tmp-300 |self 9)"
+  fi
+
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###DENKI_ROOM### $shusei_denki_room
+###DENKI_NAME### $shusei_denki_shimei
+###DENKI_ANPEA### $shusei_denki_anpea
+###DENKI_ZENGETSU### $shusei_denki_zengetsu
+###DENKI_TOUGETSU### $shusei_denki_tougetsu
+###DENKI_SHIYOURYOU### $shusei_denki_shiyouryou
+###DEMKI_KIHON### $shusei_denki_kihon
+###DENKI_JYURYOU### $shusei_denki_jyuryou
+###DENKI_SEIKYUGAKU### $shusei_denki_seikyugaku
+FIN
+  awk '/ajax_calc_list_table_start/,/ajax_calc_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f  $tmp-calsed  >${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+#---------------------------------------------------------------------------------------------------------------------------
+else
+
+# 水道の計算-----------------------------------------------------------------------------------------------------------------
+
+# 再計算を仮保存
+  cat ${tmp}-shusei_suidou_room ${tmp}-shusei_suidou_shimei ${tmp}-shusei_suidou_zengetsu ${tmp}-shusei_suidou_tougetsu |
+  yarr           |
+  # 1:部屋番号 2:入居者名 3:開始指針 4:終端指針
+  calc '$4-$3' 4 |
+  # 1:部屋番号 2:入居者名 3:開始指針 4:終端指針 5:使用量  
+# 水道料金結合
+  if [ ${kikan_month_select} -gt 201403  ]; then
+  cjoin1 key=5 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL  -
+  # 1:部屋番号       2:入居者ID        3:入居者名      4:先月終端指針 5:先月開始指針
+  # 6:先々月開始指針 7:先々月使用量    8:先月使用量    9:使用量計     10:上水道料金
+  # 11:下水道料金    12:上下水道料金計 13:先々月開始日 14:先月開始日  15:先月末日(今月初日)
+  else
+  cjoin1 key=5 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL_OLD -
+  fi                                                              >$tmp-suidou
+  # 1:部屋番号 2:入居者名 3:開始指針 4:終端指針 5:使用量
+  # 6:上水料金 7:下水料金 8:請求額  
+
+  shusei_suidou_shiyouryou="$(cat $tmp-suidou |self 5)"
+  shusei_suidou_jyousuidou="$(cat $tmp-suidou |self 6)"
+  shusei_suidou_gesuidou="$(cat $tmp-suidou |self 7)"
+  shusei_suidou_seikyugaku="$(cat $tmp-suidou |self 8)"
+
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g'> ${tmp}-calsed
+###SUIDOU_ROOM### $shusei_suidou_room
+###SUIDOU_NAME### $shusei_suidou_shimei
+###SUIDOU_ZENGETSU### $shusei_suidou_zengetsu
+###SUIDOU_TOUGETSU### $shusei_suidou_tougetsu
+###SUIDOU_SHIYOURYOU### $shusei_suidou_shiyouryou
+###SUIDOU_JYOUSUIDOU### $shusei_suidou_jyousuidou
+###SUIDOU_GESUIDOU### $shusei_suidou_gesuidou
+###SUIDOU_SEIKYUGAKU### $shusei_suidou_seikyugaku
+FIN
+  # HTMLの作成
+  awk '/ajax_calc_list_table_2_start/,/ajax_calc_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f ${tmp}-calsed  > ${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+fi
+# --------------------------------------------------------------
+
+ rm -f ${tmp}-*
+exit 0

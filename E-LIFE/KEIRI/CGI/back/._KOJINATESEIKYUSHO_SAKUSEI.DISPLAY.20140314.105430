@@ -1,0 +1,413 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.DISPLAY : 施設請求書発行.DISPLAY
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# ディレクトリ設定
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+message="${5}"
+
+# eval
+eval $(name-source ${namefile})
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+syori_nengetsu="${year}${month}"
+#-----------------------------------------------------------
+
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/KEIRI/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# ---------------------------------------------------------
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" ];then
+  floor="_"
+  unit="_"
+  kigen=""
+  hd_sakuseibi=""
+  # デフォルトメッセージを作成
+  echo "###DEFAULT_MES###" "条件を設定して「検索」ボタンをクリックしてください。入力する場合は「入力」ボタンをクリックしてください。" >> ${tmp}-calsed1
+else
+  if [ "$(gyo ${searchfile})" = "0" ];then
+    echo "###DEFAULT_MES###" "データがありません" >> ${tmp}-calsed1
+  else
+    echo "###DEFAULT_MES###" "" >> ${tmp}-calsed1
+  fi
+fi
+
+
+start=$(echo ${nengetsu} | awk '{print $1"01"}')
+endday=$(mdate ${nengetsu}m | tarr | gyo)
+end=$(echo ${nengetsu} | awk '{print $1"'${endday}'"}')
+
+# 元号(使ってないけど一応保存？)
+cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+LANG=C sort -k3,3nr                                |
+awk '$5!="9"{print $2,substr($3,1,4)-1}'        > $tmp-gengou_master
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d)
+  text_sakuseibi=$(cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+  awk '$3<="'$hd_sakuseibi'"&&"'$hd_sakuseibi'"<=$4' |
+  awk '{print $2,"'$hd_sakuseibi'",substr($3,1,4)-1}'    |
+  awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  | uniq |
+  awk '{print $1$2"年"$3"月"$4"日"}')
+else
+  :
+fi
+
+# 納入期限が渡って来なかったら翌月27日をセット
+if [ "${kigen}" = "_" -o -z "${kigen}" ];then
+  kigen="27"
+else
+  :
+fi
+
+# 処理内容選択テーブル
+cat << FIN | awk '{if($1=="'${select_syori}'"){$3="selected"};print}' > ${tmp}-SYORI_SELECT
+_ 選択してください
+1 繰越分確定
+2 請求確定
+FIN
+
+# ----------------
+# 年月表示のルール
+#   年＝請求確定ファイルがある年+1年
+#   月＝全部
+#   初期選択＝todayの年月-1月
+
+self 2.1.4 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+LANG=C sort -u > ${tmp}-kakutei_list
+
+syoki_year_month="$(mdate ${this_month}m/-1)"
+syoki_year="$(echo "${syoki_year_month}" | self 1.1.4)"
+syoki_month="$(echo "${syoki_year_month}" | self 1.5.2)"
+
+# 年
+tail -1 ${tmp}-kakutei_list |
+lcalc '$1+1' |
+cat ${tmp}-kakutei_list - |
+if [ \( ! -n "${year}" \) -o \( "${year}" == "_" \) ] ; then
+  awk '{if($1=="'${syoki_year}'"){select="selected";}else{select=""};print $1,$1,select}' -
+else
+  awk '{if($1=="'${year}'"){select="selected";}else{select=""};print $1,$1,select}' -
+fi |
+LANG=C sort > ${tmp}-year_select
+
+# 月
+seq -w 1 12 |
+if [ \( ! -n "${month}" \) -o \( "${month}" == "_" \) ] ; then
+  awk '{if($1=="'${syoki_month}'"){select="selected";}else{select="";}; print $1,$1,select}' -
+else
+  awk '{if($1=="'${month}'"){select="selected";}else{select="";}; print $1,$1,select}' -
+fi > ${tmp}-month_select
+# ----------------
+# ---------------------------------------------------------
+
+# ---------------------------------------------------------
+# サーチデータ
+
+${searchfile}
+
+case "${MODE}" in
+  init )
+    echo "@"
+  ;;
+  kurikoshi_init | seikyu_koushin_kurikoshi )
+    cat ${searchfile}
+  ;;
+  search | keisan | seikyu_koushin | tougetsukakutei | karikakutei | karikakutei_kaijyo )
+    cat ${searchfile}
+  ;;
+esac > ${tmp}-search_data
+# ---------------------------------------------------------
+
+
+# ---------------------------------------------------------
+# calsedファイル作成
+: > ${tmp}-calsed
+
+# html表示部分の設定
+#   ボタンテーブルどっち表示する？
+#   結果テーブルどっち表示する？
+case "${MODE}" in
+  # --------------
+  # 初めてこの画面開いたときの(ドロップダウンのみ表示)
+  init )
+cat << FIN >> ${tmp}-calsed
+###SEIKYU_KAKUTEI_DISP### display:none;
+###KURIKOSI_KAKUTEI_DISP### display:none;
+###BUTTON_TABLE_S_DISP### display:none;
+###BUTTON_TABLE_K_DISP### display:none;
+FIN
+  ;;
+  # --------------
+  # --------------
+  # 繰越請求処理画面選択時
+  kurikoshi_init | seikyu_koushin_kurikoshi) #繰越
+cat << FIN >> ${tmp}-calsed
+###SEIKYU_KAKUTEI_DISP### display:none;
+###KURIKOSI_KAKUTEI_DISP###
+###BUTTON_TABLE_S_DISP### display:none;
+###BUTTON_TABLE_K_DISP###
+FIN
+  ;;
+  # --------------
+  # --------------
+  # 請求画面選択時
+  search | keisan | seikyu_koushin | tougetsukakutei | karikakutei | karikakutei_kaijyo )
+cat << FIN >> ${tmp}-calsed
+###SEIKYU_KAKUTEI_DISP###
+###KURIKOSI_KAKUTEI_DISP### display:none;
+###BUTTON_TABLE_S_DISP###
+###BUTTON_TABLE_K_DISP### display:none;
+FIN
+  ;;
+  # --------------
+#  print ) #印刷時は画面の更新行わない
+#  ;;
+esac
+
+# ボタン表示、押せるかどうか設定
+# -
+# ボタン押せるかどうかは確定ファイルの有無で決定
+kakutei_flg="$(LANG=C sort ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} | tail -1 | awk '$2>='"${syori_nengetsu}"'' | self 3)"
+[ ! -n "${kakutei_flg}" ] && kakutei_flg="0"
+case "${MODE}" in
+  # --------------
+  # 初めてこの画面開いたときの(ドロップダウンのみ表示)
+  init )
+cat << FIN >> ${tmp}-calsed
+###BUTTON_KARI_DISPLAY### none
+###BUTTON_KAKUTEI_DISPLAY### none
+###BUTTON_KARI_KAIJYO_DISPLAY### none
+###BUTTON_KEISAN_DISABLED### disabled 
+###BUTTON_SELECT_DISABLED### disabled
+###BUTTON_KARI_DISABLED### disabled
+###BUTTON_KARI_KAIJYO_DISABLED### disabled
+###BUTTON_KAKUTEI_DISABLED### disabled
+###BUTTON_PRINT_DISABLED### disabled
+###BUTTON_SELECT_K_DISABLED### disabled
+FIN
+  ;;
+  # --------------
+  # --------------
+  kurikoshi_init | seikyu_koushin_kurikoshi ) #繰越
+case "${kakutei_flg}" in
+  0 )
+    select_disabled=""
+  ;;
+  1 | 2 )
+    select_disabled="disabled"
+  ;;
+esac
+cat << FIN >> ${tmp}-calsed
+###BUTTON_KARI_DISPLAY### none
+###BUTTON_KAKUTEI_DISPLAY### none
+###BUTTON_KARI_KAIJYO_DISPLAY### none
+###BUTTON_KEISAN_DISABLED### disabled 
+###BUTTON_SELECT_DISABLED### disabled
+###BUTTON_KARI_DISABLED### disabled
+###BUTTON_KARI_KAIJYO_DISABLED### disabled
+###BUTTON_KAKUTEI_DISABLED### disabled
+###BUTTON_PRINT_DISABLED### disabled
+###BUTTON_SELECT_K_DISABLED### ${select_disabled}
+FIN
+  ;;
+  # --------------
+  # --------------
+  search | keisan | seikyu_koushin | seikyu_koushin_kurikoshi | tougetsukakutei | karikakutei | karikakutei_kaijyo )
+case "${kakutei_flg}" in
+  0 )
+    kari_display="none"
+    kakutei_display="none"
+    kari_kaijyo_display="none"
+    keisan_disabled=""
+    select_disabled=""
+    kari_disabled="disabled"
+    kakutei_disbled="disabled"
+    print_disabled="disabled"
+    select_k_disabled=""
+    kari_kaijyo_disabled="disabled"
+    if [ "${MODE}" = "keisan" ] ; then
+      kari_display=""
+      kari_disabled=""
+    fi
+  ;;
+  1 )
+    kari_display="none"
+    kakutei_display=""
+    kari_kaijyo_display=""
+    keisan_disabled="disabled"
+    select_disabled="disabled"
+    kari_disabled="disabled"
+    kakutei_disbled=""
+    print_disabled=""
+    select_k_disabled="disabled"
+    kari_kaijyo_disabled=""
+  ;;
+  2 )
+    kari_display="none"
+    kakutei_display="none"
+    kari_kaijyo_display="none"
+    keisan_disabled="disabled"
+    select_disabled="disabled"
+    kari_disabled="disabled"
+    kakutei_disbled="disabled"
+    print_disabled=""
+    select_k_disabled="disabled"
+    kari_kaijyo_disabled="disabled"
+  ;;
+esac
+cat << FIN >> ${tmp}-calsed
+###BUTTON_KARI_DISPLAY### ${kari_display}
+###BUTTON_KAKUTEI_DISPLAY### ${kakutei_display}
+###BUTTON_KARI_KAIJYO_DISPLAY### ${kari_kaijyo_display}
+###BUTTON_KEISAN_DISABLED### ${keisan_disabled}
+###BUTTON_SELECT_DISABLED### ${select_disabled}
+###BUTTON_KARI_DISABLED### ${kari_disabled}
+###BUTTON_KARI_KAIJYO_DISABLED### ${kari_kaijyo_disabled}
+###BUTTON_KAKUTEI_DISABLED### ${kakutei_disbled}
+###BUTTON_PRINT_DISABLED### ${print_disabled}
+###BUTTON_SELECT_K_DISABLED### ${select_k_disabled}
+FIN
+  ;;
+  # --------------
+esac
+# ---------------------------------------------------------
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE4### active
+###LI_NYUUKYOSHASEIKYU3### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###TEXT_SAKUSEIBI### ${text_sakuseibi}
+###KIGEN### ${kigen}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+###FILE_NAME### ${FILE_NAME}
+###BUTTON_VISIBILITY### ${BUTTON_VISIBILITY}
+###SEIKYU_KAKUTEI_DISP### ${SEIKYU_KAKUTEI_DISP}
+###KURIKOSI_KAKUTEI_DISP### ${KURIKOSI_KAKUTEI_DISP}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} >> ${tmp}-calsed
+
+# HTMLの作成
+cat ${html_dir}/KOJINATESEIKYUSHO_SAKUSEI1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KOJINATESEIKYUSHO_SAKUSEI2.html   |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###NENGETSU_SELECT### - ${tmp}-nengetsu |
+mojihame -l###OKURE_NENGETSU_SELECT### - ${tmp}-okure_nengetsu |
+mojihame -l###TATEYA_SELECT### - ${tmp}-tateya |
+
+case "${MODE}" in
+  kurikoshi_init | seikyu_koushin_kurikoshi )
+    mojihame -l"SEARCH_KEKKA2" - ${tmp}-search_data
+  ;;
+  init | search | keisan | seikyu_koushin | tougetsukakutei | karikakutei | karikakutei_kaijyo )
+    mojihame -l"SEARCH_KEKKA1" - ${tmp}-search_data
+  ;;
+esac |
+mojihame -l###GENGOU### - ${tmp}-gengou_master |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l"MONTH_TABLE" - ${tmp}-month_select |
+mojihame -l"YEAR_TABLE" - ${tmp}-year_select |
+#mojihame -l###SEARCH_DATA### - ${tmp}-search_data |
+mojihame -l"SYORI_SELECT" - ${tmp}-SYORI_SELECT |
+calsed -f ${tmp}-calsed - 
+
+#rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,1102 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KOJINKAKUTEI : 個人確定処理 開発中！
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.KOJINKAKUTEI namefile datafile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+# 引数設定
+namefile=${1}
+
+function error_exit {
+  message="${1}"
+  cat ${tmp}-lock |
+  while read name ;do
+    rm -f ${name}.LOCK
+  done
+  echo "${message}"
+#  rm ${tmp}-*
+  exit 1
+}
+
+# 変数
+echo "tmp ${tmp}" >> ${namefile}
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 請求処理月とその他日付設定
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+
+##かりに
+#tmp=/home/hands/work/otsubo/tmp
+#rm ${tmp}-*
+#shisetsu=0001
+#userid="kaizen"
+#seikyu_syori_month="201401"
+#seikyu_syori_next_month="$(mdate "${seikyu_syori_month}"m/+1)"
+#seikyu_syori_two_next_month="$(mdate "${seikyu_syori_month}"m/+2)"
+#seikyu_syori_last_month="$(mdate "${seikyu_syori_month}"m/-1)"
+#seikyu_syori_two_last_month="$(mdate "${seikyu_syori_month}"m/-2)"
+
+# -----------------------------------------------------------------------------------------------
+# ディレクトリ
+
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU ] && mkdir ${input_dir}/${today}/SEIKYU
+[ ! -e ${seikyu_dir}/${shisetsu} ] && mkdir ${seikyu_dir}/${shisetsu}
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month} ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}
+[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/KAKO ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/KAKO
+[ ! -e ${seikyu_dir}/${shisetsu}/HEAD ] && mkdir ${seikyu_dir}/${shisetsu}/HEAD
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# ロックをかける
+# 更新がかかるのはヘッダのみ、明細は上書きなのでロックの必要なし
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 請求対象者リスト
+cjoin0 key=1 <(echo "${shisetsu}") ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:削除フラグ 10:更新時間
+# 11:更新者
+awk '{from=substr($7,1,6);
+      to=substr($8,1,6);
+      print $0,from,to}' - |
+# 1:施設ID   2:建屋ID    3:フロアID  4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日    8:退去日    9:削除フラグ 10:更新時間
+# 11:更新者  12:入居年月 13:退去年月
+awk '$12<="'${seikyu_syori_month}'" && $13>="'${seikyu_syori_month}'"' - |
+self 6 12/13 1/5           |
+# 1:入居者ID 2:入居年月   3:退去年月 4:施設ID 5:建屋ID
+# 6:フロアID 7:ユニットID 8:居室ID
+LANG=C sort -k1,3          |
+# 同じ月で引越しなどしていると二行あるが、一行にしたいのでソートしてgetlastする(inputに残したり明細に表示する部屋番号はこれ)
+getlast 1 1                |
+self 1 4/NF                |
+# 1:入居者ID 2:施設ID 3:建屋ID 4:フロアID 5:ユニットID
+# 6:居室ID
+LANG=C sort                |
+tee ${tmp}-member_heya     |
+self 1                     > ${tmp}-member
+# 1:入居者ID
+# -----------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# 請求対象者リストが空のときは対象者がいないのでここで処理終了
+if [ ! -s ${tmp}-member ] ; then
+  error_exit "請求の対象者がいません"
+fi
+# -----------------------------------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------------------------------------
+# 使用するマスタの準備
+
+# ----------------------------------------
+# 月額利用料マスタ
+# -
+# 施設で絞込み
+cjoin0 key=1 <(echo "${shisetsu}") ${hometbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+# 1:施設ID   2:利用料ID     3:利用料名   4:税区分 5:金額
+# 6:支払区分 7:費用算出方法 8:有効フラグ 9:更新日 10:更新者
+# -
+# 有効なものに絞る
+awk '$8!="9"' |
+# 必要なフィールドのみに絞る(金額はデフォルトなので省く)
+self 2/4 6/7  |
+# 1:利用料ID 2:利用料名 3:税区分 4:支払区分 5:費用算出方法
+LANG=C sort   > ${tmp}-RIYOURYOU_MASTER
+# ----------------------------------------
+
+# ----------------------------------------
+# サービスマスタ
+# -
+# 施設で絞込み
+cjoin0 key=1 <(echo "${shisetsu}") ${hometbl_dir}/SEIKYU/SERVICE_MASTER |
+# 1:施設         2:建屋      3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価      8:表示順     9:課税               10:有効フラグ
+# 11:処理時間    12:ユーザID
+awk '$10!="9"' |
+self 1/9       |
+# 1:施設         2:建屋 3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価 8:表示順     9:課税
+LANG=C sort    > ${tmp}-SERVICE_MASTER
+# ----------------------------------------
+
+# ----------------------------------------
+# 立替金項目マスタ
+# -
+# フィールド構成が同じなのでまとめて処理
+cat << FIN | grep -v "^#" | self 1/NF > ${tmp}-tatekaekin_mst
+#出金項目マスタ 
+SHUKKIN_KOUMOKU  3 4 1 1
+##入金項目マスタ 
+#NYUKIN_KOUMOKU   3 4 1 1
+##立掛対象マスタ
+#TATEKAE_TAISHO  3 4 1 1
+FIN
+# 1:ファイル名 2:有効フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# -
+# 繰り返し処理で取得する
+cat ${tmp}-tatekaekin_mst |
+while read Name Flg time_f key_from key_to ; do
+  awk '$"'${Flg}'"!="9"' ${home_dir}/E-LIFE/TATEKAEKIN/TBL/${shisetsu}/${Name} |
+  # 1:項目id 2:項目名 3:削除フラグ 4:更新時間 5:更新者
+  LANG=C sort -k${key_from},${key_to} -k${time_f},${time_f} |
+  # フィールドが全て同じ並びとおもうので同じ処理で絞る
+  self 1/2                                                  > ${tmp}-${Name}
+  # 1:項目id 2:項目名
+done
+# ----------------------------------------
+
+# ----------------------------------------
+# 税率マスタ
+# ありえないと思うけど税率が月内で変わることや、
+# 別の月の請求処理で税率計算しようとすると別の税率を見ることになるのでマスタの履歴を全部だす
+# -
+awk '$5!="9"' ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU |
+# 1:管理ID   2:税率     3:適用開始日 4:適用終了日 5:削除フラグ
+# 6:更新日時 7:ユーザID
+self 2/4 > ${tmp}-ZEIRITSU
+# 1:税率 2:適用開始日 3:適用終了日
+
+# 入居者名マスタ
+join0 key=1 ${tmp}-member ${riyosha_dir}/RIYOUSHA_MASTER |
+# 1:入居者ID 2:入居者氏名 3:入居者カナ 4:入居者外字 5:削除フラグ
+# 6:更新時間 7:更新者
+awk '$6!="9"' - |
+self 1 2        |
+# 1:入居者ID 2:入居者氏名
+LANG=C sort     > ${tmp}-RIYOUSHA_MASTER
+# ----------------------------------------
+# ------------------------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------------------
+# 支払の集計
+
+# 1.請求対象月の請求金額を普通に計算する(部屋単位の項目もなにも考えず全員取る)(月額利用料のみ対象)
+#   特販と税計算もする
+# 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+#   a.先取りの請求が始まった項目を遡って、請求できていないものを請求するレコードを作製する
+#     特販と税計算もする
+#   b.先取りの請求が終わった項目を遡って、返金するレコードを作製する
+#     特販と税計算もする
+#   c. 返金したレコード、日割り返金したレコードはフラグ更新する 更新データ作成箇所!!
+# 3.実績系をとりまとめる(税はデータに入ってるから計算しないはず)
+# 4.作成した全てのinputに対して口座情報と請求先設定ファイルをみて支払者ごとのキーをふりファイルを分ける
+#   ヘッダも作成する 更新データ作成箇所!!
+
+# 部屋当たりの支払について
+#
+# 電話以外の部屋あたりにかかる金額(賃料、利用料)は「支払う人だけ」部屋当たりの金額を設定する。
+# 引越しや退去などで設定者の起算終了日を入力する場合は、
+# 同室の人の起算開始日に上記日付の翌日日付を入れる(月内途中から部屋に残る人が支払い開始)
+# じゃないととりっぱぐれる
+
+# ------------------------------------
+# 1.請求対象月の請求金額を普通に計算する(部屋単位の項目もなにも考えず全員取る)(月額利用料のみ対象)
+
+# ${riyosha_dir}/RIYOUSHA_RIYOURYOUから確定する利用者で絞込み
+join0 key=1 ${tmp}-member ${riyosha_dir}/RIYOUSHA_RIYOURYOU |
+# 1:入居者ID    2:施設ID        3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:起算開始日  7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引後金額 12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3      17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+# -
+# 施設で絞る
+cjoin0 key=2 <(echo "${shisetsu}") - |
+delf 2                               |
+# 1:入居者ID      2:契約ID      3:利用料種別ID 4:契約枝番  5:起算開始日
+# 6:起算終了日    7:金額        8:特販ID       9:値引額    10:値引後金額
+# 11:特販期間FROM 12:特販期間TO 13:予備1       14:予備2    15:予備3
+# 16:予備4        17:予備5      18:削除フラグ  19:更新時間 20:更新者
+# -
+# 有効なものに絞る
+awk '$19!="9"'                       |
+self 1/12                            |
+# 1:入居者ID      2:契約ID      3:利用料種別ID 4:契約枝番 5:起算開始日
+# 6:起算終了日    7:金額        8:特販ID       9:値引額   10:値引後金額
+# 11:特販期間FROM 12:特販期間TO
+# -
+# あとでつかえるので吐いておく
+tee ${tmp}-RIYOUSHA_RIYOURYOU_yukou  |
+# -
+# 利用料マスタと結合させる
+LANG=C sort -k3,3 |
+join1 key=3 ${tmp}-RIYOURYOU_MASTER - |
+# 1:入居者ID    2:契約ID       3:利用料種別ID 4:利用料名    5:税区分
+# 6:支払区分    7:費用算出方法 8:契約枝番     9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID      13:値引額      14:値引後金額 15:特販期間FROM
+# 16:特販期間TO
+# -
+# キー項目を頭にもってくるため若干ならびかえ
+self 1/3 8 4/7 9/NF                  |
+# 1:入居者ID    2:契約ID   3:利用料種別ID 4:契約枝番    5:利用料名
+# 6:税区分      7:支払区分 8:費用算出方法 9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID  13:値引額      14:値引後金額 15:特販期間FROM
+# 16:特販期間TO
+LANG=C sort -k1,4                    |
+# -
+# 1-4:キー
+# 5-11:利用料側情報
+# 12-16:特販側情報
+# -
+# 2の処理で使用するためファイル吐き出し
+tee ${tmp}-getsugaku_riyouryou_kihon_kari |
+# 1:入居者ID    2:契約ID   3:利用料種別ID 4:契約枝番    5:利用料名
+# 6:税区分      7:支払区分 8:費用算出方法 9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID  13:値引額      14:値引後金額 15:特販期間FROM
+# 16:特販期間TO
+# -
+# 支払区分によって何月分の請求データになるか設定する
+#   1:先取り(翌月)=処理月＋2
+#   2:先取り(今月)=処理月+1
+#   3:後払い=処理月
+awk '{if($7=="1")
+        {seikyu_month="'${seikyu_syori_two_next_month}'"}
+      else if($7=="2")
+        {seikyu_month="'${seikyu_syori_next_month}'"}
+      else
+        {seikyu_month="'${seikyu_syori_month}'"};
+      print $0,seikyu_month,substr($9,1,6),substr($10,1,6)}' |
+# 1:入居者ID    2:契約ID   3:利用料種別ID 4:契約枝番    5:利用料名
+# 6:税区分      7:支払区分 8:費用算出方法 9:起算開始日  10:起算終了日
+# 11:金額       12:特販ID  13:値引額      14:値引後金額 15:特販期間FROM
+# 16:特販期間TO 17:請求月  18:起算開始月  19:起算終了月
+# -
+# 請求月が起算開始月から終了月に入らないものを除く
+awk '$17>=$18 && $17<=$19 {print}' - |
+# 請求月を頭に持ってくる並び替え(と起算開始終了月を消す作業)
+self 1 17 2/16                       |
+# 1:入居者ID      2:請求月      3:契約ID   4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分 9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID  14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO
+LANG=C sort                          > ${tmp}-getsugaku_riyouryou_kihon #後ほど日割り判定して特販判定して税計算する
+# ------------------------------------
+
+# ------------------------------------
+# 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_1 ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_2 ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_3 ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ------------------------------------
+
+# ------------------------------------
+# 一部後回しにしたものの特販と税と日割り計算する
+
+# 計算手順
+# 日割り判定する
+#   日割り対象：
+#     特販対象：日割り金額-日割り値引金額を算出し採用
+#     特販対象外：日割り金額を算出し採用
+#   日割り対象外：
+#     特販対象：特販金額を採用
+#     特販対象外：通常金額を採用
+# 税計算する
+
+# 月額利用料のinput発生年月日はその月初とする
+
+# 対象は1と2-aで作成したファイル
+# -
+# 1:${tmp}-getsugaku_riyouryou_kihon
+# 2-a:${tmp}-getsugaku_riyouryou_kako_kihon
+# -
+# 1:入居者ID      2:請求月      3:契約ID   4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分 9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID  14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO
+
+# ---------------------
+# 日割り処理とそうでない処理を別ファイルにする
+# 費用算出方法をみる
+#   1:日割り(30日固定)
+#   2:固定額
+cat ${tmp}-getsugaku_riyouryou_kihon ${tmp}-getsugaku_riyouryou_kako_kihon |
+# 先にレコード発生年月をつくる
+#   請求月=起算開始月：レコード発生年月日=起算開始月月初
+#   請求月!=起算開始月：レコード発生年月日=請求月月初
+awk '{kisan_from_nengetsu=substr($10,1,6); kisan_to_nengetsu=substr($11,1,6); print $0,kisan_from_nengetsu,kisan_to_nengetsu}' - |
+# 1:入居者ID      2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO 18:起算開始月 19:起算終了月
+awk '{if($2==$18){seikyu_nengappi=$18"01";}
+             else{seikyu_nengappi=$2"01";}; print $0,seikyu_nengappi}' - |
+# 1:入居者ID      2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO 18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+cjoin0 +ng key=9 <(echo "1") - > ${tmp}-tujyou_hiwari_taisyou 2> ${tmp}-tujyou_hiwari_taisyougai
+# ---------------------
+
+# ---------------------
+# 日割り側の処理
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_HIWARI ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+
+# 日割りしない側の処理
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_NOTHIWARI ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# ---------------------
+
+# ---------------------
+# 日割りするものしないものあわせる
+cat ${tmp}-tujyou_hiwari_taisyou_kakutei ${tmp}-tujyou_hiwari_taisyougai_kakutei > ${tmp}-tujyou_zeimae
+# 1:入居者ID          2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名          7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日       12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM     17:特販期間TO 18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:税計算前確定金額 22:特別処理フラグ
+# ---------------------
+
+# ---------------------
+# 税区分をみて課税については計算する
+# 1:課税
+# 2:非課税
+# -
+# 課税分の処理
+cat ${tmp}-ZEIRITSU |
+while read zeiritsu zei_from zei_to ; do
+  cjoin0 key=7 <(echo "1") ${tmp}-tujyou_zeimae |
+  awk '$20>="'${zei_from}'" && $20<="'${zei_to}'"
+         {zeigaku=int($21*"'${zeiritsu}'");
+          zeikomi=$21+zeigaku;
+          print $0,zeigaku,zeikomi,$7}' -
+  # 1:入居者ID          2:請求月          3:契約ID      4:利用料種別ID 5:契約枝番
+  # 6:利用料名          7:税区分          8:支払区分    9:費用算出方法 10:起算開始日
+  # 11:起算終了日       12:金額           13:特販ID     14:値引額      15:値引後金額
+  # 16:特販期間FROM     17:特販期間TO     18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+  # 21:税計算前確定金額 22:特別処理フラグ 23:税額       24:税込み金額  25:非課税フラグ
+done                > ${tmp}-tujyou_zeikeisango1
+# ---------------------
+
+# ---------------------
+# 非課税ぶんの処理
+cjoin0 key=7 <(echo "2") ${tmp}-tujyou_zeimae |
+awk '{print $0,0,$21,$7}' -                   > ${tmp}-tujyou_zeikeisango2
+# 1:入居者ID          2:請求月          3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名          7:税区分          8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日       12:金額           13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM     17:特販期間TO     18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:税計算前確定金額 22:特別処理フラグ 23:税額       24:税込み金額  25:非課税フラグ
+# ---------------------
+
+# ---------------------
+# 税計算したファイルをあわせてinputのデータを作成する
+# キーに処理月をいれて、行分類フラグ(この明細はなんなのか)は施設利用料(＝月額利用料)なので10固定
+cat ${tmp}-tujyou_zeikeisango1 ${tmp}-tujyou_zeikeisango2                                   |
+awk '{print "'${seikyu_syori_month}'","10",$0,substr($20,1,4)"/"substr($20,5,2)"分","_"}' - |
+# 1:請求年月      2:行分類フラグ              3:入居者ID          4:請求月          5:契約ID
+# 6:利用料種別ID  7:契約枝番                  8:利用料名          9:税区分          10:支払区分
+# 11:費用算出方法 12:起算開始日               13:起算終了日       14:金額           15:特販ID
+# 16:値引額       17:値引後金額               18:特販期間FROM     19:特販期間TO     20:起算開始月
+# 21:起算終了月   22:レコードが発生した年月日 23:税計算前確定金額 24:特別処理フラグ 25:税額
+# 26:税込み金額   27:非課税フラグ             28:内訳1            29:アンスコ
+# -
+# ならべかえ
+self 1 3 2 5/7 22 27 23 26 25 NF-1 NF 24 NF NF NF NF NF NF NF NF NF NF                      |
+# 1:請求年月 2:入居者ID                 3:行分類フラグ 4:契約ID          5:利用料種別ID
+# 6:契約枝番 7:レコードが発生した年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額    12:内訳1                   13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備    17:予備                    18:予備        19:予備           20:予備
+# 21:予備    22:予備                    23:予備        24:予備
+# -
+# 削除フラグと更新日と更新時間を入れる
+awk '{print $0,"1","'${current_time}'","'${userid}'"}' -                                    |
+# 1:請求年月  2:入居者ID                 3:行分類フラグ 4:契約ID          5:利用料種別ID
+# 6:契約枝番  7:レコードが発生した年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1                   13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備                    18:予備        19:予備           20:予備
+# 21:予備     22:予備                    23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+LANG=C sort                                                                                 > ${tmp}-TUJYOU_INPUT #集計対象!!
+# ---------------------
+# ------------------------------------
+
+# ------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+# --------------------
+# 電話課金の集計
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.DENWA ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# 立替金の集計
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.TATEKAE ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# 有料サービスの集計
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.SERVICE ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# 食事実績の集計
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.SHOKUJI ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# --------------------
+# 欠食実績の集計
+${cgi_dir}/KOJINATESEIKYUSHO_SAKUSEI.KESSHOKU ${namefile} > ${tmp}-result
+[ -s ${tmp}-result ] && error_exit "$(cat ${tmp}-result)"
+# --------------------
+
+# ------------------------------------
+
+
+# ------------------------------------
+# 4.口座情報と請求先設定ファイルをみて支払者ごとのキーをふりファイルを分ける
+
+# 振り分け設定二種類を取得する。振り分けの順番は下記番号
+#   1.請求先設定情報：請求の一部を他入居者口座から払う
+#   2.契約の口座情報：他入居者口座から払う(明細は別々、明細は一緒)、自身の口座
+#
+# 月額利用料の振り分け設定する
+ 
+# --------------
+# 請求先設定情報
+
+# ${home_tbl_dir}/SEIKYUSAKI_SETTEI/${shisetsu}/SEIKYUSAKI_SETTEI.${shisetsu}
+# -
+# 1:利用者ID   2:月額利用料項目ID 3:適用月FROM 4:適用月TO 5:請求先
+# 6:削除フラグ 7:更新時間         8:更新者
+
+# 請求先設定を取得する
+join0 key=1 ${tmp}-member ${home_tbl_dir}/SEIKYUSAKI_SETTEI/${shisetsu}/SEIKYUSAKI_SETTEI.${shisetsu} |
+awk '$6!="9"' - |
+# 処理月を含むものを抽出
+awk '$3<="'${seikyu_syori_month}'" && $4>="'${seikyu_syori_month}'"' - |
+# 請求先がアンスコの場合があるので除く(設定なしにした場合)
+cjoin0 key=5 <(echo "_") - |
+self 1/2 5 |
+# 1:利用者ID 2:月額利用料項目ID 3:請求先
+LANG=C sort > ${tmp}-riyousha_getugaku_settei
+[ ! -s ${tmp}-riyousha_getugaku_settei ] && echo "@ @ @" > ${tmp}-riyousha_getugaku_settei
+# --------------
+
+# --------------
+# 口座情報
+
+# ${riyosha_dir}/RIYOUSHA_KOUZA
+# -
+# 1:利用者ID  2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類  7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考     12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:削除フラグ
+# 16:更新時間 17:更新者
+# -
+# 請求内容コード
+# 1:全請求 2:施設請求 3:居宅訪問介護請求
+#   ！補足！請求期間で絞込みしたときに「全請求と他」がヒットすることはありえない（入力時に制御入れてるはず）。同じ期間に「施設」と「居宅」が一緒になることはありえる。
+# -
+# 他入居者との一括請求
+# 0:なし 1:あり
+# -
+# 一括請求入居者ID
+# 他入居者との一括請求が1のときにここのIDの人に請求させる
+# -
+# 一括請求書フラグ
+# 他入居者との一括請求が1のときにここのフラグに従い請求書宛名表示を変える
+# 0:なし 1:連名 2:請求入居者名義
+
+# 口座情報から支払先設定を取得
+# -
+# 有効なものに絞る
+cjoin1 key=1 ${tmp}-member ${riyosha_dir}/RIYOUSHA_KOUZA |
+#かりに
+#cjoin0 key=1 ${tmp}-member /home/hands/work/otsubo/RIYOUSHA_KOUZA |
+# 1:利用者ID  2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類  7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考     12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:削除フラグ
+# 16:更新時間 17:更新者
+awk '$15!="9"{$8=substr($8,1,6); $9=substr($9,1,6); print}' - |
+# 請求期間の月が処理月を含んでいるものを表示
+awk '$8<="'${seikyu_syori_month}'" && $9>="'${seikyu_syori_month}'"' - |
+# 請求内容コードが「全請求」と「施設」に絞り込む(利用者IDにつき一行しかヒットしないはず)
+cjoin0 key=5 <(echo "1 2" | tarr) - |
+tee ${tmp}-RIYOUSHA_KOUZA |
+self 1 12/14 |
+# 1:利用者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ
+LANG=C sort > ${tmp}-kouza_kari
+[ ! -s ${tmp}-kouza_kari ] && echo "@ @ @ @" > ${tmp}-kouza_kari
+
+# 他入居者選択した人が落ちるので拾う
+join0 +ng key=1 ${tmp}-kouza_kari ${tmp}-member_heya 2>&1 1> /dev/null |
+cjoin0 key=1 - ${riyosha_dir}/RIYOUSHA_KOUZA |
+#かりに
+#cjoin0 key=1 - /home/hands/work/otsubo/RIYOUSHA_KOUZA |
+self 1 12/14 > ${tmp}-kouza_kari2
+
+# マスタは存在するが口座設定がされていない人が落ちるので拾う
+cat ${tmp}-kouza_kari ${tmp}-kouza_kari2 |
+LANG=C sort |
+join2 key=1 - ${tmp}-member_heya |
+# 1:入居者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+# 6:建屋ID   7:フロアID             8:ユニットID       9:居室ID
+LANG=C sort |
+# join2で補完されたもの(マスタがあるが口座設定なし)フィールド整える
+awk '{if($2=="_"){$2="0";};print}' - |
+awk '{if($4=="_"){$4="0";};print}' - > ${tmp}-riyousha_kouza_settei
+# --------------
+
+### ヘッダデータ作成
+# -
+# 処理月のヘッダを呼び出して、
+# ヘッダがあるものは内容の更新、ヘッダがないものは新規で作成、以前ヘッダを作成したが更新対象者リストにいない場合は無効フラグを立てる
+cjoin0 key=1 <(echo "${seikyu_syori_month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+self 2 |
+# 1:入居者ID
+LANG=C sort -u > ${tmp}-head_ari
+
+# ヘッダあり＋今回更新対象のリストを作成、
+#   ヘッダありリスト${tmp}-head_ariと今回処理対象リスト${tmp}-head_kakunin_listをあてる：あたらないもの＝新しくヘッダを作成する
+#   ヘッダありリスト${tmp}-head_ariと今回処理対象リスト${tmp}-head_kakunin_listをあてる：あたるもの＝ヘッダ更新
+#   今回処理対象リスト${tmp}-head_kakunin_listとヘッダありリスト${tmp}-head_ariをあてる：あたらないもの＝更新対象でなくなったのでヘッダデータに削除フラグたてる
+self 1 ${tmp}-riyousha_kouza_settei |
+cat - ${tmp}-head_ari |
+LANG=C sort -u > ${tmp}-head_kakunin_list
+# -
+# ヘッダ新規作成
+join0 +ng key=1 ${tmp}-head_ari ${tmp}-head_kakunin_list 2>&1 1> /dev/null |
+awk '{print $0,"0"}' - > ${tmp}-head_new
+[ ! -s ${tmp}-head_ari ] && awk '{print $0,"0"}' ${tmp}-head_kakunin_list > ${tmp}-head_new
+# ヘッダ削除ぶん
+join0 +ng key=1 ${tmp}-head_kakunin_list ${tmp}-head_ari 2>&1 1> /dev/null |
+awk '{print $0,"2"}' - > ${tmp}-head_delete
+[ ! -s ${tmp}-head_ari ] && : > ${tmp}-head_delete
+# -
+# ヘッダ更新
+join0 +ng key=1 ${tmp}-head_ari ${tmp}-head_kakunin_list 2> /dev/null |
+awk '{print $0,"1"}' - > ${tmp}-head_koushin
+cat ${tmp}-head_new ${tmp}-head_delete ${tmp}-head_koushin |
+LANG=C sort > ${tmp}-head_flg
+
+
+# ヘッダあるものないもの処理分岐
+cat ${tmp}-head_flg |
+while read id flg ; do
+  case "${flg}" in
+    # ------------
+    # ヘッダあるので更新
+    1 )
+      cjoin0 key=1 <(echo "${seikyu_syori_month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+      cjoin0 key=2 <(echo "${id}") - |
+      LANG=C sort -k1,2 -k25,25 |
+      getlast 1 2 |
+      awk '$24!="9"' - |
+      self 2 1/NF |
+      # 1:入居者ID        2:処理月            3:入居者ID          4:請求ステータス  5:施設ID
+      # 6:建屋ID          7:フロア            8:ユニットID        9:居室番号        10:支払合算相手ID
+      # 11:明細ファイル名 12:請求書設定フラグ 13:仮請求書出力時間 14:請求書出力時間 15:請求確定月
+      # 16:予備           17:予備             18:予備             19:予備           20:予備
+      # 21:予備           22:予備             23:予備             24:予備           25:削除フラグ
+      # 26:更新時間       27:更新者
+      LANG=C sort |
+      join1 key=1 ${tmp}-riyousha_kouza_settei - |
+      # 1:入居者ID          2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID            7:フロアID             8:ユニットID       9:居室ID           10:処理月
+      # 11:入居者ID         12:請求ステータス      13:施設ID          14:建屋ID          15:フロア
+      # 16:ユニットID       17:居室番号            18:支払合算相手ID  19:明細ファイル名  20:請求書設定フラグ
+      # 21:仮請求書出力時間 22:請求書出力時間      23:請求確定月      24:予備            25:予備
+      # 26:予備             27:予備                28:予備            29:予備            30:予備
+      # 31:予備             32:予備                33:削除フラグ      34:更新時間        35:更新者
+      # -
+      # 1-9:riyousha_kouza_settei側
+      # 10-NF:ヘッダ側
+      # -
+      awk '{if($2=="1"){gassan_aite=$3; meisai_file_name="SEIKYU_MEISAI.'${seikyu_syori_month}'."$3;}
+            else{gassan_aite="_"; meisai_file_name="SEIKYU_MEISAI.'${seikyu_syori_month}'."$1;};
+            $13=$5; $14=$6; $15=$7; $16=$8; $17=$9; $18=gassan_aite; $19=meisai_file_name; $20=$4; $33="1"; $34="'${current_time}'"; $35="'${userid}'"; print}' - |
+      delf 1/9
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+      # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+    ;;
+    # ------------
+    # ------------
+    # ヘッダないので作成
+    0 )
+      # 請求対象者${tmp}-member_heyaと口座情報${riyosha_dir}/RIYOUSHA_KOUZAあてた結果をもとにヘッダ作成する
+      #-
+      # 1:入居者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID   7:フロアID             8:ユニットID       9:居室ID
+      cjoin0 key=1 <(echo "${id}") ${tmp}-riyousha_kouza_settei |
+      awk '{if($2=="1"){gassan_aite=$3; meisai_file_name="SEIKYU_MEISAI.'${seikyu_syori_month}'."$3;}
+            else{gassan_aite="_"; meisai_file_name="SEIKYU_MEISAI.'${seikyu_syori_month}'."$1;};
+            print $0,"'${seikyu_syori_month}'","1",gassan_aite,meisai_file_name,"1","'${current_time}'","'${userid}'","_"}' - |
+      # 1:入居者ID        2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID          7:フロアID             8:ユニットID       9:居室ID           10:処理月
+      # 11:請求ステータス 12:支払合算相手ID      13:明細ファイル名  14:削除フラグ      15:更新時間
+      # 16:更新者         17:アンスコ
+      self 10 1 11 5/9 12/13 4 NF NF NF NF NF NF NF NF NF NF NF NF 14/NF-1
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロアID          7:ユニットID        8:居室ID          9:支払合算相手ID 10:明細ファイル名
+      # 11:一括請求書フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+    ;;
+    # ------------
+    # ------------
+    2 )
+    # ヘッダがあるがリストにいないので無効にする
+    cjoin0 key=1 <(echo "${id}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+    awk '{$24="9"; $25="'${current_time}'"; $26="'${userid}'"; print}'
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロアID          7:ユニットID        8:居室ID          9:支払合算相手ID 10:明細ファイル名
+      # 11:一括請求書フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+    ;;
+    # ------------
+  esac
+done |
+LANG=C sort |
+# 一括請求書フラグがアンスコの場合がある(口座情報が設定されていない場合)ので0(なし)に変更する
+awk '{if($11=="_"){$11="0"};print}' - > ${tmp}-HEAD_INPUT #ヘッダ完成更新対象!!
+
+# マスタ用
+cat ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD ${tmp}-HEAD_INPUT |
+LANG=C sort -k1,2 -k25,25 > ${tmp}-HEAD_MST
+### ヘッダデータ作成ここまで
+
+
+### 明細データ作成
+# 上流で作成した月額利用データを回収し、月額利用料の請求先設定を付与する
+# 
+# 集計対象
+# -
+# 10:施設利用料明細行(*:請求先設定項目)
+#   ${tmp}-HENKIN_ALL_${member_id} *
+#   ${tmp}-HENKIN_HIWARI.${member_id} *
+#   ${tmp}-TUJYOU_INPUT *
+#   ${tmp}-SHOKUJI_INPUT
+#   ${tmp}-KESSHOKU_INPUT
+#   ${tmp}-DENWA_INPUT
+# -
+# 15:施設利用料合計行
+# -
+# 20:個別利用料明細行
+#   ${tmp}-TATEKAE_INPUT
+#   ${tmp}-SERVICE_INPUT
+#   ${tmp}-EVENT_INPUT1
+#   ${tmp}-EVENT_INPUT2
+# -
+# 25:個別利用料合計行
+# -
+# 30:全項目合計行
+# -
+
+# -------------------------------
+# 月額利用料の請求先を振り分ける
+cat << FIN > ${tmp}-getsugaku_name
+${tmp}-HENKIN_ALL_
+${tmp}-HENKIN_HIWARI.
+${tmp}-TUJYOU_INPUT
+FIN
+cat  ${tmp}-getsugaku_name |
+while read Name ; do
+  ls -l ${Name}* |
+  self NF
+done |
+# ファイル名で引っかかる不要分を除く
+grep -v HENKIN_ALL_KAKO.*.* |
+while read Name ; do
+  self 2 5 1/NF ${Name}* |
+  # 1:入居者ID        2:項目ID      3:処理月    4:入居者ID   5:行分類フラグ
+  # 6:契約ID          7:項目ID      8:契約枝番  9:請求年月日 10:非課税フラグ
+  # 11:金額税抜き     12:金額税込み 13:税額     14:内訳1     15:内訳2
+  # 16:特別処理フラグ 17:予備       18:予備     19:予備      20:予備
+  # 21:予備           22:予備       23:予備     24:予備      25:予備
+  # 26:予備           27:削除フラグ 28:更新時間 29:更新者
+  LANG=C sort |
+  # 月額利用料の請求設定がない場合はアンスコうめ
+  join2 key=1/2 ${tmp}-riyousha_getugaku_settei - |
+  # 1:入居者ID      2:項目ID          3:請求先ID    4:処理月    5:入居者ID
+  # 6:行分類フラグ  7:契約ID          8:項目ID      9:契約枝番  10:請求年月日
+  # 11:非課税フラグ 12:金額税抜き     13:金額税込み 14:税額     15:内訳1
+  # 16:内訳2        17:特別処理フラグ 18:予備       19:予備     20:予備
+  # 21:予備         22:予備           23:予備       24:予備     25:予備
+  # 26:予備         27:予備           28:削除フラグ 29:更新時間 30:更新者
+  # -
+  # 名前付ける
+  join2 key=1 ${tmp}-RIYOUSHA_MASTER - |
+  # 1:入居者ID    2:入居者名      3:項目ID          4:請求先ID    5:処理月
+  # 6:入居者ID    7:行分類フラグ  8:契約ID          9:項目ID      10:契約枝番
+  # 11:請求年月日 12:非課税フラグ 13:金額税抜き     14:金額税込み 15:税額
+  # 16:内訳1      17:内訳2        18:特別処理フラグ 19:予備       20:予備
+  # 21:予備       22:予備         23:予備           24:予備       25:予備
+  # 26:予備       27:予備         28:予備           29:削除フラグ 30:更新時間
+  # 31:更新者
+  # 請求先IDがアンスコの場合は自分で支払うので入居者IDで埋める
+  # 請求先IDがアンスコでない場合は内訳2に誰分の請求か記載する
+  awk '{if($4=="_"){$4=$1;}
+               else{$17=$2"様分";};
+        print}' - |
+  delf 1/3 |
+  # 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+  # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+  # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+  # 16:予備       17:予備     18:予備      19:予備        20:予備
+  # 21:予備       22:予備     23:予備      24:予備        25:予備
+  # 26:削除フラグ 27:更新時間 28:更新者
+
+  # さらに口座情報からの請求先設定を反映させる(請求全振りのほう。個別設定されていても上書きされる)
+  LANG=C sort -k3,3 |
+  join1 key=3 ${tmp}-riyousha_kouza_settei - |
+  # 1:請求先ID         2:処理月        3:入居者ID        4:他入居者との一括請求 5:一括請求入居者ID
+  # 6:一括請求書フラグ 7:施設ID        8:建屋ID          9:フロアID             10:ユニットID
+  # 11:居室ID          12:行分類フラグ 13:契約ID         14:項目ID              15:契約枝番
+  # 16:請求年月日      17:非課税フラグ 18:金額税抜き     19:金額税込み          20:税額
+  # 21:内訳1           22:内訳2        23:特別処理フラグ 24:予備                25:予備
+  # 26:予備            27:予備         28:予備           29:予備                30:予備
+  # 31:予備            32:予備         33:予備           34:削除フラグ          35:更新時間
+  # 36:更新者
+  delf 4 6/11 |
+  # 1:請求先ID        2:処理月      3:入居者ID  4:一括請求入居者ID 5:行分類フラグ
+  # 6:契約ID          7:項目ID      8:契約枝番  9:請求年月日       10:非課税フラグ
+  # 11:金額税抜き     12:金額税込み 13:税額     14:内訳1           15:内訳2
+  # 16:特別処理フラグ 17:予備       18:予備     19:予備            20:予備
+  # 21:予備           22:予備       23:予備     24:予備            25:予備
+  # 26:予備           27:削除フラグ 28:更新時間 29:更新者
+  # -
+  # 一括請求入居者IDがアンスコならば請求先はそのまま、
+  # もし入っていたらそのIDが請求先になり、内訳2に誰の分かいれる
+  LANG=C sort -k3,3 |
+  join2 key=3 ${tmp}-RIYOUSHA_MASTER - |
+  # 1:請求先ID      2:処理月          3:入居者ID    4:入居者名  5:一括請求入居者ID
+  # 6:行分類フラグ  7:契約ID          8:項目ID      9:契約枝番  10:請求年月日
+  # 11:非課税フラグ 12:金額税抜き     13:金額税込み 14:税額     15:内訳1
+  # 16:内訳2        17:特別処理フラグ 18:予備       19:予備     20:予備
+  # 21:予備         22:予備           23:予備       24:予備     25:予備
+  # 26:予備         27:予備           28:削除フラグ 29:更新時間 30:更新者
+  awk '{if($5!="_"){$1=$5; $16=$4"様分";}
+        ;print}' - |
+  delf 4/5
+  # 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+  # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+  # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+  # 16:予備       17:予備     18:予備      19:予備        20:予備
+  # 21:予備       22:予備     23:予備      24:予備        25:予備
+  # 26:削除フラグ 27:更新時間 28:更新者
+done |
+LANG=C sort |
+# 請求先ごとのファイル作成(月額利用料ぶん)
+keycut ${tmp}-GETSUGAKU_INPUT.%1 -
+# -
+# 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+# 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+# 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+# 16:予備       17:予備     18:予備      19:予備        20:予備
+# 21:予備       22:予備     23:予備      24:予備        25:予備
+# 26:削除フラグ 27:更新時間 28:更新者
+# -------------------------------
+
+# -------------------------------
+# 月額利用料以外の項目をヘッダ情報にしたがい振り分ける
+cat << FIN > ${tmp}-riyouryou_name_all
+${tmp}-TATEKAE_INPUT
+${tmp}-SERVICE_INPUT
+${tmp}-EVENT_INPUT1
+${tmp}-EVENT_INPUT2
+${tmp}-SHOKUJI_INPUT
+${tmp}-KESSHOKU_INPUT
+FIN
+# -
+# ヘッダから請求先を取得
+self 2 9 ${tmp}-HEAD_INPUT |
+# もし自分払い(合算相手がアンスコ)なら自分のIDを合算相手IDにいれる
+awk '{if($2=="_"){$2=$1};print}' - |
+LANG=C sort > ${tmp}-head_seikyu
+# 1:入居者ID 2:請求先ID
+# -
+cat ${tmp}-head_seikyu |
+while read key id ; do
+  cat ${tmp}-riyouryou_name_all |
+  while read File ; do
+    LANG=C sort -k2,2 ${File} |
+    # 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+    # 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+    # 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+    # 16:予備     17:予備      18:予備        19:予備           20:予備
+    # 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+    # 26:更新時間 27:更新者
+    join2 key=2 <(echo "${key} ${id}") - |
+    # 1:処理月      2:入居者ID  3:請求先ID   4:行分類フラグ 5:契約ID
+    # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+    # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+    # 16:予備       17:予備     18:予備      19:予備        20:予備
+    # 21:予備       22:予備     23:予備      24:予備        25:予備
+    # 26:削除フラグ 27:更新時間 28:更新者
+    self 3 1/2 4/NF
+    # 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+    # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+    # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+    # 16:予備       17:予備     18:予備      19:予備        20:予備
+    # 21:予備       22:予備     23:予備      24:予備        25:予備
+    # 26:削除フラグ 27:更新時間 28:更新者
+    # -
+  done
+done |
+LANG=C sort > ${tmp}-jisseki_input_kari
+# 請求先ごとのファイル作成(月額利用料ぶん)
+[ -s ${tmp}-jisseki_input_kari ] && keycut ${tmp}-JISSEKI_INPUT.%1 ${tmp}-jisseki_input_kari #実績ぶんの集計データ!!
+# ありえないがもし請求先がないデータが出てきたら別ファイルへ保存しておく(かりに)
+mv ${tmp}-JISSEKI_INPUT._ /home/hands/work/otsubo/JISSEKI_INPUT.${current_time}
+# 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+# 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+# 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+# 16:予備       17:予備     18:予備      19:予備        20:予備
+# 21:予備       22:予備     23:予備      24:予備        25:予備
+# 26:削除フラグ 27:更新時間 28:更新者
+# -------------------------------
+
+# -------------------------------
+# 月額とあわせて、請求先ごとにまとめて、合計行だしてかんせい
+
+# 更新ファイル名用初期化
+: > ${tmp}-genzai_meisai_koushin_name
+
+# 請求先ごとに繰り返し処理
+ls -l ${tmp}-GETSUGAKU_INPUT.* |
+tr "." " " |
+self NF > ${tmp}-getsugaku_input_seikyusaki
+ls -l ${tmp}-JISSEKI_INPUT.* |
+tr "." " " |
+self NF > ${tmp}-jisseki_input_seikyusaki
+cat ${tmp}-getsugaku_input_seikyusaki ${tmp}-jisseki_input_seikyusaki |
+LANG=C sort -u |
+while read seikyusaki ; do
+  # 合計行作成
+  cat ${tmp}-JISSEKI_INPUT.${seikyusaki} ${tmp}-GETSUGAKU_INPUT.${seikyusaki} ${tmp}-DENWA_INPUT |
+  # 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+  # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+  # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+  # 16:予備       17:予備     18:予備      19:予備        20:予備
+  # 21:予備       22:予備     23:予備      24:予備        25:予備
+  # 26:削除フラグ 27:更新時間 28:更新者
+  # -
+  # キーと表示してほしい項目をまとめて計算させる
+  self 1/2 4 26/28 10/12 |
+  # 1:請求先ID 2:処理月     3:行分類フラグ 4:削除フラグ 5:更新時間
+  # 6:更新者   7:金額税抜き 8:金額税込み   9:税額
+  LANG=C sort -k1,3 > ${tmp}-goukei_kihon
+  # -
+  # 施設利用料合計(行分類フラグ：15)
+  # 個別利用料合計(行分類フラグ：25)
+  echo "1 2" |
+  tarr |
+  while read number ; do
+    awk '$3~/^'${number}'/{print}' ${tmp}-goukei_kihon |
+    delf 3 |
+    # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間 5:更新者
+    # 6:金額税抜き 7:金額税込み 8:税額
+    LANG=C sort |
+    sm2 1 5 6 8 |
+    # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間 5:更新者
+    # 6:金額税抜き 7:金額税込み 8:税額
+    awk '{print $0,"'${number}'5",0,"_"}' - |
+    # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間     5:更新者
+    # 6:金額税抜き 7:金額税込み 8:税額       9:行分類フラグ 10:特別処理フラグ
+    # 11:アンスコ
+    self 1/2 NF 9 NF NF NF NF NF 6/8 NF NF 10 NF NF NF NF NF NF NF NF NF NF 3/5 |
+    # 1:請求先ID    2:処理月    3:入居者ID*   4:行分類フラグ 5:契約ID*
+    # 6:項目ID*     7:契約枝番* 8:請求年月日* 9:非課税フラグ 10:金額税抜き
+    # 11:金額税込み 12:税額     13:内訳1*     14:内訳2*      15:特別処理フラグ
+    # 16:予備       17:予備     18:予備       19:予備        20:予備
+    # 21:予備       22:予備     23:予備       24:予備        25:予備
+    # 26:削除フラグ 27:更新時間 28:更新者
+    LANG=C sort > ${tmp}-goukei_${number}5
+  done
+  # -
+  # 全項目合計(行分類フラグ：30)
+  cat ${tmp}-goukei_15 ${tmp}-goukei_25 |
+  self 1/2 26/28 10/12 |
+  # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間 5:更新者
+  # 6:金額税抜き 7:金額税込み 8:税額
+  LANG=C sort |
+  sm2 1 5 6 8 |
+  # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間 5:更新者
+  # 6:金額税抜き 7:金額税込み 8:税額
+  awk '{print $0,"30",0,"_"}' - |
+  # 1:請求先ID   2:処理月     3:削除フラグ 4:更新時間     5:更新者
+  # 6:金額税抜き 7:金額税込み 8:税額       9:行分類フラグ 10:特別処理フラグ
+  # 11:アンスコ
+  self 1/2 NF 9 NF NF NF NF NF 6/8 NF NF 10 NF NF NF NF NF NF NF NF NF NF 3/5 |
+  # 1:請求先ID    2:処理月    3:入居者ID*   4:行分類フラグ 5:契約ID*
+  # 6:項目ID*     7:契約枝番* 8:請求年月日* 9:非課税フラグ 10:金額税抜き
+  # 11:金額税込み 12:税額     13:内訳1*     14:内訳2*      15:特別処理フラグ
+  # 16:予備       17:予備     18:予備       19:予備        20:予備
+  # 21:予備       22:予備     23:予備       24:予備        25:予備
+  # 26:削除フラグ 27:更新時間 28:更新者
+  LANG=C sort > ${tmp}-goukei_30
+  # -
+  # 合計行と明細行の集計、明細ファイル完成
+  cat ${tmp}-JISSEKI_INPUT.${seikyusaki} ${tmp}-GETSUGAKU_INPUT.${seikyusaki} ${tmp}-DENWA_INPUT ${tmp}-goukei_15 ${tmp}-goukei_25 ${tmp}-goukei_30 |
+  # 1:請求先ID    2:処理月    3:入居者ID   4:行分類フラグ 5:契約ID
+  # 6:項目ID      7:契約枝番  8:請求年月日 9:非課税フラグ 10:金額税抜き
+  # 11:金額税込み 12:税額     13:内訳1     14:内訳2       15:特別処理フラグ
+  # 16:予備       17:予備     18:予備      19:予備        20:予備
+  # 21:予備       22:予備     23:予備      24:予備        25:予備
+  # 26:削除フラグ 27:更新時間 28:更新者
+  delf 1 |
+  # 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+  # 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+  # 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+  # 16:予備     17:予備      18:予備        19:予備           20:予備
+  # 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+  # 26:更新時間 27:更新者
+  LANG=C sort > ${tmp}-MEISAI_KANSEI.${seikyusaki} #明細完成データ更新対象!!
+
+  # 更新作業用
+  echo "${tmp}-MEISAI_KANSEI.${seikyusaki} ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/SEIKYU_MEISAI.${seikyu_syori_month}.${seikyusaki} ${input_dir}/${today}/SEIKYU/SEIKYU_MEISAI.${seikyu_syori_month}.${seikyusaki}.$(basename ${0}).${current_time} 27" >> ${tmp}-genzai_meisai_koushin_name #現在更新リスト!!
+done
+# -------------------------------
+### 明細データ作成ここまで
+# ------------------------------------
+
+# ------------------------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------------------------
+# データ更新
+
+# 更新対象
+# -
+# 過去明細
+#   ${tmp}-SEIKYU_MEISAI.${年月}.*.new 更新リスト：${tmp}-kako_meisai_koushin_name
+# 現在明細
+#   ${tmp}-MEISAI_KANSEI.* 更新リスト：${tmp}-genzai_meisai_koushin_name
+# 現在ヘッダ
+#   ${tmp}-HEAD_MST
+#   ${tmp}-HEAD_INPUT
+# -
+
+# 列チェックリスト更新リストの作成
+cat << FIN | cat - ${tmp}-genzai_meisai_koushin_name > ${tmp}-genzai_check_koushin_list
+${tmp}-HEAD_MST ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD _ 26
+${tmp}-HEAD_INPUT _ ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+FIN
+# 1:ファイル名 2:更新マスタ名 3:更新INPUT名 4:列数
+
+# 列チェック
+self 1 4 ${tmp}-genzai_check_koushin_list |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+self 1 4 ${tmp}-kako_meisai_koushin_name |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 更新
+# (ヘッダ：履歴+INPUT分作成済み、明細：新たなファイルを上書き作成)
+#-
+# input
+cat ${tmp}-genzai_check_koushin_list |
+self 1 3 |
+awk '$2!="_"' - |
+while read file input; do
+  cp -p ${file} ${input}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# -
+# マスタ
+cat ${tmp}-genzai_check_koushin_list |
+self 1 2 |
+awk '$2!="_"' - |
+while read file mst; do
+  cp -p ${file} ${mst}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# -
+# 過去データは当月確定時に更新するので更新対象と更新リストを保管しておく(計算はしるたびに上書き)
+# -
+# 過去明細を置き場に置く
+self 1 2 ${tmp}-kako_meisai_koushin_name |
+while read file input ; do
+  cp -p ${file} ${input}
+done
+# リスト
+self 2 ${tmp}-kako_meisai_koushin_name |
+LANG=C sort > ${seikyu_dir}/${shisetsu}/MEISAI/KAKO/KAKO_SEIKYU_LIST.${seikyu_syori_month}
+# 1:更新過去明細ファイル名リスト
+# ------------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------
+# ロックを解除
+# 更新がかかるのはヘッダのみ、明細は上書きなのでロックの必要なし
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# -----------------------------------------------------------------------------------------------
+
+echo "計算が終了しました"
+
+#rm -f ${tmp}-*
+exit 0

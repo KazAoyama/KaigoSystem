@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# HOUMONKAIGO_RENRAKU_EXCEL.DISPLAY : 訪問介護連絡ノート出力画面
+#
+# Usage : HOUMONKAIGO_RENRAKU_EXCEL.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+user_data_dir=
+
+# 変数の定義
+namedata=$1
+today="$(date +%Y%m%d)"
+
+curday=$(date +%Y%m%d | self 1)
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+self 1 2 ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+#--------------------------------------------------------------
+
+taishoudate=$curday
+[ -z "$renrakuStartDate" -o "$renrakuStartDate" = "_" ] && renrakuStartDate=$curday
+[ -z "$renrakuEndDate" -o "$renrakuEndDate" = "_" ] && renrakuEndDate=$curday
+
+# 利用者一覧
+echo "99999999" "職員連絡" > $tmp-shokuin-renraku
+
+# 過去の人対応
+cat ${data_dir}/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+awk '$1=="'${shisetsu}'"' |
+LANG=C sort -k2,2 |
+join1 key=2 <(self 1 2 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER) |
+self 2 3          |
+awk '$1=="'${relStaff}'"{print $1,$2}' > $tmp-select_staff
+
+cat ${data_dir}/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+awk '$1=="'${shisetsu}'"&&$(NF-2)!="9"&&$3<="'${taishoudate}'"&&"'${taishoudate}'"<=$4' |
+LANG=C sort -k2,2 |
+join1 key=2 <(self 1 2 3 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER) |
+# 利用者ID 利用者名
+self 2 3 4 |
+cat - $tmp-select_staff |
+LANG=C sort -k1,2 |
+getlast 1 2 |
+LANG=C sort -k3,3 |
+self 1 2    |
+cat $tmp-shokuin-renraku - |
+awk '{if($1=="'${relStaff}'"){print $1,$2,"selected"}else{print $1,$2,"@"}}' > $tmp-rel_staff
+
+dispRenrakuStartDate=$(echo "$renrakuStartDate" | awk '{print substr($1,1,4)"-"substr($1,5,2)"-"substr($1,7,2)}')
+dispRenrakuEndDate=$(echo "$renrakuEndDate" | awk '{print substr($1,1,4)"-"substr($1,5,2)"-"substr($1,7,2)}')
+
+echo "HOUMONKAIGO_MENU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed1
+###RENRAKUSTARTDATE### $dispRenrakuStartDate
+###RENRAKUENDDATE### $dispRenrakuEndDate
+###USERID### $userid
+###SHISETSUID### $shisetsu
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -n1            > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [$(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/HOUMONKAIGO_RENRAKU_EXCEL.html |
+mojihame -l###RIYOUSHALIST### - ${tmp}-rel_staff |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,217 @@
+#!/bin/bash
+#
+# RESTAURANT_CHUMON_KAKUTEI.DISPLAY : レストラン注文確認画面表示
+#
+# Usage : RESTAURANT_CHUMON_KAKUTEI.DISPLAY
+#
+# Written by R.Ssuzuki Date:2015/05/22
+
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+#test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+#checkfile=$2
+result_data=$2
+#koushin_data=$4
+#today="$(date +%Y%m%d)"
+
+current_time="$(date +%H%M)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+
+#更新系処理CGIの結果をチェック(エラーメッセージ表示制御)
+result=$(awk '$1=="result"{print $2}' ${result_data})
+if [ "${result}" = "ng" ] ; then
+  message=$(awk '$1=="message"{print $2}' ${result_data})
+
+  next_page=""
+  if [ "$message" = "ロック処理失敗"  ] ; then
+    message="アクセスが集中したため処理を実行できませんでした。再度実行しても状況が変わらない場合はスタッフへご連絡ください。"
+    next_page="RESTAURANT_CHUMON_KAKUNIN.CGI"
+    MODE="display"
+
+   #確認画面に戻るため、ここではカートを削除しない
+
+  else
+    if [ "$user_type" = "enduser" ] ; then
+      #メッセージはそのまま
+      next_page="RESTAURANT_DUMMY.CGI?post_camera=on"
+      MODE="init"
+    else
+      next_page="RESTAURANT_CHUMON_ICHIRAN.CGI"
+      MODE="init"
+    fi
+
+    #カートファイルが存在している場合、削除
+    if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+      rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+    fi
+
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" $user_type >> $tmp-calsed_result
+  echo "###NEXT_PAGE###" $next_page >> $tmp-calsed_result
+  echo "###MODE###" $MODE      >> $tmp-calsed_result
+  echo "###NYUKYOSHA_ID###" $nyukyosha_id   >> $tmp-calsed_result
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+  cat  ${tmp}-html
+  exit 1
+fi
+
+
+
+#「.TOUROKU」の結果ファイルから注文基本のデータを取得（先頭行）
+head -n 1 $result_data  |
+awk 'BEGIN{ print "shisetsu","uketuke_ymd","chumon_no","nyukyosha_id","nyukyosha_name","room_no","uketuke_time" } \
+{print $1,$2,$4,$5,$6,$7,$8}' |  tateyoko > $tmp-name_kihon
+
+#取得結果を変数に変換
+eval $(name-source $tmp-name_kihon)
+
+#施設名称取得
+#sisetu_name=$(cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | awk '$1=="'$shisetsu'" {print $2 }')
+#施設名称取得 20150907
+shisetsu_name=$(awk '$1=="'$shisetsu'" && $(NF-2)!="9" {print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)
+
+
+#レシートプリンタIP 
+printer_ip=$(awk '$1=="'$shisetsu'" && $(NF-2)!="9" {print $2}' ${tbl_dir}/SHOKUJI/${shisetsu}/RESTAURANT_PRINTER_IP.${shisetsu})
+if [ "$printer_ip" = "" ] ; then
+  message="有効なプリンタが設定されていません。設定後、注文一覧にてご入居者様の当該伝票を印刷してください。（注文番号：$chumon_no）"
+fi
+
+#受付時刻取得
+uketuke_date1=$(date -d $uketuke_ymd +"%Y/%m/%d")
+uketuke_date2=$(echo $uketuke_time | awk '{print substr($1,1,2) ":" substr($1,3,2) ":" substr($1,5,2)  }')
+
+#ファイルがあるなら嗜好取得
+if [ -e  ${pompa_dir}/${shisetsu}/SHUKOU ] ; then
+#嗜好データの取得
+#  cat ${pompa_dir}/${shisetsu}/SHUKOU                |
+  awk '$1=="'$nyukyosha_id'" && $(NF-2)!=9' ${pompa_dir}/${shisetsu}/SHUKOU > $tmp-nyukyosha_shuko_info
+  nyukyosha_shuko1=$(awk '{print $2}'  $tmp-nyukyosha_shuko_info )
+  nyukyosha_shuko2=$(awk '{print $3}'  $tmp-nyukyosha_shuko_info )   
+fi
+
+
+#はめ込み文字データまとめファイル作成
+echo "###NYUKYOSHA_NAME###" $nyukyosha_name     >  $tmp-calsed_result
+echo "###NYUKYOSHA_ID###"   $nyukyosha_id       >> $tmp-calsed_result
+echo "###ROOM_NO###"        $room_no            >> $tmp-calsed_result
+echo "###SHISETSU_ID###"    $shisetsu           >> $tmp-calsed_result
+echo "###SHISETSU_NAME###"  $shisetsu_name      >> $tmp-calsed_result
+echo "###CHUMON_NO###"      $chumon_no          >> $tmp-calsed_result
+echo "###UKETSUKE_DATE1###" $uketuke_date1      >> $tmp-calsed_result
+echo "###UKETSUKE_DATE2###" $uketuke_date2      >> $tmp-calsed_result
+echo "###SHUKO1###"         $nyukyosha_shuko1   >> $tmp-calsed_result
+echo "###SHUKO2###"         $nyukyosha_shuko2   >> $tmp-calsed_result
+echo "###CHUMON_RECIEVE_TIME###" $receive_time  >> $tmp-calsed_result
+echo "###PRINTE_IP###"           $printer_ip    >> $tmp-calsed_result
+
+#20150803 add
+echo "###TARGET_DAY###"     $target_day   >> ${tmp}-calsed_result
+echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> ${tmp}-calsed_result
+
+
+#ユーザ種別（エンドユーザor管理ユーザ）:画面遷移を制御する
+#TOPメニューまたは予約確認画面、から開始した場合はエンドユーザとする。
+#注文一覧から開始した場合は管理ユーザとする。
+#それ以外はPOSTされるuser_typeの内容で判定
+echo "###USER_TYPE###"   $user_type   >> ${tmp}-calsed_result
+
+#再印刷の判定
+if [ $MODE = "print" ] ; then
+  echo "###SAI_INSATSU###"   "1"   >> ${tmp}-calsed_result
+else
+  echo "###SAI_INSATSU###"   "0"   >> ${tmp}-calsed_result
+fi
+
+
+#「.TOUROKU」の結果ファイルから注文明細のデータを取得（2行目以降）
+ tail -n +2 $result_data |
+awk '$(NF-2)!=9'|
+#  1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 
+#  7:入居者ゲストフラグ 8:食事種類 9:メニューID 10:メニュー名  11:表示順(>スペースは999999に変換済み) 
+# 12:数量  13:食事実績 14:削除フラグ 15:更新日時 16:ユーザID
+
+#ソート（ 食事種類 表示順 メニューID 注文明細ペア番号 入居者ゲストフラグ）
+LANG=C sort  -k8,8n -k11,11n -k9,9n -k5,6n |
+self 8 11 5 9 7 10 12 |
+# 1:食事種類 2:表示順 3:注文明細ペア番号 4:メニューID 5:入居者ゲストフラグ 6:メニュー名 7:数量
+yarr  num=4 | 
+# 1:食事種類 2:表示順 3:注文明細ペア番号 4:メニューID 5:入居者ゲストフラグフラグ 6:メニュー名 7:数量 8:入居者ゲストフラグ 9:メニュー名 10:数量
+# 5から7列目は入居者、8から10列目はゲストのデータの想定だが、ゲストのみの注文の場合は
+# 想定どおりに入らないため、入居者ゲストフラグフラグで判定して入居者とゲストそれぞれの数量をセットする。
+#awk '{print $1,$2,$3,$4,$6,$5=="1"?$7:"0",$5=="2"?$7:$10 } ' |
+# ゲスト数量（10）が存在しない（＝ゲストの注文明細がない）場合は数量ゼロに変換、2015.05.29
+awk '{print $1,$2,$3,$4,$6,$5=="1"?$7:"0",$5=="2"?$7:$10==""?"0":$10 } ' |
+LANG=C sort -k1,2  > $tmp-receipt_list
+
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && message="注文明細データ取得エラー"
+
+#(修正版) 1:食事種類 2:表示順 3:注文明細ペア番号 4:メニューID 5:メニュー名 6:入居者数量 7:ゲスト数量
+#レシート明細データはめ込み
+mojihame -l###RECEIPT_MEISAI### ${html_dir}/RESTAURANT_CHUMON_KAKUTEI.html $tmp-receipt_list |
+
+#はめ込みまとめデータのはめ込み
+calsed -f $tmp-calsed_result  - > $tmp-html
+
+#--------------------------------------------------------------
+
+if [ "${message}" != "" ] ; then
+
+  #カートファイルが存在している場合、削除
+  if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" $user_type >> $tmp-calsed_result
+
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+
+fi
+
+# HTMLファイルを表示する
+cat  ${tmp}-html
+
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

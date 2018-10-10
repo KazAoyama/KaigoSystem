@@ -1,0 +1,79 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_ICHIRAN.SEARCH
+# 基本情報一覧検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+tbl_dir="/home/hands/E-LIFE/TBL"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#------------------------------------------------------------
+#-----------
+# 施設
+#-----------
+awk '$(NF-2)!="9"{print $1}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON  |
+awk '$1!="1000"'                                                        > $tmp-shisetsu_all
+awk '$(NF-2)!="9"{print $1}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER >> $tmp-shisetsu_all
+
+#------------------------------------------------------------
+# 検索対象の絞込み
+#----------------------
+cat ${pompa_dir}/KEIYAKU/KEIYAKU_NAME |
+awk '$(NF-2)!="9"{print $1,$2}'              > $tmp-keiyaku_shurui_name
+# 1:契約種類ID 2:契約種類名
+
+cat ${pompa_dir}/KEIYAKU/SHISETSU_KEIYAKU_MASTER |
+# 1:施設/事業所コード 2:契約種類ID 3:有効フラグ
+awk '$(NF-2)!="9"{print $1,$2,$3}' |
+loopj -d* num=1 $tmp-shisetsu_all -    |
+self 2 1 3 |
+# 1:契約種類ID 2:施設/事業所コード 3:有効フラグ
+LANG=C sort |
+awk '{if($3=="1"){print $1,$2,"checked"}
+      else{print $1,$2,"@"}
+     }'     |
+map +arr -m@ num=1  |
+#join2 key=1 $tmp-keiyaku_shurui_name -  > $tmp-keiyaku_shurui_data
+loopj num=1 $tmp-keiyaku_shurui_name -  > $tmp-keiyaku_shurui_data
+# (一行目:施設名～)
+# 1:契約種類ID 2:契約名称 3:施設/事業所コード 4:有効フラグ
+
+
+cat $tmp-keiyaku_shurui_data
+# (一行目:施設名～)
+# 1:契約種類ID 2:契約名称 3:施設/事業所コード 4:有効フラグ
+
+
+## 終了
+rm -f $tmp-*
+exit 0

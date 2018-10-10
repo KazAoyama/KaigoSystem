@@ -1,0 +1,310 @@
+#!/bin/bash
+#
+# HIYARI_SHOUSAI.DISPLAY
+# 個人情報詳細　基本タブ　表示用CGI
+#
+# Written by E.Okuda　2013/12/4
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+data=$2
+today="$(date +%Y%m%d)"
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+cgi_dir="${home_dir}/CGI"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+  Shimei=$(nameread                "Shimei"   $namedata | sed 's/ /###SPACE###/g' | sed 's/_/###SPACE###/g')
+  Shimeikana=$(nameread            "Shimeikana"      $namedata  | sed 's/ /###SPACE###/g' | sed 's/_/###SPACE###/g')
+  Seibetsu=$(nameread               "Seibetsu"      $namedata)
+  SeinengappiGengou=$(nameread     "SeinengappiGengou"      $namedata)
+  SeinengappiYear=$(nameread       "SeinengappiYear"      $namedata)
+  SeinengappiMonth=$(nameread      "SeinengappiMonth"      $namedata)
+  SeinengappiDay=$(nameread        "SeinengappiDay"      $namedata)
+  Nenrei=$(nameread                "Nenrei"      $namedata)
+  Kansenshou=$(nameread            "Kansenshou"      $namedata)
+  NyuukyoMaeYuubinBangou=$(nameread      "NyuukyoMaeYuubinBangou"      $namedata)
+  NyuukyoMaeJyuusho=$(nameread           "NyuukyoMaeJyuusho"      $namedata)
+  YuubinBangou=$(nameread          "YuubinBangou"      $namedata)
+  GenJyuusho=$(nameread            "GenJyuusho"      $namedata)
+  Tel=$(nameread                   "Tel"      $namedata)
+  Email=$(nameread                 "Email"      $namedata)
+  Shumi=$(nameread                 "Shumi"      $namedata)
+  Bikou=$(nameread                 "Bikou"      $namedata)
+  KOUSHINBI=$(nameread             "KOUSHINBI"      $namedata)
+  RIYOUSHAID=$(nameread            "RIYOUSHAID"      $namedata)
+  GaijiKyuuji=$(nameread            "GaijiKyuuji"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+if [ -z "${NYUUKYOSHISETSUID}" -o "${NYUUKYOSHISETSUID}" = "_" ] ; then
+  NYUUKYOKYOSHITSU=$(nameread  "RIYOUSHA_KYOSHITSU" $namedata)
+  RIYOUSHA_SHISETSUTATEYA=$(nameread  "RIYOUSHA_SHISETSUTATEYA" $namedata)
+  NYUUKYOSHISETSUID=$(echo "${RIYOUSHA_SHISETSUTATEYA}" | sed 's/###/ /g' | awk '{print $1}')
+  NYUUKYOTATEYAID=$(echo "${RIYOUSHA_SHISETSUTATEYA}" | sed 's/###/ /g' | awk '{print $2}')
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  awk '$1=="'${NYUUKYOSHISETSUID}'"&&$2=="'${NYUUKYOTATEYAID}'"&&$5=="'${NYUUKYOKYOSHITSU}'"{print $0}' |
+  head -1 > $tmp-shisetsu_kyoshitsu
+  NYUUKYOFLOOR="$(awk '{print $3}' $tmp-shisetsu_kyoshitsu)"
+  NYUUKYOUNITID="$(awk '{print $4}' $tmp-shisetsu_kyoshitsu)"
+else 
+  NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+  NYUUKYOTATEYAID=$(nameread  "NYUUKYOTATEYAID" $namedata)
+  NYUUKYOFLOOR=$(nameread  "NYUUKYOFLOOR" $namedata)
+  NYUUKYOUNITID=$(nameread  "NYUUKYOUNITID" $namedata)
+  NYUUKYOKYOSHITSU=$(nameread  "NYUUKYOKYOSHITSU" $namedata)
+fi
+  USERID=$(nameread  "USERID" $namedata)
+  [ -z "${USERID}" -o "${USERID}" = "_" ] && USERID=$(nameread  "userid" $namedata)
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+  # 選択したのが事業所でなく施設だったらファイルを作成
+  echo "${NYUUKYOSHISETSUID}" | awk '$1!~/^1/' > $tmp-shisetsu
+if [ -s $tmp-shisetsu ] ; then
+  SHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYAID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+  NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+else
+  SHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER)"
+  RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER)"
+  NYUUKYOTATEYANAME=""
+  NYUUKYOUNITNAME=""
+fi
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###NYUUKYOSHISETSUID### ${NYUUKYOSHISETSUID}
+###NYUUKYOSHISETSUNAME### ${NYUUKYOSHISETSUNAME}
+###NYUUKYOTATEYAID### ${NYUUKYOTATEYAID}
+###NYUUKYOTATEYANAME### ${NYUUKYOTATEYANAME}
+###NYUUKYOFLOOR### ${NYUUKYOFLOOR}
+###NYUUKYOUNITID### ${NYUUKYOUNITID}
+###NYUUKYOUNITNAME### ${NYUUKYOUNITNAME}
+###NYUUKYOKYOSHITSU### ${NYUUKYOKYOSHITSU}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | edit_image1_upload )
+  
+  cat ${data} |
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考                  19:削除フラグ    20:更新日
+# 21:UserID
+  awk '$1=="KIHON"{print $0}' |
+  delf 1 > $tmp-kihon
+
+  cat ${data} |
+  awk '$1=="GAIJI"{print $0}' |
+  delf 1 > $tmp-gaiji
+
+  Shimei="$(awk '{print $2}' $tmp-kihon | sed 's/_/###SPACE##/g')"
+  Shimeikana="$(awk '{print $3}' $tmp-kihon | sed 's/_/###SPACE##/g')"
+  Seibetsu="$(awk '{print $4}' $tmp-kihon)"
+  SeinengappiGengou="$(awk '{print $5}' $tmp-kihon)"
+  SeinengappiYear="$(awk '{print $6}' $tmp-kihon)"
+  SeinengappiMonth="$(awk '{print $7}' $tmp-kihon)"
+  SeinengappiDay="$(awk '{print $8}' $tmp-kihon)"
+  Kansenshou="$(awk '{print $10}' $tmp-kihon)"
+  NyuukyoMaeYuubinBangou="$(awk '{print $11}' $tmp-kihon)"
+  NyuukyoMaeJyuusho="$(awk '{print $12}' $tmp-kihon)"
+  YuubinBangou="$(awk '{print $13}' $tmp-kihon)"
+  GenJyuusho="$(awk '{print $14}' $tmp-kihon)"
+  Tel="$(awk '{print $15}' $tmp-kihon)"
+  Email="$(awk '{print $16}' $tmp-kihon)"
+  Shumi="$(awk '{print $17}' $tmp-kihon)"
+  Bikou="$(awk '{print $18}' $tmp-kihon)"
+  KOUSHINBI="$(awk '{print substr($20,1,4)"/"substr($20,5,2)"/"substr($20,7,2)}' $tmp-kihon)"
+  GaijiKyuuji="$(awk '{print $1}' $tmp-gaiji)"
+# 年齢の取得
+  Birthday="$(awk '{print substr($9,5,4)}' $tmp-kihon)"
+  Today="$(date +%m%d)"
+  
+  # 誕生日が来ていれば
+#  if [ "${Birthday}" -le "${Today}" ] ;then 
+    Nenrei="$(awk 'N="'${today}'"-$9{print N/10000}' $tmp-kihon | marume -sage 1.0)"
+  # 誕生日が来ていなければ
+#  else
+#    Nenrei="$(awk 'N="'${today}'"-$9{print N/10000-1}' $tmp-kihon | marume -sage 1.0)"
+#  fi
+  ;;
+
+
+  # 登録
+  touroku)
+#   # 結果判定
+   result=$(awk '$1=="result"{print $2}' ${data})
+   if [ "${result}" = "touroku_ok" ] ; then
+     message="更新完了"
+     KOUSHINBI=$(echo "${today}" | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+#     INPUT_TEXT1=""
+   else
+     message=$(awk '$1=="message"{print $2}' ${data})
+     [ -z "${message}" ] && message="処理エラー"
+   fi
+#   : > $tmp-listdata
+ ;;
+esac
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+#--------------------------------------------------------------
+#----------------------------------------------------------
+# プルダウンの用意
+#----------------------------------------------------------
+
+# 性別
+echo "1" "2" |
+tarr                 |
+awk '{if($1=="2"){print $1,"女"}
+     else if($1=="1"){print $1,"男"}
+      }'             |
+awk '{if($1=="'${Seibetsu}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'             > $tmp-seibetsu
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!="9"{print $1,$2}'               |
+awk '{if($1=="'${SeinengappiGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      > $tmp-gengou
+
+# 感染症
+cat << FIN > $tmp-kansenshou_jyunbi
+1 なし
+2 ＨＣＶ
+3 ＨＢＶ
+4 梅毒
+5 ＨＩＶ
+FIN
+
+cat $tmp-kansenshou_jyunbi |
+awk '{if($1=="'${Kansenshou}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }'                  > $tmp-kansenshou
+
+#------------------------------------------------------------------
+# 画像部分の変数を作成
+image1_work="$(ls $image_dir/$RIYOUSHAID/$RIYOUSHAID-1.[a-zA-Z][a-zA-Z][a-zA-Z] | head -1)"
+[ ! -z "$image1_work" ] && image1_1="UNEI/IMAGE/$RIYOUSHAID/$(basename $image1_work)" \
+                        || image1_1="UNEI/IMAGE/item1.gif"
+#--------------------------------------------------------------
+
+# calsed用データ
+echo "###Shimei###"                  "${Shimei}"                   >> $tmp-calsed_data
+echo "###Shimeikana###"              "${Shimeikana}"               >> $tmp-calsed_data
+echo "###SeinengappiYear###"         "${SeinengappiYear}"          >> $tmp-calsed_data
+echo "###SeinengappiMonth###"        "${SeinengappiMonth}"         >> $tmp-calsed_data
+echo "###SeinengappiDay###"          "${SeinengappiDay}"           >> $tmp-calsed_data
+echo "###NyuukyoMaeYuubinBangou###"  "${NyuukyoMaeYuubinBangou}"   >> $tmp-calsed_data
+echo "###NyuukyoMaeJyuusho###"       "${NyuukyoMaeJyuusho}     "   >> $tmp-calsed_data
+echo "###YuubinBangou###"            "${YuubinBangou}"             >> $tmp-calsed_data
+echo "###GenJyuusho###"              "${GenJyuusho}"               >> $tmp-calsed_data
+echo "###Tel###"                     "${Tel}"                      >> $tmp-calsed_data
+echo "###Shumi###"                   "${Shumi}"                    >> $tmp-calsed_data
+echo "###Bikou###"                   "${Bikou}"                    >> $tmp-calsed_data
+echo "###GaijiKyuuji###"             "${GaijiKyuuji}"              >> $tmp-calsed_data
+echo "###Email###"                   "${Email}"                    >> $tmp-calsed_data
+echo "###KOUSHINBI###"               "${KOUSHINBI}"                >> $tmp-calsed_data
+echo "###Nenrei###"                  "${Nenrei}"                   >> $tmp-calsed_data
+echo "###IMAGE1###"                  "$image1_1"                   >> $tmp-calsed_data
+
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1=""
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/HIYARI_SHOUSAI1.html                   |
+cat -\
+    ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+    ${html_dir}/HIYARI_SHOUSAI2.html                   |
+mojihame -lseibetsu - $tmp-seibetsu                     |
+mojihame -lseinengappi_gengou - $tmp-gengou             |
+mojihame -lkansenshou - $tmp-kansenshou                 |
+calsed -f $tmp-calsed_data_result -                     |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+sed 's/###KAIGYO###/\n/g'                              |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

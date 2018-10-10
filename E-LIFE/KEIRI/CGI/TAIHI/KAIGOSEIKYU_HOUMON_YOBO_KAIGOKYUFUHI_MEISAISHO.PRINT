@@ -1,0 +1,444 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMON_YOBO_KAIGOKYUFUHI_MEISAISHO.PRINT : 居宅介護請求印刷
+#
+# Usage : KAIGOSEIKYU_HOUMON_YOBO_KAIGOKYUFUHI_MEISAISHO.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+domain="http://e-life.hands-lab.com"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ダウンロードディレクトリ
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+
+# データを呼び出す
+cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO > $tmp-seikyu_base
+
+# 対象者決めて一人ずつ処理
+# 介護の人のみ対象
+cat $tmp-seikyu_base                                                       |
+awk '$3=="7132" && $4=="01"'                                               |
+self 1                                                                     |
+LANG=C sort -u -k1,1                                                       > $tmp-member_list
+
+cp  $tmp-member_list ${work}/listlist
+for member in $(cat $tmp-member_list);do  
+  cat $tmp-seikyu_base                                                     |
+  awk '$1=="'${member}'" && $3=="7132"'                                    > $tmp-taisho_motodata
+  # 対象年月
+  cat $tmp-taisho_motodata                                                 |
+  awk '$3=="7132" && $4=="10"'                                             |
+  self 5                                                                   > $tmp-taisho_nengetsu
+
+  for month in $(cat $tmp-taisho_nengetsu | yarr);do
+    cat $tmp-taisho_motodata              |
+    awk '$5=="'${month}'"'                > $tmp-taisho_data
+
+    target_month=$month
+    last_day=$(mdate ${target_month}m | tarr | tail -n1)
+    # 和暦に
+    cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+    awk '$5!="9"'                                      |
+    awk '$3<="'$last_day'"&&"'$last_day'"<=$4'         |
+    awk '{print $2,"'$last_day'",substr($3,1,4)-1}'    |
+    awk '{print $1,substr($2,1,4)-$3,substr($2,5,2)}' |
+    awk '{print $1,$2,$3}'                             |
+    awk '{print $1,substr($2,1,1),substr($2,2,1),substr($3,1,1),substr($3,2,1)}' > $tmp-wareki_nengetsu
+
+    # 事業所番号
+    cat $tmp-taisho_data                                                     |
+    awk '$4=="10"'                                                           |
+    self 6                                                                   > $tmp-jigyosho_bangou
+    cat $tmp-jigyosho_bangou                                                 |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1),substr($1,7,1),substr($1,8,1),substr($1,9,1),substr($1,10,1)}'              > $tmp-jigyosho_number
+
+    # 事業所情報
+    cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER                       |
+    join1 key=1 <(echo ${shisetsu})                                                  |
+    self 2 4 3                                                                       > $tmp-jigyosho_joho
+    # 1:事業所名 2:住所 3:電話番号
+
+    self 1 $tmp-jigyosho_joho                                                        > $tmp-jigyosho_namae
+    self 2 3 $tmp-jigyosho_joho                                                      > $tmp-jigyosho_namaeigai
+
+    # 居宅事業所情報
+    cat $tmp-jigyosho_joho                                                   |
+    self 1                                                                   |
+    ycat $tmp-jigyosho_number -                                              > $tmp-kyotaku_jigyosho_joho
+
+    # 郵便番号
+    cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER                       |
+    join1 key=1 <(echo ${shisetsu})                                                  |
+    self 10                                                                          |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1),substr($1,7,1),substr($1,8,1)}' > $tmp-jigyosho_yuubin
+
+    # 保険者情報
+    # マスタ準備
+    cat ${tbl_dir}/HOKENJA/HOKENJA_TABLE                                     |
+    # 1:保険者ID 2:保険者番号 3:都道府県コード 4:保険者名 5:保険者名カナ
+    self 2 4                                                                 |
+    LANG=C sort -k1,1n                                                       > $tmp-hokensha_master
+    cat $tmp-taisho_data                                                     |
+    awk '$4=="10"'                                                           |
+    self 7                                                                   |
+    getfirst 1 1                                                             |
+    1bai 1                                                                   |
+    maezero 1.6                                                              |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1)}' > $tmp-hokensha_joho
+
+    # 被保険者情報
+    cat ${riyosha_dir}/RIYOUSHA_KIHON                                        |
+    self 1 2 3 9                                                             > $tmp-riyosha_kihon
+
+    echo $member                                                             |
+    join1 key=1 $tmp-riyosha_kihon                                           |
+    self 3 2                                                                 > $tmp-riyosha_name
+
+    cat $tmp-taisho_data                                                     |
+    awk '$4=="10"'                                                           |
+    self 8                                                                   |
+    getfirst 1 1                                                             |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1),substr($1,7,1),substr($1,8,1),substr($1,9,1),substr($1,10,1)}'                                                    > $tmp-hi_hokensha_number
+
+    # 被保険者生年月日
+    echo $member                                                             |
+    join1 key=1 $tmp-riyosha_kihon                                           |
+    self 4                                                                   |
+    getfirst 1 1                                                             > $tmp-birthday
+    SEIREKI_BIRTH=$(cat $tmp-birthday)
+    # 和暦に
+    cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+    awk '$5!="9"'                                      |
+    awk '$3<="'$SEIREKI_BIRTH'"&&"'$SEIREKI_BIRTH'"<=$4'         |
+    awk '{print $2,"'$SEIREKI_BIRTH'",substr($3,1,4)-1}'    |
+    awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2))}' |
+    awk '{print $1,$2,$3}'                             |
+    maezero 2.2 3.2                                    |
+    awk '{print $1,substr($2,1,2)}' > $tmp-wareki_birthday
+    # 1:元号 2:年
+
+    GENGOU=$(cat $tmp-wareki_birthday | self 1)
+    [ "${GENGOU}" = "明治" ] && echo "###BIRTHDAY###" "birthday_meiji" >> $tmp-calsed
+    [ "${GENGOU}" = "大正" ] && echo "###BIRTHDAY###" "birthday_taisho" >> $tmp-calsed
+    [ "${GENGOU}" = "昭和" ] && echo "###BIRTHDAY###" "birthday_showa" >> $tmp-calsed
+
+    WAREKI_NEN=$(cat $tmp-wareki_birthday | self 2)
+    cat $tmp-birthday                     |
+    awk '{print "'${WAREKI_NEN}'",substr($1,5,1),substr($1,6,1),substr($1,7,1),substr($1,8,1)}'   |
+    awk '{print substr($1,1,1),substr($1,2,1),$2,$3,$4,$5}'                                       > $tmp-birthday_display
+
+    # 性別
+    cat $tmp-taisho_data                  |
+    awk '$4=="01"'                        |
+    self 16                               |
+    getfirst 1 1                          > $tmp-seibetsu_code
+    SEIBETSU=$(cat $tmp-seibetsu_code)
+    [ "${SEIBETSU}" = "1" ] && echo "###SEIBETSU###" "otoko" >> $tmp-calsed
+    [ "${SEIBETSU}" = "2" ] && echo "###SEIBETSU###" "onna" >> $tmp-calsed
+
+    # 介護度
+    cat $tmp-taisho_data                  |
+    awk '$4=="01"'                        |
+    self 17                               |
+    getfirst 1 1                          > $tmp-kaigodo_code
+    KAIGODO_CODE=$(cat $tmp-kaigodo_code)
+    [ "${KAIGODO_CODE}" = "12" ] && echo "###KAIGODO_CODE###" "youshien1" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "13" ] && echo "###KAIGODO_CODE###" "youshien2" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "21" ] && echo "###KAIGODO_CODE###" "youkaigo1" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "22" ] && echo "###KAIGODO_CODE###" "youkaigo2" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "23" ] && echo "###KAIGODO_CODE###" "youkaigo3" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "24" ] && echo "###KAIGODO_CODE###" "youkaigo4" >> $tmp-calsed
+    [ "${KAIGODO_CODE}" = "25" ] && echo "###KAIGODO_CODE###" "youkaigo5" >> $tmp-calsed
+
+
+    # 限度額適用期間
+    hajime="$(echo $month | awk '{print $1"01"}')"
+    owari="$(mdate ${month}m | tarr | tail -n1)"
+
+    # 介護状態区分を設定
+    cat ${riyosha_dir}/RIYOUSHA_KAIGOHOKEN                             |
+    # 1:利用者ID            2:介護保険ID          3:介護度            4:保険者番号                                        5:保険者名
+    # 6:被保険者番号        7:性別                8:生年月日和暦元号  9:和暦誕生年                                        10:和暦誕生月
+    # 11:和暦誕生日         12:郵便番号           13:住所             14:認定年月和暦元号                                 15:認定和暦年
+    # 16:認定和暦月         17:認定和暦日         18:認定西暦         19:有効期間from和暦元号                             20:有効期間from和暦年
+    # 21:有効期間from和暦月 22:有効期間from和暦日 23:有効期間from西暦 24:有効期間to和暦元号                               25:有効期間to和暦年
+    # 26:有効期間to和暦月   27:有効期間to和暦日   28:有効期間to西暦   29:居宅介護支援者又は介護予防事業者及びその事業者名 30:認定審査会の意見及びサービ>スの種類
+    # 31:備考               32:利用者負担率
+    join0 key=1 <(echo ${member})                                      |
+    awk '$23<="'${owari}'" && $28>="'${hajime}'"'                      |
+    LANG=C sort -k23,23 | tail -n1                                     > ${tmp}-kaigohokenjoho
+
+    cat $tmp-kaigohokenjoho               |
+    self 23 28                            |
+    cat                                   > $tmp-kubun_gend_kikan
+    
+    GENDO_FROM=$(cat $tmp-kubun_gend_kikan | self 1)
+    GENDO_TO=$(cat $tmp-kubun_gend_kikan | self 2)
+    # 和暦に
+    cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+    awk '$5!="9"'                                      |
+    awk '$3<="'$GENDO_FROM'"&&"'$GENDO_FROM'"<=$4'         |
+    awk '{print $2,"'$GENDO_FROM'",substr($3,1,4)-1}'    |
+    awk '{print $1,substr($2,1,4)-$3,substr($2,5,2),substr($2,7,2)}' |
+    awk '{print $1,$2,$3,$4}'                          |
+    maezero 2.2 3.2 4.2                                |
+    awk '{print $1,substr($2,1,1),substr($2,2,1),substr($3,1,1),substr($3,2,1),substr($4,1,1),substr($4,2,1)}' > $tmp-wareki_gendogaku_from
+    # 1:元号 2:年
+
+    cat ${hometbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU   |
+    awk '$5!="9"'                                      |
+    awk '$3<="'$GENDO_TO'"&&"'$GENDO_TO'"<=$4'         |
+    awk '{print $2,"'$GENDO_TO'",substr($3,1,4)-1}'    |
+    awk '{print $1,substr($2,1,4)-$3,substr($2,5,2),substr($2,7,2)}' |
+    awk '{print $1,$2,$3,$4}'                          |
+    maezero 2.2 3.2 4.2                                |
+    awk '{print $1,substr($2,1,1),substr($2,2,1),substr($3,1,1),substr($3,2,1),substr($4,1,1),substr($4,2,1)}' > $tmp-wareki_gendogaku_to
+    # 1:元号 2:年
+
+    # 明細
+    cat $tmp-taisho_data                               |
+    awk '$4=="02"'                                     > $tmp-meisai
+    # 1:利用者ID 2:登録時間 3:識別番号 4:明細情報を表す2 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:サービスコード
+    # 11:単位数 12:回数 13:_ 14:_ 15:_ 16:サービス単位数(合計)
+
+    # 明細行の空の行
+    # 全部で20行
+    DATA_GYO=$(gyo $tmp-meisai)
+    BLANK_GYO=$(echo "13" "${DATA_GYO}"  |
+                lcalc '$1-$2')
+    seq ${BLANK_GYO} |
+    yarr             > $tmp-blank_gyo
+
+    for number in $(cat $tmp-blank_gyo);do
+      echo "　" >> $tmp-blank_display
+    done
+
+    # マスタ準備
+    start=$(echo $month | awk '{print $1"01"}')
+
+      if [ "${start}" -lt "20140331" ];then
+        cat ${tbl_dir}/SERVICECODE/20120401/SERVICECODE_HOUMONKAIGO_YOBO |
+        self 3 4                                                         > $tmp-code_yobo
+        cat ${tbl_dir}/SERVICECODE/20120401/SERVICECODE_ADD_YOBO         |
+        awk '$1=="61"'                                                   |
+        self 2 3                                                         |
+        cat $tmp-code_yobo -
+      else
+        cat ${tbl_dir}/SERVICECODE/20140401/SERVICECODE_HOUMONKAIGO_YOBO |
+        self 3 4                                                         >$tmp-code_yobo
+        cat ${tbl_dir}/SERVICECODE/20140401/SERVICECODE_ADD_YOBO         |
+        awk '$1=="61"'                                                   |
+        self 2 3                                                         |
+        cat $tmp-code_yobo -
+      fi                                                                 |
+      LANG=C sort -k1,1                                                  > $tmp-service_master
+    # 1:サービスコード 2:サービス名
+   cp $tmp-service_master ${work}/service_master 
+    cat ${hometbl_dir}/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+    # 1:サービスコード種類 2:サービスタイプ 3:サービス種類
+    self 1 3                                           > $tmp-service_type_master
+    # 1:サービスコード種類 2:サービス種類
+
+    # 対象データの呼び出し
+    cat $tmp-meisai                                                      |  
+tee ${work}/yobo_meisai |
+    # 1:利用者ID 2:登録時間 3:識別番号 4:明細情報を表す2 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:サービスコード
+    # 11:単位数 12:回数 13:_ 14:_ 15:_ 16:サービス単位数(合計)
+    self 9 10 11 12 16                                                   |
+    # 1:サービス種類コード 2:サービスコード 3:単位数 4:回数 5:サービス単位数(合計)
+    1bai 3 4 5                                                           |
+    LANG=C sort -k2,2                                                    |
+    join1 key=2 $tmp-service_master                                      |
+    # 1:サービス種類コード 2:サービスコード 3:サービス名 4:単位数 5:回数
+    # 6:サービス単位数(合計)
+    self 3 1 2 4 5 6                                                     |
+    awk '{print $1,$2$3,$4,$5,$6}'                                       |
+    # 1:サービス名 2:サービスコード 3:単位数 4:回数 5:サービス単位数(合計)
+    awk '{if(length($3)==1){print $1,$2,"@@@@",$4,$5}else if(length($3)==2){print $1,$2,"@@"$3,$4,$5}else if(length($3)==3){print $1,$2,"@"$3,$4,$5}else{print $0}}'  |
+    awk '{if(length($4)==1){print $1,$2,$3,"@"$4,$5}else{print $0}}'     |
+    awk '{if(length($5)==1){print $1,$2,$3,$4,"@@@@"$5}else if(length($5)==2){print $1,$2,$3,$4,"@@@"$5}else if(length($5)==3){print $1,$2,$3,$4,"@@"$5}else if(length($5)==4){print $1,$2,$3,$4,"@"$5}else{print $0}}'  |
+    awk '{print $1,substr($2,1,1),substr($2,2,1),substr($2,3,1),substr($2,4,1),substr($2,5,1),substr($2,6,1),substr($3,1,1),substr($3,2,1),substr($3,3,1),substr($3,4,1),substr($4,1,1),substr($4,2,1),substr($5,1,1),substr($5,2,1),substr($5,3,1),substr($5,4,1),substr($5,5,1)}'       > $tmp-meisai_data
+
+    # サービス種類
+    cat $tmp-meisai                                                      |  
+    # 1:利用者ID 2:登録時間 3:識別番号 4:明細情報を表す2 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:サービスコード
+    # 11:単位数 12:回数 13:_ 14:_ 15:_ 16:サービス単位数(合計)
+    self 9                                                               |
+    # 1:サービス種類コード 2:サービスコード 3:単位数 4:回数 5:サービス単位数(合計)
+    LANG=C sort -u -k1,1n                                                |
+    join1 key=1 $tmp-service_type_master                                 |
+    awk '{print substr($1,1,1),substr($1,2,1),$2}'                       > $tmp-service_shurui
+
+    # 日数
+    cat $tmp-taisho_data                               |
+    awk '$4=="10"'                                     |
+    self 10                                            |
+    1bai 1                                             |
+    maezero 1.2                                        |
+    awk '{print substr($1,1,1),substr($1,2,1)}'        > $tmp-nisuu 
+
+    # 計画単位数
+    cat $tmp-taisho_data                               |
+    awk '$4=="10"'                                     |
+    self 11 12 13 16                                   |
+    1bai 1 2 3 4                                       |
+    tarr                                               |
+    awk '{if(length($1)==1){print "@@@@@"$1}else if(length($1)==2){print "@@@@"$1}else if(length($1)==3){print "@@@"$1}else if(length($1)==4){print "@@"$1}else if(length($1)==5){print "@"$1}else{print $0}}' |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1)}' > $tmp-keikau_tani_base
+    
+    awk 'NR==1' $tmp-keikau_tani_base                    > $tmp-keikaku_tani
+    awk 'NR==2' $tmp-keikau_tani_base                    > $tmp-gendogaku_taisho_tani
+    awk 'NR==3' $tmp-keikau_tani_base                    > $tmp-gendogakugai_taisho_tani
+    awk 'NR==4' $tmp-keikau_tani_base                    > $tmp-goukei_taisho_tani
+
+    # 単位数単価
+    cat $tmp-taisho_data                               |
+    awk '$4=="10"'                                     |
+    self 17                                            |
+    1bai 1                                             |
+    maezero 1.2                                        |
+    marume  1.2                                        |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1)}' > $tmp-tanitanka
+    
+    # 合計行
+    cat $tmp-taisho_data                               |
+    awk '$4=="10"'                                     |
+    self 18                                            |
+    1bai 1                                             |
+    awk '{if(length($1)==6){print $1}else if(length($1)==5){print "@"$1}else if(length($1)==4){print "@@"$1}else if(length($1)==3){print "@@@"$1}else if(length($1)==2){print "@@@@"$1}else{print "@@@@@"$1}}'    |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1)}'  > $tmp-hokenseikyugaku
+
+    # 利用者負担額
+    cat $tmp-taisho_data                               |
+    awk '$4=="10"'                                     |
+    self 19                                            |
+    1bai 1                                             |
+    awk '{if(length($1)==6){print $1}else if(length($1)==5){print "@"$1}else if(length($1)==4){print "@@"$1}else if(length($1)==3){print "@@@"$1}else if(length($1)==2){print "@@@@"$1}else{print "@@@@@"$1}}'    |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1),substr($1,4,1),substr($1,5,1),substr($1,6,1)}'  > $tmp-riyosha_futan
+
+    # 給付率
+    cat $tmp-taisho_data                               |
+    awk '$4=="01"'                                     |
+    self 31                                            |
+    awk '{if(length($1)==1){print "@@"$1}else if(length($1)==2){print "@"$1}else{print $1}}'    |
+    awk '{print substr($1,1,1),substr($1,2,1),substr($1,3,1)}' > $tmp-futanritsu
+
+    # calsedするfileをつくろう
+cat   <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###DOMAIN### ${domain}
+FIN
+
+    #### MODEが修正のときは処理を分岐する
+    cat ${html_dir}/KAIGOYOBOU_CHIIKIMICCHAKU_KYUFUHI_MEISAISHO.html  |
+    mojihame -l###TAISHO_NENGETSU### - ${tmp}-wareki_nengetsu |
+    mojihame -l###JIGYOSHO_NUMBER### - ${tmp}-jigyosho_number |
+    mojihame -l###JIGYOSHO_NAMAE### - ${tmp}-jigyosho_namae |
+    mojihame -l###JIGYOSHO_JOHO### - ${tmp}-jigyosho_namaeigai |
+    mojihame -l###YUBIN_BANGOU### - ${tmp}-jigyosho_yuubin |
+    mojihame -l###KYOTAKU_JOHO### - ${tmp}-kyotaku_jigyosho_joho |
+    mojihame -l###HOKENSHA_JOHO### - ${tmp}-hokensha_joho |
+    mojihame -l###HI_HOKENSHA_SHIMEI### - ${tmp}-riyosha_name |
+    mojihame -l###HI_HOKENSHA_NUMBER### - ${tmp}-hi_hokensha_number |
+    mojihame -l###FROM_KIKAN### - $tmp-wareki_gendogaku_from |
+    mojihame -l###FROM_TO### - $tmp-wareki_gendogaku_to |
+    mojihame -l###HI_HOKENSHA_BIRTH### - ${tmp}-birthday_display |
+    mojihame -l###SERVICE_SHURUI### - ${tmp}-service_shurui |
+    mojihame -l###MEISAI_JOHO### - ${tmp}-meisai_data |
+    mojihame -l###BLANK_GYO### - ${tmp}-blank_display  |
+    mojihame -l###SERVICE_NISUU### - ${tmp}-nisuu  |
+    mojihame -l###KEIKAKU_TANI### - ${tmp}-keikaku_tani  |
+    mojihame -l###GENDOGAKU_TANI### - ${tmp}-gendogaku_taisho_tani  |
+    mojihame -l###GENDOGAKU_GAI_TANI### - ${tmp}-gendogakugai_taisho_tani  |
+    mojihame -l###GOUKEI_TANI### - ${tmp}-goukei_taisho_tani  |
+    mojihame -l###TANITANKA### - ${tmp}-tanitanka  |
+    mojihame -l###HOKENSEIKYUGAKU### - ${tmp}-hokenseikyugaku  |
+    mojihame -l###RIYOSHA_FUTAN### - ${tmp}-riyosha_futan  |
+    mojihame -l###FUTANRITSU### - ${tmp}-futanritsu  |
+    calsed -f ${tmp}-calsed -                          |
+    sed 's/@/\&nbsp;/g'   > $tmp-base_pdf.html
+    
+    /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}/${member}${month}.HOUMON_KAIGO_MEISAISHO.pdf
+
+    # データクリア
+    rm $tmp-calsed $tmp-${tmp}-wareki_nengetsu ${tmp}-jigyosho_number ${tmp}-jigyosho_joho ${tmp}-hokensha_joho ${tmp}-riyosha_shimei $tmp-caremane_no ${tmp}-birthday_display ${tmp}-kubun_gendogaku_display ${tmp}-meisai_hontai ${tmp}-blank_display ${tmp}-goukeigyo
+  done
+done
+
+
+#######################################################################################
+# pdfファイル合体
+gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sPAPERSIZE=a4 -dNOPLATFONTS -sOutputFile=${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${current_time}.HOUMON_KAIGO_MEISAISHO.pdf ${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${today}/${userid}/${current_time}/*HOUMON_KAIGO_MEISAISHO.pdf
+
+
+# HTMLの作成
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.HOUMON_KAIGO_MEISAISHO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+
+rm -f ${tmp}-*
+exit 0
+

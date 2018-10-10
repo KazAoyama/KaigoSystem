@@ -1,0 +1,193 @@
+#!/bin/bash
+#
+# GEKKAN_KATSUDOU_JISSEKI_ICHIRAN_SHUKEI.PRINT : 月間活動一覧（全体集計）印刷
+#
+# Usage : GEKKAN_KATSUDOU_JISSEKI_ICHIRAN_SHUKEI.PRINT namefile datafile
+#
+# Written by K.Aoyama(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+function error_exit {
+  message="$1"
+cat << FIN > $tmp-html
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+# ファイル名をはく
+  cat $tmp-html
+  rm -f $tmp-*
+  exit 0
+}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 出力日
+day="$(date "+%Y%m%d")"
+
+echo ${day} |
+self 1.1.4 1.5.2 1.7.2 |
+lcalc '$1*1,$2*1,$3*1' |
+awk '{print $1"年"$2"月"$3"日"}' > ${tmp}-print_day_seireki
+PRINT_DAY=$(cat ${tmp}-print_day_seireki)
+
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#///////////////////////////////////////////////////////////////////
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#//////////////////////////////////////////////////////////////////
+
+#  サーチで取得したデータをリストにセット
+if [ "$(gyo ${searchfile})" != 0 ] ; then
+   cat ${searchfile}                             |
+   awk '$1=="search"'                            |
+   delf 1                                        |
+   tee $tmp-goukei_1_dmy                         |
+   # 1:利用者ID    2:利用者名   3:介護度名称  4:4月請求額  5:4月時間
+   # 6:5月請求額   7:5月時間    8:6月請求額   9:6月時間    10:7月請求額
+   # 11:7月時間    12:8月請求額 13:8月時間    14:9月請求額 15:9月時間
+   # 16:10月請求額 17:10月時間  18:11月請求額 19:11月時間  20:12月請求額
+   # 21:12月時間   22:1月請求額 23:1月時間    24:2月請求額 25:2月時間
+   # 26:3月請求額  27:3月時間   28:合計請求額 29:合計時間
+   self 1/27                                     > $tmp-listdata_1_dmy
+
+   cat $tmp-goukei_1_dmy                         |
+   self 28/29                                    |
+   sed 's/:/時間/g'                              |
+   awk '{print $1,$2"分"}'                       > $tmp-goukei_1
+  
+   ycat $tmp-listdata_1_dmy $tmp-goukei_1        > $tmp-listdata_1
+
+
+   cat ${searchfile}                       |
+   awk '$1=="goukei"'                      |
+   delf 1 2                                |
+   tee $tmp-goukei_2_dmy                   | 
+   # 1:4月請求額  2:4月時       3:5月請求額   4:5月時      5:6月請求額
+   # 6:6月時      7:7月請求額   8:7月時       9:8月請求額  10:8月時
+   # 11:9月請求額 12:9月時      13:10月請求額 14:10月時    15:11月請求額
+   # 16:11月時    17:12月請求額 18:12月時     19:1月請求額 20:1月時
+   # 21:2月請求額 22:2月時      23:3月請求額  24:3月時     25:合計請求額
+   # 26:合計時
+   self 1/24                               > $tmp-listdata_2_dmy
+
+   cat $tmp-goukei_2_dmy                  |
+   self 25 26                             |
+   sed 's/:/時間/g'                       |
+   awk '{print $1,$2"分"}'                > $tmp-goukei_2
+
+   ycat $tmp-listdata_2_dmy $tmp-goukei_2 > $tmp-listdata_2
+
+else
+# 空のリストデータを作成する
+   : > $tmp-listdata_1
+   : > $tmp-listdata_2 
+fi
+
+[ "$(gyo $tmp-listdata_1)" = "0" ] && error_exit "データが見つかりません"
+
+cat ${searchfile} |
+awk '$1=="s"{print $2}'   > $tmp-syukei
+SyukeiJikan=$(cat $tmp-syukei)
+
+# 対象年度
+echo "${TaishouNendo}年度" > $tmp-taishou_nendo
+TAISYOU_NENDO=$(cat $tmp-taishou_nendo)
+
+# 対象年月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' > $tmp-disp_nengetsu
+
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"/"substr($1,5,2)"/1"}' > $tmp-taishou_nengetsu
+dispTaishouNengetsu=$(cat $tmp-disp_nengetsu)
+jsTaishouNengetsu=$(cat $tmp-taishou_nengetsu)
+
+# 表示番号
+# 保険者番号
+if [ "$bangouHokensha" == "on" ] ; then
+  BANGO=$(echo "保険者番号")
+else
+  BANGO=$(echo "対象者番号")
+fi
+
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###TAISYOU_NENDO### $TAISYOU_NENDO
+###TAISHOUNENGETSU### $dispTaishouNengetsu
+###JSTAISHOUNENGETSU### $jsTaishouNengetsu
+###PRINT_DAY### $PRINT_DAY
+###DOMAIN### $domain
+###BANGO### $BANGO
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_NENJICHOUHYOU_TAISYOUSYA.html   |
+calsed -f $tmp-calsed_kaigyozumi -               |
+mojihame -l###SEARCH_KEKKA### - $tmp-listdata_1  |
+mojihame -l###SEARCH_GOUKEI### - $tmp-listdata_2 |
+sed 's/###KAIGYO###/\n/g'                        |
+sed 's/##SP##/ /g'                               |
+sed 's/_/ /g'                                    |
+#sed 's/0:00/ /g'                                |
+tee $tmp-html                                    |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-nenjichouhyou_taisyousya_pdf.html
+#--------------------------------------------------------------
+cp $tmp-nenjichouhyou_taisyousya_pdf.html $work_dir/nenjichouhyou_taisyousya_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/NENJICHOUHYOU_TAISYOUSYA.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-nenjichouhyou_taisyousya_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/NENJICHOUHYOU_TAISYOUSYA.pdf
+
+  # HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/NENJICHOUHYOU_TAISYOUSYA.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0
+

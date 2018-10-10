@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# UNMATCHLIST_YOBO.SEARCH
+# 利用票（介護）　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && error_exit "対象年が不明です"
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && error_exit "対象月が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+if [ ${MODE} = "print" ] ; then
+  cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+  awk '$5!="9"{print $1,$2}'                    |
+  while read Riyoushaid Riyoushamei ;do
+  
+  if [ -s ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO ] ; then
+# 利用票ファイルの取得
+  cat ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$2=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+  awk '$3=="'${hdTaishouYear}'"&&$4=="'$taishoumonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 1:表示順 2:事業者タイプ 3:サービス区分 4:実績確定フラグ 5:予定データ値 6:実績データ値
+# 7:サービス開始時間 8:サービス終了時間 9:供給者ID 10:介護保険対象区分
+# 11:付随費用
+  awk '$8!=$10{print "'$Riyoushamei'",$5,$6,$7,$8,$10,$12,$13,$14,$15,$17}'  |
+  LANG=C sort -k1,1n    |
+  awk '{print "l",$0}'  >>  ${tmp}-unmatch_record
+  fi
+  : ;done
+
+fi
+
+cp ${tmp}-unmatch_record ${work_dir}/unmatch_record
+
+cat ${tmp}-unmatch_record
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,627 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.TOUROKU
+# 介護保険情報登録
+#
+# Written by T.Osako (Tokyu-hands.co.jp) :20100615
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+cgi_dir="${home_dir}/UNEI/CGI"
+pompa_dir="${home_dir}/UNEI/POMPA/JIKOHOU"
+input_dir="${home_dir}/UNEI/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/JIKOHOU"
+data_dir="/DATA/E-LIFE/UNEI/JIKOHOU"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+parammime=$2
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+if [ "${MODE}" = "sakujyo" ] ; then
+  JIKOHOUHEADERID="$(nameread "JIKOHOUHEADERID"   $namedata)"
+  [ -z "${JIKOHOUHEADERID}" -o "${JIKOHOUHEADERID}" = "_" ] && error_exit "この報告書はまだ登録されておりません。"
+
+else
+  :
+fi
+# [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名を入力してください。"
+# [ -z "${Shimeikana}" -o "${Shimeikana}" = "_" ] && error_exit "氏名カナを入力してください。"
+# [ -z "${SeinengappiYear}" -o "${SeinengappiYear}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiDay}" -o "${SeinengappiDay}" = "_" ] && error_exit "生年月日を入力してください。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# データの取得
+SHISETSUID="$(nameread "SHISETSUID"   $namedata)"
+if [ -z "${SHISETSUID}" -o "${SHISETSUID}" != "_" ] ; then
+  Shisetsu="${SHISETSUID}"
+else
+  Shisetsu="$(nameread "Shisetsu"   $namedata)"
+fi
+HoukokushoFlg="$(nameread "Houkokusho"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#H1="$(nameread "Koushinbi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H3="$(nameread "Houkokubi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g' | sed 's/\///g')"
+H4="$(nameread "Busho"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')" 
+H5="$(nameread "Houkokusha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')" 
+H6="$(nameread "Shisetsu"     $namedata)" 
+H7="$(nameread "Tateya"     $namedata)"  
+H8="$(nameread "Floor"     $namedata)" 
+H9="$(nameread "Kyoshitsu"     $namedata)" 
+H10="$(nameread "Nyuukyosha"     $namedata)" 
+H11="$(nameread "Nenrei"     $namedata)" 
+H12="$(nameread "Kaigodo"     $namedata)"  
+H13="$(nameread "Hasseibi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g' | sed 's/\///g')" 
+H14="$(nameread "Hasseijikan"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#H13="$(nameread "Hasseibasho"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')" 
+H15="_" 
+H16="$(nameread "HasseibashoKyoshitsuNo"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H17="$(nameread "HasseibashoSonota"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#H16="$(nameread "Kubun"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H18="_"
+H19="$(nameread "KubunSonota"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#H18="$(nameread "Shintai"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H20="_"
+H21="$(nameread "ShintaiSonota"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+
+
+S4="$(nameread "ShintaiOmote"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S5="$(nameread "ShintaiUra"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S6="$(nameread "Hasseiji"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S7="$(nameread "HasseijiTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S8="$(nameread "HasseijiTaiou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S9="$(nameread "HasseijiTaiouTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S10="$(nameread "Shochi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S11="$(nameread "ShochiBikou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S12="$(nameread "ShochiTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S13="$(nameread "Jyushin"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S14="$(nameread "Byouin"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S15="$(nameread "ByouinKa"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S16="$(nameread "JyushinTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S17="$(nameread "ShinsatsuNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S18="$(nameread "ShinsatsuKeika"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S19="$(nameread "Renrakusaki"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S20="$(nameread "RenrakusakiZokugara"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S21="$(nameread "RenrakuNengetsu"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S22="$(nameread "RenrakuJikan"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S23="$(nameread "RenrakuHouhou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S24="$(nameread "RenrakuHouhouBikou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S25="$(nameread "RenrakuTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S26="$(nameread "HoukokugoYoubou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S27="$(nameread "HoukokugoYoubouTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S28="$(nameread "JikoGennin"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S29="$(nameread "JikoGenninTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S30="$(nameread "KongoYobou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S31="$(nameread "KongoYobouTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#S32="$(nameread "SoudaninIken"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#S33="$(nameread "SoudaninIkenTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#相談員意見の欄は排除なのでアンスコ
+S32="_"
+S33="_"
+S34="$(nameread "SonotaIken"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S35="$(nameread "SonotaIkenTaiousha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S36="$(nameread "Bikou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S37="$(nameread "JikoNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S38="$(nameread "TaiouJyoukyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S39="$(nameread "HiyariNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S40="$(nameread "NazeHiyari"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S41="$(nameread "HiyariTaiou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+S42="_"
+S43="_"
+S44="_"
+S45="_"
+S46="_"
+
+# 建屋～入居者、居室など空の場合は"_"を補完
+[ -z "$H7" ] && H7="_"
+[ -z "$H8" ] && H8="_"
+[ -z "$H9" ] && H9="_"
+[ -z "$H10" ] && H10="_"
+[ -z "$H11" ] && H11="_"
+[ -z "$H12" ] && H12="_"
+[ -z "$H16" ] && H16="_"
+[ -z "$S20" ] && S20="_"
+
+# 報告書が3,4(利用者ではなく施設のものであった場合、利用者情報を空にする)
+if [ "${HoukokushoFlg}" = "3" ] ; then
+  H7="_"
+  H8="_"
+  H9="_"
+  H10="_"
+  H11="_"
+  H12="_"
+  H19="_"
+  H21="_"
+  
+  S4="_"
+  S5="_"
+  S6="_"
+  S7="_"
+  S8="_"
+  S9="_"
+  S10="_"
+  S11="_"
+  S12="_"
+  S13="_"
+  S14="_"
+  S15="_"
+  S16="_"
+  S17="_"
+  S18="_"
+  S19="_"
+  S20="_"
+  S21="_"
+  S22="_"
+  S23="_"
+  S24="_"
+  S25="_"
+  S26="_"
+  S27="_"
+  S28="_"
+  S29="_"
+  S30="_"
+  S31="_"
+#  S32="$(nameread "SoudaninIken3"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  S33="_"
+  S34="$(nameread "SonotaIken3"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  S35="_"
+  
+  S39="_"
+  S40="_"
+  S41="_"
+  
+elif [ "${HoukokushoFlg}" = "4" ] ; then
+  H7="_"
+  H8="_"
+  H9="_"
+  H10="_"
+  H11="_"
+  H12="_"
+  H19="_"
+  H21="_"
+  
+  S4="_"
+  S5="_"
+  S6="_"
+  S7="_"
+  S8="_"
+  S9="_"
+  S10="_"
+  S11="_"
+  S12="_"
+  S13="_"
+  S14="_"
+  S15="_"
+  S16="_"
+  S17="_"
+  S18="_"
+  S19="_"
+  S20="_"
+  S21="_"
+  S22="_"
+  S23="_"
+  S24="_"
+  S25="_"
+  S26="_"
+  S27="_"
+  S28="_"
+  S29="_"
+  S30="_"
+  S31="_"
+#  S32="$(nameread "SoudaninIken4"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  S33="_"
+  S34="$(nameread "SonotaIken4"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  S35="_"
+  
+  S37="_"
+  S38="_"
+else
+  S37="_"
+  S38="_"
+  S39="_"
+  S40="_"
+  S41="_"
+#  [ -z "${S32}" -o "${S32}" = "_" ] && S32="$(nameread "SoudaninIken2" $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  [ -z "${S34}" -o "${S34}" = "_" ] && S34="$(nameread "SonotaIken"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+fi
+
+
+# 発生場所
+cat ${namedata} |
+awk '$1~/^Hasseibasho[0-9]/{print $NF}' |
+LANG=C sort -u  > $tmp-hassei_basho
+
+# 区分
+cat ${namedata} |
+awk '$1~/^Kubun[0-9]/{print $NF}' |
+LANG=C sort -u  > $tmp-kubun
+
+# 身体の状況
+cat ${namedata} |
+awk '$1~/^Shintai[0-9]/{print $NF}' |
+LANG=C sort -u  > $tmp-shintai
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# チェック
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 事故報ヒヤリヘッダーテーブル
+  # 発生場所テーブル
+  # 区分テーブル
+  # 身体テーブル
+# 事故報ヒヤリ詳細テーぶる
+#--------------------------------------------------------------
+  #####################
+  # 1:事故報ヒヤリヘッダーテーブル
+  #####################
+
+# 追加データの作成
+  echo "${HoukokushoFlg}" \
+       "${H3}" "${H4}" "${H5}" "${H6}" "${H7}" \
+       "${H8}" "${H9}" "${H10}" "${H11}" "${H12}" \
+       "${H13}" "${H14}" "${H15}" "${H16}" "${H17}" \
+       "${H18}" "${H19}" "${H20}" "${H21}" \
+        "_" "_" "_" "_" "_" \
+        "1" "${cur_time}" "${USERID}" >  $tmp-data
+# 1:報告書フラグ 
+# 2:報告日      3:部署        4:報告者       5:施設              6:建屋   
+# 7:フロア      8:居室        9:利用者ID     10:年齢             11:介護度
+# 12:発生日     13:発生時間   14:発生場所    15:発生場所居室番号 16:発生場所備考
+# 17:区分       18:区分備考   19:身体の状況  20:身体の状況備考
+# 21:予備項目１ 22:予備項目２ 23:予備項目３  24:予備項目４       25:予備項目５ 
+# 26:湯交付ラグ 27:更新日     28:更新者
+
+[ -s $tmp-data -a "$(retu $tmp-data)" = "28" ] || error_exit 
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 事故報ヘッダーIDの取得
+JIKOHOUHEADERID="$(nameread "JIKOHOUHEADERID"  $namedata | sed 's/###JIKOHOUHEADERID###//g')"
+
+if [ -z "${JIKOHOUHEADERID}" -o "${JIKOHOUHEADERID}" = "_" ] ; then
+    last_no="1"
+
+  mkdir -p ${kanri_dir}
+  [ -s ${kanri_dir}/JIKOHOU_HEADER_ID ] || echo "0000001" > ${kanri_dir}/JIKOHOU_HEADER_ID
+
+  get_no ${last_no} ${kanri_dir}/JIKOHOU_HEADER_ID > $tmp-jikohou_headerid
+  JIKOHOUHEADERID="$(cat $tmp-jikohou_headerid)"
+else
+  :
+fi
+
+# 事故報ヘッダーIDをつける
+awk '{print $0,"'${JIKOHOUHEADERID}'"}' $tmp-data |
+self NF 1 2/NF-1                               > $tmp-jikohou_header_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+  #######################
+  # 2:発生場所、区分、身体の状況
+  #######################
+
+# 発生場所
+if [ -s $tmp-hassei_basho ] ; then
+  # 更新データ
+  cat $tmp-hassei_basho |
+  awk '{print "'${JIKOHOUHEADERID}'","'${Shisetsu}'",$0,"1","'${cur_time}'","'${USERID}'"}' > $tmp-hassei_basho_input_before
+
+  # 削除データ
+  cat ${pompa_dir}/HASSEI_BASHO_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"'   > $tmp-hasseibasho_kako
+
+  if [ -s $tmp-hasseibasho_kako ] ; then
+    cat $tmp-hasseibasho_kako |
+    cjoin1 +ng key=1/3 $tmp-hassei_basho_input_before - 2> $tmp-hasseibasho_kako2
+    if [ -s $tmp-hasseibasho_kako2 ] ; then
+      cat $tmp-hasseibasho_kako2 |
+      awk '{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' |
+      cat $tmp-hassei_basho_input_before -
+    else
+      cat $tmp-hassei_basho_input_before
+    fi > $tmp-hassei_basho_input
+  else
+    cat $tmp-hassei_basho_input_before > $tmp-hassei_basho_input
+  fi
+
+else
+   # 削除データ
+  cat ${pompa_dir}/HASSEI_BASHO_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' > $tmp-hassei_basho_input 
+fi
+
+# 区分
+if [ -s $tmp-kubun ] ;then
+  # 更新データ
+  cat $tmp-kubun |
+  awk '{print "'${JIKOHOUHEADERID}'","'${Shisetsu}'",$0,"1","'${cur_time}'","'${USERID}'"}' > $tmp-kubun_input_before
+
+  # 削除データ
+  cat ${pompa_dir}/KUBUN_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"'   > $tmp-kubun_kako
+
+  if [ -s $tmp-kubun_kako ] ; then
+    cat $tmp-kubun_kako |
+    cjoin1 +ng key=1/3 $tmp-kubun_input_before - 2> $tmp-kubun_kako2
+    if [ -s $tmp-kubun_kako2 ] ; then
+      cat $tmp-kubun_kako2 |
+      awk '{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' |
+      cat $tmp-kubun_input_before -
+    else
+      cat $tmp-kubun_input_before
+    fi > $tmp-kubun_input
+  else
+    cat $tmp-kubun_input_before > $tmp-kubun_input
+  fi
+
+else
+   # 削除データ
+  cat ${pompa_dir}/KUBUN_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' > $tmp-kubun_input
+fi
+
+# 身体の状況
+if [ -s $tmp-shintai ] ;then
+  # 更新データ
+  cat $tmp-shintai |                  
+  awk '{print "'${JIKOHOUHEADERID}'","'${Shisetsu}'",$0,"1","'${cur_time}'","'${USERID}'"}' > $tmp-shintai_input_before
+
+  # 削除データ
+  cat ${pompa_dir}/SHINTAI_JYOUKYOU_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"'   > $tmp-shintai_kako
+
+  if [ -s $tmp-shintai_kako ] ; then
+    cat $tmp-shintai_kako |
+    cjoin1 +ng key=1/3 $tmp-shintai_input_before - 2> $tmp-shintai_kako2
+    if [ -s $tmp-shintai_kako2 ] ; then
+      cat $tmp-shintai_kako2 |
+      awk '{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' |
+      cat $tmp-shintai_input_before -
+    else
+      cat $tmp-shintai_input_before
+    fi > $tmp-shintai_input
+  else
+    cat $tmp-shintai_input_before > $tmp-shintai_input
+  fi
+
+else
+  # 削除データ
+  cat ${pompa_dir}/SHINTAI_JYOUKYOU_DATA |
+  awk '$1=="'${JIKOHOUHEADERID}'"{print $1,$2,$3,"9","'${cur_time}'","'${USERID}'"}' > $tmp-shintai_input
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+  #######################
+  # 3:事故報ヒヤリ詳細テーブル
+  #######################
+echo "${JIKOHOUHEADERID}" "${HoukokushoFlg}" \
+     "${S4}" "${S5}" "${S6}" "${S7}" "${S8}" \
+     "${S9}" "${S10}" "${S11}" "${S12}" "${S13}" \
+     "${S14}" "${S15}" "${S16}" "${S17}" "${S18}" \
+     "${S19}" "${S20}" "${S21}" "${S22}" "${S23}" \
+     "${S24}" "${S25}" "${S26}" "${S27}" "${S28}" \
+     "${S29}" "${S30}" "${S31}" "${S32}" "${S33}" \
+     "${S34}" "${S35}" "${S36}" "${S37}" "${S38}" \
+     "${S39}" "${S40}" "${S41}" "${S42}" "${S43}" \
+     "${S44}" "${S45}" "${S46}" \
+     "1" "${cur_time}" "${USERID}" >  $tmp-data2
+# 1:事故ヒヤリヘッダーID       2:報告書フラグ        
+# 3:身体部位(表)               4:身体部位(裏)             5:発生時の状況              6:発生時の状況対応者       7:上記に対する対応  
+# 8:上記に対する対応の対応者   9:処置有無                 10:処置備考                 11:処置対応者              12:受診の有無     
+# 13:受診病院                  14:受診病院科              15:受診対応者               16:診察の内容経過          17:診察の内容経過対応者  
+# 18:連絡した家族              19:連絡した家族続柄        20:連絡した日               21:連絡した時間            22:連絡した方法    
+# 23:連絡した方法備考          24:連絡した対応者          25:連絡後のご家族の要望など 26:連絡後のご家族～対応者  27:事故原因など      
+# 28:事故原因など対応者        29:今後の予防対策          30:今後の予防対策対応者     31:相談員の意見            32:対応者
+# 33:その他職員からの意見      34:対応者                  35:備考                     36:事故内容                37:対応状況と対策
+# 38:ヒヤリハットした内容      39:なぜヒヤリハットしたか  40:どんな対応をしたか、
+# 41:予備項目①                 42:予備項目②               43:予備項目③                44:予備項目④               45:予備項目⑤
+# 46:削除ラグ                  47:更新日                  48:更新者
+[ -s $tmp-data2 -a "$(retu $tmp-data2)" = "48" ] || error_exit
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 事故報詳細IDの取得
+# 詳細IDは毎度新しい番号を取得して付与！
+#JIKOHOUSHOUSAIID="$(nameread "JIKOHOUSHOUSAIID"  $namedata)"
+
+#if [ -z "${JIKOHOUSHOUSAIID}" -o "${JIKOHOUSHOUSAIID}" = "_" ] ; then
+
+    last_no="1"
+
+  mkdir -p ${kanri_dir}/${JIKOHOUHEADERID}
+  [ -s ${kanri_dir}/${JIKOHOUHEADERID}/JIKOHOU_SHOUSAI_ID ] || echo "001" > ${kanri_dir}/${JIKOHOUHEADERID}/JIKOHOU_SHOUSAI_ID
+
+  get_no ${last_no} ${kanri_dir}/${JIKOHOUHEADERID}/JIKOHOU_SHOUSAI_ID > $tmp-jikohou_shousaiid
+  JIKOHOUSHOUSAIID="$(cat $tmp-jikohou_shousaiid)"
+#else
+#  :
+#fi
+
+# 事故報ヘッダーIDをつける
+awk '{print $0,"'${JIKOHOUSHOUSAIID}'"}' $tmp-data2 |
+self 1 NF 2/NF-1                                    > $tmp-jikohou_shousai_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#--------------------------------------------------------------
+mkdir -p ${pompa_dir}/${JIKOHOUHEADERID}
+# 更新対象ファイルのリスト化
+
+# 今更ながら削除の場合の分岐
+if [ "${MODE}" = "sakujyo" ] ; then
+  cat $tmp-jikohou_header_input   |
+  awk '{print $0,"9"}'            |
+  self 1/NF-4 NF NF-2 NF-1        > $tmp-jikohou_sakujyo_header_input
+
+  cat $tmp-jikohou_shousai_input  |
+  awk '{print $0,"9"}'            |
+  self 1/NF-4 NF NF-2 NF-1        > $tmp-jikohou_sakujyo_shousai_input
+
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+JIKOHOU_HEADER JIKOHOU_HEADER
+${JIKOHOUHEADERID}/${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI ${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI
+FIN
+
+cat <<- FIN > $tmp-koushin_pompa
+jikohou_sakujyo_header JIKOHOU_HEADER 1 28 29 ${pompa_dir} ${input_dir}
+jikohou_sakujyo_shousai ${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI 2 48 49 ${pompa_dir}/${JIKOHOUHEADERID} ${input_dir}
+FIN
+
+else
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+JIKOHOU_HEADER JIKOHOU_HEADER
+${JIKOHOUHEADERID}/${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI ${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI
+FIN
+
+[ -s $tmp-hassei_basho_input ] && echo "HASSEI_BASHO_DATA HASSEI_BASHO_DATA" >> $tmp-target-table
+[ -s $tmp-kubun_input ] && echo "KUBUN_DATA KUBUN_DATA" >>  $tmp-target-table
+[ -s $tmp-shintai_input ] && echo "SHINTAI_JYOUKYOU_DATA SHINTAI_JYOUKYOU_DATA" >>  $tmp-target-table
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+jikohou_header JIKOHOU_HEADER 1 28 29 ${pompa_dir} ${input_dir}
+jikohou_shousai ${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI 2 48 49 ${pompa_dir}/${JIKOHOUHEADERID} ${input_dir}
+FIN
+
+[ -s $tmp-hassei_basho_input ] && echo "hassei_basho HASSEI_BASHO_DATA 3 5 6 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-kubun_input ] && echo "kubun KUBUN_DATA 3 5 6 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-shintai_input ] && echo "shintai SHINTAI_JYOUKYOU_DATA 3 5 6 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+#--------------------------------------------------------------
+fi
+
+
+mkdir -p ${pompa_dir}/back
+mkdir -p ${pompa_dir}/${JIKOHOUHEADERID}
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#cp $tmp-* /home/hands/work/okuda
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result touroku_ok" "${JIKOHOUHEADERID}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

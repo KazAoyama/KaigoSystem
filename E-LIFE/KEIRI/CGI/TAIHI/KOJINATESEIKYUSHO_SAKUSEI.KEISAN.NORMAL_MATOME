@@ -1,0 +1,141 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_MATOME 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# ファイル初期化
+: > ${tmp}-tujyou_zeikeisango1
+: > ${tmp}-tujyou_zeikeisango2
+
+rm ${tmp}-err
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 通常処理の日割りとそうでないものあわせて税計算する
+
+# ---------------------
+# 日割りするものしないものあわせる
+cat ${tmp}-tujyou_hiwari_taisyou_kakutei ${tmp}-tujyou_hiwari_taisyougai_kakutei > ${tmp}-tujyou_zeimae
+# 1:入居者ID          2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名          7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日       12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM     17:特販期間TO 18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:税計算前確定金額 22:特別処理フラグ
+# ---------------------
+
+# ---------------------
+# ファイルがなければ終了
+[ ! -s ${tmp}-tujyou_zeimae ] && exit 0
+# ---------------------
+
+# ---------------------
+# 税区分をみて課税については計算する
+# 1:課税
+# 2:非課税
+# -
+# 課税分の処理
+cat ${tmp}-ZEIRITSU |
+while read zeiritsu zei_from zei_to ; do
+  cjoin0 key=7 <(echo "1") ${tmp}-tujyou_zeimae |
+  awk '{if($20>="'${zei_from}'" && $20<="'${zei_to}'")
+          {zeigaku=int($21*'${zeiritsu}');
+           zeikomi=$21+zeigaku;
+          print $0,zeigaku,zeikomi,$7}}' - >> ${tmp}-tujyou_zeikeisango1
+  # 1:入居者ID          2:請求月          3:契約ID      4:利用料種別ID 5:契約枝番
+  # 6:利用料名          7:税区分          8:支払区分    9:費用算出方法 10:起算開始日
+  # 11:起算終了日       12:金額           13:特販ID     14:値引額      15:値引後金額
+  # 16:特販期間FROM     17:特販期間TO     18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+  # 21:税計算前確定金額 22:特別処理フラグ 23:税額       24:税込み金額  25:非課税フラグ
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+  [ ! -e ${tmp}-tujyou_zeimae ] && break;
+done
+
+# エラー判定
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(NORMAL_MATOME)"
+# ---------------------
+
+# ---------------------
+# 非課税ぶんの処理
+cjoin0 key=7 <(echo "2") ${tmp}-tujyou_zeimae |
+awk '{print $0,0,$21,$7}' -                   > ${tmp}-tujyou_zeikeisango2
+# 1:入居者ID          2:請求月          3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名          7:税区分          8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日       12:金額           13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM     17:特販期間TO     18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+# 21:税計算前確定金額 22:特別処理フラグ 23:税額       24:税込み金額  25:非課税フラグ
+# ---------------------
+
+# ---------------------
+# パイプでエラーがあったら落とす
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(NORMAL_MATOME)"
+# ---------------------
+
+# ---------------------
+# 税計算したファイルをあわせてinputのデータを作成する
+# キーに処理月をいれて、行分類フラグ(この明細はなんなのか)は施設利用料(＝月額利用料)なので10固定
+cat ${tmp}-tujyou_zeikeisango1 ${tmp}-tujyou_zeikeisango2                                   |
+awk '{print "'${seikyu_syori_month}'","10",$0,substr($20,1,4)"年"substr($20,5,2)"月分","_"}' - |
+# 1:請求年月      2:行分類フラグ              3:入居者ID          4:請求月          5:契約ID
+# 6:利用料種別ID  7:契約枝番                  8:利用料名          9:税区分          10:支払区分
+# 11:費用算出方法 12:起算開始日               13:起算終了日       14:金額           15:特販ID
+# 16:値引額       17:値引後金額               18:特販期間FROM     19:特販期間TO     20:起算開始月
+# 21:起算終了月   22:レコードが発生した年月日 23:税計算前確定金額 24:特別処理フラグ 25:税額
+# 26:税込み金額   27:非課税フラグ             28:内訳1            29:アンスコ
+# -
+# ならべかえ
+self 1 3 2 5/7 22 27 23 26 25 NF-1 NF 24 NF NF NF NF NF NF NF NF NF NF                      |
+# 1:請求年月 2:入居者ID                 3:行分類フラグ 4:契約ID          5:利用料種別ID
+# 6:契約枝番 7:レコードが発生した年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額    12:内訳1                   13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備    17:予備                    18:予備        19:予備           20:予備
+# 21:予備    22:予備                    23:予備        24:予備
+# -
+# 削除フラグと更新日と更新時間を入れる
+awk '{print $0,"1","'${current_time}'","'${userid}'"}' -                                    |
+# 1:請求年月  2:入居者ID                 3:行分類フラグ 4:契約ID          5:利用料種別ID
+# 6:契約枝番  7:レコードが発生した年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1                   13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備                    18:予備        19:予備           20:予備
+# 21:予備     22:予備                    23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+LANG=C sort                                                                                 > ${tmp}-TUJYOU_INPUT #集計対象!!
+# ---------------------
+
+# ---------------------
+# パイプでエラーがあったら落とす
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(NORMAL_MATOME)"
+# ---------------------
+#---------------------------------------------------------------
+
+exit 0
+

@@ -1,0 +1,313 @@
+#!/bin/bash
+#
+# KIHONJOUHOU_ICHIRAN.EXCEL
+# 基本情報一覧　エクセル出力用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+if [ $(echo "${SHISETSUID}" | awk '$1~/^1/{print substr($1,1,1)}') = "1" ] ; then
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+else
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+fi
+
+
+#検索結果0件ならアラート出して終了
+if [ $(gyo "${data}") -eq 0 ] ;then
+  message="出力対象結果が0件です"
+cat <<- FIN > $tmp-html_0
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+
+cat $tmp-html_0
+
+rm -f $tmp-*
+exit 0
+fi
+
+
+
+#--------------------------------------------------------------
+# 表示順による並び替え
+
+    cat ${data} |
+# 1:居室番号    2:利用者(入居者)ID 3:利用者(入居者)氏名 4:利用者(入居者)氏名カナ 5:性別
+# 6:生年月日    7:年齢             8:契約ID             9:契約種類ID             10:契約種類名
+# 11:契約開始日 12:契約終了日      13:色                14:利用料                15:契約金
+# 16:施設ID     17:建屋ID          18:フロア            19:ユニットID
+
+   # 表示順による並べ替え
+    # 表示順1：居室番号で昇順
+     if [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "1" ] ; then
+       LANG=C sort -k1,2 -k1,1n
+     # 表示順2：居室番号で降順
+     elif [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "2" ] ;then
+       LANG=C sort -k1,2 -k1,1nr
+     # 表示順3：入居者名で昇順
+     elif [ "${HyoujiJyun}" == "2" -a "${HyoujiShoukou}" == "1" ] ;then
+       LANG=C sort -k4,4
+     # その他：入居社名で降順
+     else
+       LANG=C sort -r -k4,4
+     fi |
+     self 1 3 5 6 7 11 12 14 15 |
+     sed 's/<br>/,/g'           |
+     sed 's/_/@/g' > $tmp-listdata
+#------------------------------------------------------------------------------------
+#検索項目それぞれ
+#事業所名
+if [ "${Jigyousho}" != "_" -a "${Jigyousho}" != "" ] ;then
+cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+awk '$(NF-2)!="9"{print $1,$2}'         |
+join0 key=1 <(echo ${Jigyousho}) -      |
+self 2                                  > ${tmp}-jigyousho
+else
+:  > ${tmp}-jigyousho
+fi
+
+#ケアマネ名
+if [ "${Caremaneger}" != "_" -a "${Caremaneger}" != "" ] ;then
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON      |
+  awk '$(NF-2)!="9"{print $1,$2}'       |
+  join0 key=1 <(echo ${Caremaneger}) -      |
+  self 2                                  > ${tmp}-caremane 
+else
+  :  > ${tmp}-caremane
+fi
+
+#施設名
+if [ "${Shisetsu}" != "_" ] ;then
+   awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON   > ${tmp}-shisetsu
+else
+   : > ${tmp}-shisetsu
+fi
+
+#建屋名
+if [ ${Tateya} != "_" ] ;then
+  cat ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME |
+  join0 key=1 <(echo ${Tateya})             |
+  self  2                                    > ${tmp}-tateya
+else
+  : > ${tmp}-tateya 
+fi
+
+#フロア
+if [ ${Floor} != "_" ] ;then
+  echo ${Floor} >${tmp}-floor
+else
+  echo "全て"  > ${tmp}-floor
+fi
+#ユニット
+if [ ${Unit} != "_" ] ;then
+  cat  ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME |
+  join0 key=1 <(echo ${Unit}) -             |
+  self 2                                    >${tmp}-unit
+else
+  echo "全て" >  ${tmp}-unit
+fi
+#居室
+if [ ${Kyoshitsu} != "_" ] ;then
+  echo ${Kyoshitsu}                         > ${tmp}-kyoshitsu
+else
+  echo "全て" > ${tmp}-kyoshitsu
+fi
+#入居者名
+if [ ${Nyuukyosha} != "_" ] ;then
+  ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER |
+  join0 key=1 <(echo ${myuukyosha}) -   |
+  self 2                                > ${tmp}-nyuukyosha
+else
+  echo "全て" > ${tmp}-nyuukyosha
+fi
+#キーワード
+if [ ${Keyword}  != "_" ] ;then
+  echo ${Keyword}   > ${tmp}-keyword
+else
+  : > ${tmp}-keyword
+fi
+ 
+#性別
+if [ ${Seibetsu} ==  "1" ] ;then
+  echo "男"                              > ${tmp}-seibetsu
+elif [ ${Seibetsu} ==  "2" ] ;then
+  echo "女"                              > ${tmp}-seibetsu
+else
+  echo "全て"                            > ${tmp}-seibetsu   
+fi
+
+#生年月日------------------------------------------------------------------------
+
+[ -z "${MonthFrom}" ] && MonthFrom="_"
+[ "${MonthFrom}" != "_" ] && MonthFrom="$(echo "${MonthFrom}" | maezero 1.2)"
+[ -z "${DayFrom}" ]  && DayFrom="_"
+[ "${DayFrom}" != "_" ] && DayFrom="$(echo "${DayFrom}" | maezero 1.2)"
+
+# 生年月日From
+if [ "${YearFrom}" != "_" ] ; then
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${GengouFrom}'"{print $2}' |
+# 1:元号
+  # 月が入っていたらそのまま入っていなかったら1月を設定
+  if [ "${MonthFrom}" != "_" ] ; then
+   awk '{print $1"'${MonthFrom}'""月"}'
+  else
+   awk '{print $1"01""月"}'
+  fi |
+
+  # 日が入っていたらそのまま入っていなかったら1日を設定
+  if [ "${DayFrom}" != "_" ] ; then
+   awk '{print $1"'${DayFrom}'""日"}'
+  else
+   awk '{print $1"01""日"}'
+  fi
+
+fi                                                                      >  $tmp-seinegappi_from
+
+[ -z "${MonthTo}" ] && MonthTo="_"
+[ "${MonthTo}" != "_" ] && MonthTo="$(echo "${MonthTo}" | maezero 1.2)"
+[ -z "${DayTo}" ]  && DayTo="_"
+[ "${DayTo}" != "_" ] && DayTo="$(echo "${DayTo}" | maezero 1.2)"
+
+# 生年月日To
+if [ -n "${YearTo}" -a "${YearTo}" != "_" ] ; then
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${GengouTo}'"{print $2}' |
+# 1:元号
+
+  # 月が入っていたらそのまま入っていなかったら12月を設定
+  if [ ! -z "${MonthTo}" -a "${MonthTo}" != "_" ] ; then
+   awk '{print $1"'${MonthTo}'""月"}'
+  else
+   awk '{print $1"12月"}'
+  fi |
+
+  # 日が入っていたらそのまま入っていなかったら31日を設定
+  if [ ! -z "${DayTo}" -a "${DayTo}" != "_" ] ; then
+   awk '{print $1"'${DayTo}'""日"}'
+  else
+   awk '{print $1"31日"}'
+  fi
+
+fi                                                                      > $tmp-seinegappi_to
+
+#---------------------------------------------------------------------------------------
+#検索項目
+if [ ${HyoujiKoumoku} == "mimoto" ] ;then
+  echo "身元引受人情報"
+elif [ ${HyoujiKoumoku} == "kasankyuufu" ] ;then 
+  echo "加算給付同意"
+elif [ ${HyoujiKoumoku} == "nintei" ] ;then 
+  echo "認定機関"
+elif [ ${HyoujiKoumoku} == "keiyaku" ] ;then 
+  echo "感染症"
+else
+  :
+fi                                                                       > ${tmp}-kensakukoumoku
+
+#表示順
+# 表示順1：居室番号で昇順
+if [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "1" ] ; then
+   echo "居室番号昇順"
+# 表示順2：居室番号で降順
+elif [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "2" ] ;then
+  echo "居室番号降順"
+# 表示順3：入居者名で昇順
+elif [ "${HyoujiJyun}" == "2" -a "${HyoujiShoukou}" == "1" ] ;then
+  echo "入居者名昇順" 
+# その他：入居社名で降順
+else
+  echo "入居者名降順" 
+fi                                                                        > ${tmp}-hyoujijun
+
+# 退去者表示有無
+if [ "${TaikyoshaHyouji}" == "1" ] ; then                                                               
+  echo "有"
+else
+  echo "無"
+fi                                                                       > ${tmp}-taikyoHyouji
+
+
+
+#-------------------------------------------------------------f-
+# 入力データのチェック
+
+# Excel出力
+download_dir=$home_dir/UNEI/DOWNLOAD
+# 以前に作成したExcelは削除
+#rm -f ${download_dir}/${download_dir}/kihon_ichiran_mimoto_*_download.xls
+
+TEMPLA=${home_dir}/UNEI/TEMPLATE/KIHON_ICHIRAN_NYUUKYOKEIYAKU_TMP.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-jigyousho \
+                    1 b5 $tmp-shisetsu                  \
+                    1 b6 $tmp-unit                      \
+                    1 b7 $tmp-keyword                   \
+                    1 b8 $tmp-kensakukoumoku           \
+                    1 b9 ${tmp}-hyoujijun               \
+                    1 d4 ${tmp}-caremane                \
+                    1 d5 ${tmp}-tateya                  \
+                    1 b10 ${tmp}-taikyoHyouji          \
+                    1 d6 ${tmp}-kyoshitsu               \
+                    1 d7 ${tmp}-seibetsu                \
+                    1 f5 ${tmp}-floor                   \
+                    1 f6 ${tmp}-nyuukyosha              \
+                    1 f7 ${tmp}-seinegappi_from         \
+                    1 h7 ${tmp}-seinegappi_to           \
+                    1 a14 ${tmp}-listdata > ${download_dir}/kihon_ichiran_keiyaku_$$_download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/UNEI/DOWNLOAD/kihon_ichiran_keiyaku_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

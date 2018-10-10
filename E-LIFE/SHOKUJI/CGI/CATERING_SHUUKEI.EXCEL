@@ -1,0 +1,157 @@
+#!/bin/bash
+#
+# CATERING_SHUUKEI.EXCEL
+# ケータリング・ルームサービス食事集計表EXCELCGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+schedule_dir=${home_dir}/UNEI/POMPA/SCHEDULE
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# 施設
+#Shisetsu=$(nameread "Shisetsu" ${namedata})
+Shisetsu=$(nameread "SHISETSUID" ${namedata})
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread "shisetsu" ${namedata})"
+Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア　#TODO 従業員マスタからの処理
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+# 施設名
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+awk '$1=="'${Shisetsu}'"{print $2}' > $tmp-shisetsumei
+
+# 表示期間
+TaishouYear="$(nameread "TaishouYear" ${namedata})"
+TaishouMonth="$(nameread "TaishouMonth" ${namedata} | maezero 1.2)"
+TaishouNengetsu="$(echo "${TaishouYear}""${TaishouMonth}")"
+
+# 月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"年"substr($1,5,2)*1"月"}' > $tmp-header-nengetsu
+
+
+# ケータリング・ルームサービス集計表
+:> $tmp-catering_roomservice_data
+# 当月の食事実績
+if [ -s ${schedule_dir}/SCHEDULE_CATERING_ORDER ] ; then
+# 有効
+# 1:施設         2:スケジュールID  3:日程                                4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数    8:キャンセル日付                      9:食事実績ID1 10:食事実績ID2
+# 11:利用者ID    12:食事タイミング 13:ルームサービス・ケータリングフラグ
+  awk '$(NF-2)!="9"' ${schedule_dir}/SCHEDULE_CATERING_ORDER |
+# 施設
+  awk '$1=="'${Shisetsu}'"' |
+# キャンセル入ってない
+  awk '$8=="_"' |
+# 対象年月
+  awk 'substr($3,1,6)=="'${TaishouNengetsu}'"' |
+  tee $tmp-roomservice_shukeiyou |
+# 注文数が"_"の場合、0に変更
+# 1:ルームサービス・ケータリングフラグ 2:メニューID 3:注文数(入居者) 4:注文数(ゲスト) 5:注文数（入居者＋ゲスト）
+  awk '{if($6=="_"){$6=0};if($7=="_"){$7=0};print $13,$5,$6,$7,$6+$7}' |
+  LANG=C sort -k1,2 |
+  sm2 1 2 3 5 > $tmp-catering_shukei_data
+fi
+
+[ $(gyo $tmp-catering_shukei_data) -eq 0 ] && echo "_" "_" "_" "_" "_" > $tmp-catering_shukei_data
+
+# メニュー抽出
+# 1:メニューID 2:メニュー名 3:入居者価格 4:ゲスト価格 5:GH単価
+self 1 2 6 7 19 ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU > $tmp-menu_master
+
+# 税率取得
+zei_taishou_date=$(echo "${TaishouNengetsu}01")
+
+cp -p $tmp-catering_shukei_data $work_dir/catering_shukei_data
+cp -p $tmp-menu_master $work_dir/menu_master
+
+# 1:税率 2:有効開始日 3:有効終了日
+self 2 3 4 ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU |
+awk '$2<="'${zei_taishou_date}'"&&"'${zei_taishou_date}'"<=$3{print $1}' > $tmp-zeiritsu
+
+zeiritsu_tmp=$(cat $tmp-zeiritsu)
+zeiritsu=$(echo ${zeiritsu_tmp} | lcalc '$1+1')
+
+cat $tmp-catering_shukei_data |
+LANG=C sort -k2,2 |
+join1 key=2 $tmp-menu_master |
+# 1:ルームサービス・ケータリングフラグ 2:メニューID     3:メニュー名     4:入居者価格               5:ゲスト価格
+# 6:GH価格                             7:注文数(入居者) 8:注文数(ゲスト) 9:注文数（入居者＋ゲスト）
+LANG=C sort -k1,2 |
+awk '{if($1=="0"){$1="ケータリング"}else{$1="ルームサービス"};print $1,$3,$4,$5,$6,$7,$8,$9}' |
+# 1:ルームサービス・ケータリングフラグ 2:メニュー名     3:入居者価格               4:ゲスト価格 5:GH価格
+# 6:注文数(入居者)                     7:注文数(ゲスト) 8:注文数（入居者＋ゲスト）
+lcalc '$1,$2,$6,$7,$8,$5,$8*$5*'${zeiritsu}',$3,$4,$6*$3*'${zeiritsu}'+$7*$4*'${zeiritsu}'' |
+# 1:ルームサービス・ケータリング 2:メニュー名 3:注文数(入居者) 4:注文数(ゲスト) 5:注文数(全)
+# 6:GH価格                       7:GH集計金額 8:入居者価格     9:ゲスト価格     10:イーライフ全金額
+marume 7.0 8.0 9.0 10.0 > $tmp-catering_roomservice_shukei_excel
+
+# ルームサービス集計回数
+# メニューは選択されていて、ルームサービス
+awk '$5!="_"&&$13=="1"{print $1,$2,$3,$12}' $tmp-roomservice_shukeiyou |
+LANG=C sort -k1,4 -u |
+gyo |
+awk '{print $1"件"}' > $tmp-room-service_shukei
+
+
+# Excel出力
+download_dir=$home_dir/SHOKUJI/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${Shisetsu}_catering_roomservice_shuukei_*_download.xls
+
+TEMPLA=${home_dir}/SHOKUJI/TEMPLATE/CATERING_SHUUKEI_FORM.xls
+Ehexcel < ${TEMPLA} 1 a4 $tmp-header-nengetsu \
+                    1 b4 $tmp-room-service_shukei \
+                    1 a8 $tmp-catering_roomservice_shukei_excel > ${download_dir}/${Shisetsu}_catering_roomservice_shuukei_$$_download.xls
+echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${Shisetsu}_catering_roomservice_shuukei_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,193 @@
+#!/bin/bash
+#
+# SERVICE_TOUROKU.TOUROKU : サービス料金登録
+#
+# Usage : SERVICE_TOUROKU.TOUROKU namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/SERVICE_TOUROKU"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+idkanri_dir="/DATA/E-LIFE/KEIRI/KANRI/ID"
+home_tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SERVICE_TOUROKU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 請求確定後かどうかチェック
+# 請求確定ファイルを取得
+if [ -s /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu ];then
+   cat /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu  |
+   awk '$1=="'$shisetsu'" && $4!="9"' |
+   self 2                           |
+   getlast 1 1                      |
+   awk '{print $1"31","'$hd_tatekae_hiduke'"}'   |
+   # 確定日付が対象年月日より大きい場合は確定済み
+   awk '$1>=$2'                     > $tmp-kakutei_nengetsu
+   [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "請求確定確認エラー"
+   if [ "$(gyo $tmp-kakutei_nengetsu)" != "0" ] ; then
+       exit 1
+   fi
+else
+  :
+fi
+
+
+# データを整形
+# 課税か非課税か
+kazei="$(cat ${master_tbl_dir}/SERVICE_MASTER |
+awk '$1=="'${shisetsu}'"'            |
+LANG=C sort -k3,3                    |
+join0 key=3 <(echo ${nyuryoku_service_koumoku}) |
+self 9 | tail -n1)"
+
+# 課税か非課税かで処理を分岐
+case ${kazei} in
+  1 )
+    # 消費税率を取得
+    cat ${home_tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU  |
+    # 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+    awk '$3<="'${hd_tatekae_hiduke}'" && $4>="'${hd_tatekae_hiduke}'"' |
+    self 2                                                     > ${tmp}-zeiritsu
+    
+    echo ${nyuryoku_riyosha_name} ${hd_tatekae_hiduke} ${nyuryoku_service_koumoku} ${nyuryoku_kingaku} ${nyuryoku_suryo} ${nyuryoku_biko} ${kazei} > ${tmp}-fromname
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量 6:備考 7:課税区分
+    
+    ycat ${tmp}-zeiritsu ${tmp}-fromname                |
+    # 1:税率 2:riyosha_id 3:日付 4:サービス項目 5:金額 6:数量 7:備考 8:課税区分
+tee ${work}/butabutabuta |
+    lcalc '$2,$3,$4,$5,$6,$5*(1+$1),$7,$8,$1'           |
+    marume -sage 6.0                                    |
+    lcalc '$1,$2,$3,$4,$5,$6*$5,$7,$8,$9'               |
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+    # 6:合計額 7:備考 8:課税区分 9:税率
+    lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$6/(1+$9)'        |
+    marume -sage 10.0                                   |
+    lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$6-$10,$6'        |
+    awk '{print $0,"'${input_tateya}'","'${userid}'"}'  |
+#    awk '{zei=$1*$5;komi=zei+$5;kingaku=komi*$6;print $2,$3,$4,$5,$6,kingaku,$7,$8,$1,zei,komi,"'${input_tateya}'","'${userid}'"}' |
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+    # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+    # 11:税込み金額 12:所属建屋 13:userid
+    marume -sage 11.0                                    > ${tmp}-input_data
+  ;;
+  0 )
+    echo ${nyuryoku_riyosha_name} ${hd_tatekae_hiduke} ${nyuryoku_service_koumoku} ${nyuryoku_kingaku} ${nyuryoku_suryo} ${nyuryoku_biko} ${kazei} |
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額 11:税込み金額 12:userid
+    awk '{kingaku=$4*$5;print $1,$2,$3,$4,$5,kingaku,$6,$7,"0","0",$4,"'${input_tateya}'","'${userid}'"}'                             |
+    # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+    # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+    # 11:税込み金額 12:所属建屋 13:userid
+    marume -sage 6.0                                    > ${tmp}-input_data
+  ;;
+esac
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# input_dataができたらIDを取得して保存
+# shuseiの場合は上書保存
+if [ -e ${tmp}-input_data ];then
+save_month=$(echo ${hd_tatekae_hiduke} | awk '{print substr($1,1,6)}')
+  case ${MODE} in
+    touroku )
+      if [ -e "${idkanri_dir}/SERVICE_TOUROKU" ];then
+          new_num="$(getno -s 1 ${idkanri_dir}/SERVICE_TOUROKU)"
+          echo ${new_num} > ${tmp}-new_num
+          mv ${tmp}-new_num ${idkanri_dir}/SERVICE_TOUROKU
+        else
+          new_num="$(echo "0000001")"
+          echo ${new_num} > ${idkanri_dir}/SERVICE_TOUROKU
+        fi
+      cat ${tmp}-input_data       |
+      awk '{print $0,"'${new_num}'","'${current_time}'"}'              > ${tmp}-input
+      # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+      # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+      # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+    ;;
+    uwagaki )
+      cat ${tmp}-input_data       |
+      awk '{print $0,"'${uwagaki_id}'","'${current_time}'"}'             > ${tmp}-input
+      # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+      # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+      # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+    ;;
+  esac
+
+  # INPUTデータを保存
+  mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-input ${input_dir}/${today}/SERVICE_TOUROKU.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+  # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+  # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+  # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+
+  # POMPA
+  mkdir -p ${pompa_dir}/${shisetsu}/${save_month}
+  lock_file=${pompa_dir}/SERVICE_TOUROKU.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  if [ -e ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.SERVICE_TOUROKU ];then
+    cat ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.SERVICE_TOUROKU ${tmp}-input |
+    LANG=C sort -k14,14n -k15,15n                                                   |
+    getlast 14 14                                                                   |
+    LANG=C sort -k1,1n -k2,2n 
+  else
+    cat ${tmp}-input                                                                 
+  fi                                                                                 > ${tmp}-pompa
+  cp -p ${tmp}-pompa ${pompa_dir}/${shisetsu}/${save_month}/${save_month}.SERVICE_TOUROKU
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  mkdir -p ${seikyu_dir}/${shisetsu}/${save_month}
+  cp -p ${tmp}-pompa ${seikyu_dir}/${shisetsu}/${save_month}/${save_month}.SERVICE_TOUROKU
+else
+  :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+cat $tmp-pompa
+
+rm -f ${tmp}-*
+exit 0
+

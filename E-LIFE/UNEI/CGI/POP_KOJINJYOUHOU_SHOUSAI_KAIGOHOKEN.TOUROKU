@@ -1,0 +1,403 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.TOUROKU
+# 個人情報詳細　介護保険POPUP
+#
+# Written by E.Okuda 2013/12/16
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "result ng"
+  echo "message ${message}"
+  rm -f $tmp-*
+  exit 1
+}
+
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者データが異常です。"
+[ -z "${KaigoHokenshaBangou}" -o "${KaigoHokenshaBangou}" = "_" ] && error_exit "保険者番号を入力してください。"
+[ -z "${KaigoHiHokenshaBangou}" -o "${KaigoHiHokenshaBangou}" = "_" ] && error_exit "被保険者番号を入力してください。"
+[ -z "${KaigohokenNinteiYear}" -o "${KaigohokenNinteiYear}" = "_" ] && error_exit "認定年月を入力してください。"
+[ -z "${KaigohokenNinteiMonth}" -o "${KaigohokenNinteiMonth}" = "_" ] && error_exit "認定年月を入力してください。"
+[ -z "${KaigohokenNinteiDay}" -o "${KaigohokenNinteiDay}" = "_" ] && error_exit "認定年月を入力してください。"
+[ -z "${KaigohokenYuukoukigenFromYear}" -o "${KaigohokenYuukoukigenFromYear}" = "_" ] && error_exit "有効期間を入力してください。"
+[ -z "${KaigohokenYuukoukigenFromMonth}" -o "${KaigohokenYuukoukigenFromMonth}" = "_" ] && error_exit "有効期間を入力してください。"
+[ -z "${KaigohokenYuukoukigenFromDay}" -o "${KaigohokenYuukoukigenFromDay}" = "_" ] && error_exit "有効期間を入力してください。"
+[ -z "${KaigohokenYuukoukigenToYear}" -o "${KaigohokenYuukoukigenToYear}" = "_" ] && error_exit "有効期間を入力してください。"
+[ -z "${KaigohokenYuukoukigenToMonth}" -o "${KaigohokenYuukoukigenToMonth}" = "_" ] && error_exit "有効期間を入力してください。"
+[ -z "${KaigohokenYuukoukigenToDay}" -o "${KaigohokenYuukoukigenToDay}" = "_" ] && error_exit "有効期間を入力してください。"
+#[ -z "${KyufuWariai}" -o "${KyufuWariai}" = "_" ] && error_exit "給付割合が設定されていません。"
+
+
+#kyufuwariaiyuko="1"
+# 開始日がセットされていない場合は、今日の日付
+#defaultStartDate=$(date +%Y%m%d)
+#[ -z "${KyufuWariaiStart}" -o "${KyufuWariaiStart}" = "_" ] && KyufuWariaiStart=${defaultStartDate}
+# 終了日がセットされていない場合は99999999
+#[ -z "${KyufuWariaiEnd}" -o "${KyufuWariaiEnd}" = "_" ] && KyufuWariaiEnd="99999999"
+
+#setKyufuWariaiStart=$(echo "${KyufuWariaiStart}" | sed 's/-//g')
+#setKyufuWariaiEnd=$(echo "${KyufuWariaiEnd}" | sed 's/-//g')
+
+# レコードを削除したい時は開始日と終了日を同じにする
+#[ "${setKyufuWariaiStart}" -eq "${setKyufuWariaiEnd}" ] && kyufuwariaiyuko="9"
+#:> $tmp-choufuku-check
+
+#if [ "$kyufuwariaiyuko" = "1" ]; then
+#  if [ -s ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI ] ; then
+#     awk '$(NF-2)!="9"&&$1=="'${RIYOUSHAID}'"{print $2,$3}' ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI |
+#     # 開始日が同じ場合は修正とみなしてチェックからは外す
+#     awk '$1!="'$setKyufuWariaiStart'"' |
+#     awk '"'$setKyufuWariaiStart'"<=$2&&"'$setKyufuWariaiEnd'">=$1' > $tmp-choufuku-check
+#  fi
+#fi
+
+#[ "$(gyo $tmp-choufuku-check)" != "0" ] && error_exit "給付割合の期間が重複しています"
+     
+
+# 1:利用者ID 2:給付割合適用開始日 3:給付割合適用終了日 4:給付割合 5:有効フラグ
+# 6:ログ時間 7:ユーザID
+#echo "${RIYOUSHAID}" "${setKyufuWariaiStart}" "${setKyufuWariaiEnd}" "${KyufuWariai}" "${kyufuwariaiyuko}" "${cur_time}" "${USERID}" > $tmp-kyufu_wariai_rireki_input
+
+
+# 保険者マスタから保険者名をとってくる
+cat ${tbl_dir}/HOKENJA/HOKENJA_TABLE |
+awk '$2=="'${KaigoHokenshaBangou}'"&&$(NF-2)!="9"{print $4}' > $tmp-hokensha_name
+
+[ ! -s $tmp-hokensha_name ] && error_exit "保険者番号がマスタにないため登録できません。"
+
+
+# 介護保険番号チェック
+echo "${KaigoHokenshaBangou}"  |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-hokenshabangou_error
+echo "${KaigoHiHokenshaBangou}" |
+awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/' > $tmp-hi_hokenshabangou_error
+
+[ -s $tmp-hokenshabangou_error ] && error_exit "保険者番号の値が不正です。(6桁の数字で入力してください。)"
+[ -s $tmp-hi_hokenshabangou_error ] && error_exit "被保険者番号の値が不正です。(10桁の数字で入力してください。)" 
+
+# 年月日チェック 
+[ "${KaigohokenNinteiYear}" = "0" ] && error_exit "認定年月に0年は入力できません。"
+[ "${KaigohokenNinteiMonth}" = "0" ] && error_exit "認定年月に0月は入力できません。"
+[ "${KaigohokenNinteiDay}" = "0" ] && error_exit "認定年月に0日は入力できません。"
+[ "${KaigohokenYuukoukigenFromYear}" = "0" ] && error_exit "有効期限(自)に0年は入力できません。"
+[ "${KaigohokenYuukoukigenFromMonth}" = "0" ] && error_exit "有効期限(自)に0月は入力できません。"
+[ "${KaigohokenYuukoukigenFromDay}" = "0" ] && error_exit "有効期限(自)に0日は入力できません。"
+[ "${KaigohokenYuukoukigenToYear}" = "0" ] && error_exit "有効期限(至)に0年は入力できません。"
+[ "${KaigohokenYuukoukigenToMonth}" = "0" ] && error_exit "有効期限(至)に0月は入力できません。"
+[ "${KaigohokenYuukoukigenToDay}" = "0" ] && error_exit "有効期限(至)に0日は入力できません。"
+
+echo "${KaigohokenNinteiYear}"   |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-nintei_year_error
+
+echo "${KaigohokenNinteiMonth}"  |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-nintei_month_error
+echo "${KaigohokenNinteiMonth}"  | 
+awk '$1>12{print $0}'            > $tmp-nintei_month_error2
+
+echo "${KaigohokenNinteiDay}"    |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-nintei_day_error
+echo "${KaigohokenNinteiDay}"    |
+awk '$1>31{print $0}'            > $tmp-nintei_day_error2
+
+echo "${KaigohokenYuukoukigenFromYear}"   |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_from_year_error
+
+echo "${KaigohokenYuukoukigenFromMonth}"  |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_from_month_error
+echo "${KaigohokenYuukoukigenFromMonth}"  |
+awk '$1>12{print $0}'            > $tmp-yuukou_from_month_error2
+
+echo "${KaigohokenYuukoukigenFromDay}"    |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_from_day_error
+echo "${KaigohokenYuukoukigenFromDay}"    |
+awk '$1>31{print $0}'            > $tmp-yuukou_from_day_error2
+
+echo "${KaigohokenYuukoukigenToYear}"   |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_to_year_error
+
+echo "${KaigohokenYuukoukigenToMonth}"  |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_to_month_error
+echo "${KaigohokenYuukoukigenToMonth}"  |
+awk '$1>12{print $0}'            > $tmp-yuukou_to_month_error2
+
+echo "${KaigohokenYuukoukigenToDay}"    |
+awk '$1!~/^[0-9]*$/{print $0}'   |
+awk '$1!="_"{print $0}'          > $tmp-yuukou_to_day_error
+echo "${KaigohokenYuukoukigenToDay}"    |
+awk '$1>31{print $0}'            > $tmp-yuukou_to_day_error2
+
+[ -s $tmp-nintei_year_error ] && error_exit "認定年月の年号の値が不正です。"
+[ -s $tmp-nintei_month_error ] && error_exit "認定年月の月の値が不正です。"
+[ -s $tmp-nintei_month_error2 ] && error_exit "認定年月の月の値が不正です。"
+[ -s $tmp-nintei_day_error ] && error_exit "認定年月の日の値が不正です。"
+[ -s $tmp-nintei_day_error2 ] && error_exit "認定年月の日の値が不正です。"
+[ -s $tmp-yuukou_from_year_error ] && error_exit "有効期限(自)の年号の値が不正です。"
+[ -s $tmp-yuukou_from_month_error ] && error_exit "有効期限(自)の月の値が不正です。"
+[ -s $tmp-yuukou_from_month_error2 ] && error_exit "有効期限(自)の月の値が不正です。"
+[ -s $tmp-yuukou_from_day_error ] && error_exit "有効期限(自)の日の値が不正です。"
+[ -s $tmp-yuukou_from_day_error2 ] && error_exit "有効期限(自)の日の値が不正です。"
+[ -s $tmp-yuukou_to_year_error ] && error_exit "有効期限(至)の年号の値が不正です。"
+[ -s $tmp-yuukou_to_month_error ] && error_exit "有効期限(至)の月の値が不正です。"
+[ -s $tmp-yuukou_to_month_error2 ] && error_exit "有効期限(至)の月の値が不正です。"
+[ -s $tmp-yuukou_to_day_error ] && error_exit "有効期限(至)の日の値が不正です。"
+[ -s $tmp-yuukou_to_day_error2 ] && error_exit "有効期限(至)の日の値が不正です。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 西暦年月の準備
+
+# 認定年月
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+awk '$1=="'${KaigohokenNinteiGengou}'"{print substr($3,1,4)}' |
+awk '{print $1+"'${KaigohokenNinteiYear}'"-1}'     > $tmp-nintei_seireki
+
+[ ! -z "${KaigohokenNinteiMonth}" -o "${KaigohokenNinteiMonth}" != "_" ] && KaigohokenNinteiMonth_Maezero="$(echo ${KaigohokenNinteiMonth} | maezero 1.2)"
+[ ! -z "${KaigohokenNinteiDay}" -o "${KaigohokenNinteiDay}" != "_" ] && KaigohokenNinteiDay_Maezero="$(echo ${KaigohokenNinteiDay} | maezero 1.2)"
+KaigohokenNinteiSeireki=$(awk '{print $1"'${KaigohokenNinteiMonth_Maezero}'""'${KaigohokenNinteiDay_Maezero}'"}' $tmp-nintei_seireki)
+
+
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+awk '$1=="'${KaigohokenYuukoukigenFromGengou}'"{print substr($3,1,4)}' |
+awk '{print $1+"'${KaigohokenYuukoukigenFromYear}'"-1}'     > $tmp-yuukou_from_seireki
+
+[ ! -z "${KaigohokenYuukoukigenFromMonth}" -o "${KaigohokenYuukoukigenFromMonth}" != "_" ] && KaigohokenYuukoukigenFromMonth_Maezero="$(echo ${KaigohokenYuukoukigenFromMonth} | maezero 1.2)"
+[ ! -z "${KaigohokenYuukoukigenFromDay}" -o "${KaigohokenYuukoukigenFromDay}" != "_" ] && KaigohokenYuukoukigenFromDay_Maezero="$(echo ${KaigohokenYuukoukigenFromDay} | maezero 1.2)"
+KaigohokenYuukoukigenFromSeireki=$(awk '{print $1"'${KaigohokenYuukoukigenFromMonth_Maezero}'""'${KaigohokenYuukoukigenFromDay_Maezero}'"}' $tmp-yuukou_from_seireki)
+
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+awk '$1=="'${KaigohokenYuukoukigenToGengou}'"{print substr($3,1,4)}' |
+awk '{print $1+"'${KaigohokenYuukoukigenToYear}'"-1}'     > $tmp-yuukou_to_seireki
+
+[ ! -z "${KaigohokenYuukoukigenToMonth}" -o "${KaigohokenYuukoukigenToMonth}" != "_" ] && KaigohokenYuukoukigenToMonth_Maezero="$(echo ${KaigohokenYuukoukigenToMonth} | maezero 1.2)"
+[ ! -z "${KaigohokenYuukoukigenToDay}" -o "${KaigohokenYuukoukigenToDay}" != "_" ] && KaigohokenYuukoukigenToDay_Maezero="$(echo ${KaigohokenYuukoukigenToDay} | maezero 1.2)"
+KaigohokenYuukoukigenToSeireki=$(awk '{print $1"'${KaigohokenYuukoukigenToMonth_Maezero}'""'${KaigohokenYuukoukigenToDay_Maezero}'"}' $tmp-yuukou_to_seireki)
+
+####################
+# データのチェック
+####################
+
+# 認定年月より有効期限が前ならエラー※oありうることらしいのでこのバリデーションはなし
+#[ "${KaigohokenNinteiSeireki}" -gt "${KaigohokenYuukoukigenFromSeireki}" ] && error_exit "認定日より有効期限(自)が前のため不正です。"
+#[ "${KaigohokenNinteiSeireki}" -gt "${KaigohokenYuukoukigenToSeireki}" ] && error_exit "認定日より有効期限(至)が前のため不正です。"
+[ "${KaigohokenYuukoukigenFromSeireki}" -gt "${KaigohokenYuukoukigenToSeireki}" ] && error_exit "有効期限(自)より有効期限(至)が前は不正です。"
+
+# すでに登録されているデータと日付が被ってたらエラー
+if [ "${KaigohokenYuukoukigenFromSeireki}" != "_" ] ; then
+  cat ${pompa_dir}/RIYOUSHA_KAIGOHOKEN |
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度              4:保険者番号                                        5:保険者名
+# 6:被保険者番号          7:性別                  8:生年月日：和暦元号  9:生年月日：和暦誕生年                              10:生年月日：和暦誕生月
+# 11:生年月日：和暦誕生日 12:郵便番号             13:住所               14:認定年月：和暦元号                               15:認定年月：和暦年
+# 16:認定年月：和暦月     17:認定年月：和暦日     18:認定年月：西暦     19:有効期間FROM：和暦元号                           20:有効期間FROM：和暦年
+# 21:有効期間FROM：和暦月 22:有効期間FROM：和暦日 23:有効期間FROM：西暦 24:有効期間TO：和暦元号                             25:有効期間TO：和暦年
+# 26:有効期間TO：和暦月   27:有効期間TO：和暦日   28:有効期間TO：西暦   29:居宅介護支援者又は介護予防事業者及びその事業所名 30:認定審査会の意見及びサービスの種類指定
+# 31:備考
+awk '$1=="'${RIYOUSHAID}'"&&$2!="'${KAIGOHOKENID}'"&&$(NF-2)!="9"{print $0}'            |
+
+
+# 有効期間Fromが既存データの有効期間Toより前、あるいは既存データに有効期間Toが設定されていない
+awk '{if($23=="'${KaigohokenYuukoukigenFromSeireki}'"){print $0}
+    else if($23<"'${KaigohokenYuukoukigenFromSeireki}'"&&$28>"'${KaigohokenYuukoukigenFromSeireki}'"){print $0}
+    else if($23<"'${KaigohokenYuukoukigenFromSeireki}'"&&$28>"'${KaigohokenYuukoukigenFromSeireki}'"){print $0}
+    else if($23>"'${KaigohokenYuukoukigenFromSeireki}'"&&$23<"'${KaigohokenYuukoukigenToSeireki}'"){print $0}
+    }'  > $tmp-nengetsu_error
+fi
+
+[ -s $tmp-nengetsu_error ] && error_exit "有効期間に重複するデータがあります。"
+#----------------------
+# モードの区分け
+#-----------------------
+case "${MODE}" in
+   touroku)
+
+    # 連絡先IDが空(新規)の場合
+    if [ -z "${KAIGOHOKENID}" -o "${KAIGOHOKENID}" = "_" ] ; then
+    
+     ## 連絡先IDの発番 ##i
+     # 今回取得するID数
+      last_no="1"
+    
+      mkdir -p ${kanri_dir}/RIYOUSHA_KAIGOHOKEN_ID
+      [ -e ${kanri_dir}/RIYOUSHA_KAIGOHOKEN_ID/${RIYOUSHAID} ] || echo "001" > ${kanri_dir}/RIYOUSHA_KAIGOHOKEN_ID/${RIYOUSHAID}
+      get_no ${last_no} ${kanri_dir}/RIYOUSHA_KAIGOHOKEN_ID/${RIYOUSHAID} > $tmp-kaigohoken_id
+      kaigohoken_id="$(cat $tmp-kaigohoken_id)"
+
+      KyufuWariai=0.1
+    
+    else
+      kaigohoken_id="$(echo "${KAIGOHOKENID}")"
+
+      cat ${pompa_dir}/RIYOUSHA_KAIGOHOKEN |
+      awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KAIGOHOKENID}'"{print $32}' > $tmp-kizon_kyufuwariai
+      KyufuWariai=$(tail -1 $tmp-kizon_kyufuwariai)
+
+    fi
+
+    #--------------------------------------------------------------
+    # 作成テーブル  利用者連絡先テーブル
+    #--------------------------------------------------------------
+    
+      ##########################
+      # 1:利用者介護保険テーブル
+      ##########################
+    
+      # 追加データの作成
+      echo "${RIYOUSHAID}" "${kaigohoken_id}" "${Kaigodo}" "${KaigoHokenshaBangou}" "_" "${KaigoHiHokenshaBangou}" "${Seibetsu}" "${SeinengappiGengou}" "${SeinengappiYear}" "${SeinengappiMonth}" "${SeinengappiDay}" "${KaigohokenYuubinbangou}" "${KaigohokenJyuusho}" "${KaigohokenNinteiGengou}" "${KaigohokenNinteiYear}" "${KaigohokenNinteiMonth}" "${KaigohokenNinteiDay}" "${KaigohokenNinteiSeireki}" "${KaigohokenYuukoukigenFromGengou}" "${KaigohokenYuukoukigenFromYear}" "${KaigohokenYuukoukigenFromMonth}" "${KaigohokenYuukoukigenFromDay}" "${KaigohokenYuukoukigenFromSeireki}" "${KaigohokenYuukoukigenToGengou}" "${KaigohokenYuukoukigenToYear}" "${KaigohokenYuukoukigenToMonth}" "${KaigohokenYuukoukigenToDay}" "${KaigohokenYuukoukigenToSeireki}" "${KaigohokenJigyousho}" "${NinteishinsakaiIken}" "${KaigohokenBikou}" "${KyufuWariai}" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_kaigohoken_input
+    # 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度              4:保険者番号                                        5:保険者名
+    # 6:被保険者番号          7:性別                  8:生年月日：和暦元号  9:生年月日：和暦誕生年                              10:生年月日：和暦誕生月
+    # 11:生年月日：和暦誕生日 12:郵便番号             13:住所               14:認定年月：和暦元号                               15:認定年月：和暦年
+    # 16:認定年月：和暦月     17:認定年月：和暦日     18:認定年月：西暦     19:有効期間FROM：和暦元号                           20:有効期間FROM：和暦年
+    # 21:有効期間FROM：和暦月 22:有効期間FROM：和暦日 23:有効期間FROM：西暦 24:有効期間TO：和暦元号                             25:有効期間TO：和暦年
+    # 26:有効期間TO：和暦月   27:有効期間TO：和暦日   28:有効期間TO：西暦   29:居宅介護支援者又は介護予防事業者及びその事業所名 30:認定審査会の意見及びサービスの種類指定
+    # 31:備考  32:利用者負担率
+      [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+    ;;
+
+  sakujyo)
+
+    ##########################
+    # 1:利用者連絡先テーブル
+    ##########################
+    cat ${pompa_dir}/RIYOUSHA_KAIGOHOKEN |
+    awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KAIGOHOKENID}'"{print $0}' |
+    delf NF-2 NF-1 NF  |
+    awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'  > $tmp-riyousha_kaigohoken_input
+
+;;
+esac
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA/RIYOUSHA_KAIGOHOKEN RIYOUSHA_KAIGOHOKEN
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_kaigohoken RIYOUSHA_KAIGOHOKEN 2 34 35 ${pompa_dir} ${input_dir} 
+FIN
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+done
+#--------------------------------------------------------------
+cp -p ${pompa_dir}/RIYOUSHA_KAIGOHOKEN ${data_dir}/RIYOUSHA_KAIGOHOKEN
+#cp -p ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI ${data_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI
+
+echo "result ok"
+
+## 終了
+rm -f $tmp-*
+exit 0

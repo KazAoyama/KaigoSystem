@@ -1,0 +1,221 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.SEARCH
+# 個人情報詳細(介護保険)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+# 保険者名テーブルの取得
+cat ${tbl_dir}/HOKENJA/HOKENJA_TABLE |
+awk '$(NF-2)!="9"{print $2,$4}'      |
+LANG=C sort  > $tmp-hokenja_name
+# 1:保険者ID  2:保険者名
+
+#-------------------------------------------------------------
+# 介護保険ファイルの取得
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度              4:保険者番号              5:保険者名
+# 6:被保険者番号          7:性別                  8:生年月日：和暦元号  9:生年月日：和暦誕生年    10:生年月日：和暦誕生月
+# 11:生年月日：和暦誕生日 12:郵便番号             13:住所               14:認定年月：和暦元号     15:認定年月：和暦年
+# 16:認定年月：和暦月     17:認定年月：和暦日     18:認定年月：西暦     19:有効期間FROM：和暦元号 20:有効期間FROM：和暦年
+# 21:有効期間FROM：和暦月 22:有効期間FROM：和暦日 23:有効期間FROM：西暦 24:有効期間TO：和暦元号   25:有効期間TO：和暦年
+# 26:有効期間TO：和暦月   27:有効期間TO：和暦日   28:有効期間TO：西暦   29:居宅介護支援者又は介護予防事業者及びその事業所名
+# 30:認定審査会の意見及びサービスの種類指定       31:備考  32:利用者負担率
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KAIGOHOKEN  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+
+  # 保険者名の取得
+  delf 5 |
+  cjoin2 +"@" key=4 $tmp-hokenja_name - |
+
+  # 更新日時の整形 (有効期限Toの西暦は本日との比較のためわざといれておく)
+  awk '{print $0,$34!="_"?substr($34,1,4)"/"substr($34,5,2)"/"substr($34,7,2)"　"substr($34,9,2)":"substr($34,11,2):"_",$NF}' |
+  self 1/6 13 19/22 24/28 31 NF-1 NF  |
+#> $tmp-kaigohoken
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度                 4:保険者番号           5:保険者名
+# 6:被保険者番号          7:住所                  8:有効期間FROM：和暦元号 9:有効期間FROM：和暦年 10:有効期間FROM：和暦月
+# 11:有効期間FROM：和暦日 12:有効期間TO：和暦元号 13:有効期間TO：和暦年    14:有効期間TO：和暦月  15:有効期間TO：和暦日
+# 16:有効期間TO：西暦     17:備考                 18:更新日                19:UserID
+  awk '{print "Kaigohoken",$0}'      > $tmp-kaigohoken
+
+#--------------------------------------------------------------------
+# 事業所マスタの用意
+  cat  ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER    |
+  self 1 3 |
+  LANG=C sort -k1,1    > $tmp-jigyousho_master
+# 1:事業所ID 2:サービス供給事業者名
+
+# 自事業所マスタの用意
+  cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+  self 1 2 |
+  LANG=C sort -k1,1   >$tmp-jijigyousho_master
+
+# ケアマネ、担当者準備
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER |
+  self 1 2 > $tmp-userid
+
+
+# 居宅支援事業所テーブルの取得
+# 1:利用者(入居者)ID 2:利用者居宅支援事業所ID 3:事業所番号 4:担当ケアマネID(自事業所) 5:担当ケアマネNAME(他事業所)
+# 6:期間From         7:期間To
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KYOTAKU_JIGYOUSHO     |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}'  |
+  awk '{print $0,$9!="_"?substr($9,1,4)"/"substr($9,5,2)"/"substr($9,7,2)"　"substr($9,9,2)":"substr($9,11,2):"_",$NF}' |
+  self 1/7 NF-1 NF   |
+
+  # ケアマネ名の取得
+  LANG=C sort -k4,4              |
+  join2 +"@" key=4 $tmp-userid - |
+
+  # 事業署名の取得
+  LANG=C sort -k3,3                   |
+  join1 +ng key=3 $tmp-jijigyousho_master -  >$tmp-jijigyousho  2>$tmp-tajigyousho
+# 1:利用者(入居者)ID    2:利用者サービス提供事業所ID 3:事業所ID 4::事業所名 5:担当ケアマネID(自事業所)
+# 6:ケアマネ名(自事業所 7:担当ケアマネNAME(他事業所) 8:期間From 9:期間To    10:更新日
+# 11:UseId
+
+  if [ -s $tmp-tajigyousho ] ; then
+    cat $tmp-tajigyousho |
+    join2 +"@" key=3 $tmp-jigyousho_master - |
+    cat $tmp-jijigyousho -     
+  else
+    cat $tmp-jijigyousho
+  fi |
+
+  awk '{print "Kyotaku",$0}' > $tmp-kyotaku
+# 1:"居宅"                   2:利用者(入居者)ID    3:利用者サービス提供事業所ID 4:事業所ID 5:事業所名
+# 6:担当ケアマネID(自事業所) 7:ケアマネ名(自事業所 8:担当ケアマネNAME(他事業所) 9:期間From 10:期間To
+# 11:更新日                  12:UseId
+
+
+#----------------------------------------------------------------------
+# サービス事業所
+# 1:利用者(入居者)ID 2:利用者サービス提供事業所ID 3:事業所ID 4:担当者ID(自事業所) 5:担当者NAME(他事業所)
+# 6:期間From         7:期間To
+
+
+ cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_SERVICE_JIGYOUSHO    |
+ awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+ awk '{print $0,$9!="_"?substr($9,1,4)"/"substr($9,5,2)"/"substr($9,7,2)"　"substr($9,9,2)":"substr($9,11,2):"_",$NF}' |
+ self 1/7 NF-1 NF   |
+
+  # 担当者名の取得
+  LANG=C sort -k4,4              |
+  join2 +"@" key=4 $tmp-userid - |
+
+  # 事業署名の取得
+  LANG=C sort -k3,3                   |
+  join1 +ng key=3 $tmp-jijigyousho_master -  >$tmp-jijigyousho  2>$tmp-tajigyousho
+# 1:利用者(入居者)ID    2:利用者サービス提供事業所ID 3:事業所ID 4::事業所名 5:担当ケアマネID(自事業所)
+# 6:ケアマネ名(自事業所 7:担当ケアマネNAME(他事業所) 8:期間From 9:期間To    10:更新日
+# 11:UseId
+
+  if [ -s $tmp-tajigyousho ] ; then
+    cat $tmp-tajigyousho |
+    join2 +"@" key=3 $tmp-jigyousho_master - |
+    cat $tmp-jijigyousho -
+  else
+    cat $tmp-jijigyousho
+  fi |
+ 
+awk '{print "Service",$0}' > $tmp-service
+#
+
+# 医療系併合
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_IRYOUKEI_SERVICE |
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:期間TO：元号   8:期間TO：年   9:期間TO：月   10:期間TO：日
+# 11:期間FROM：西暦
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "Iryou",$0}' > $tmp-iryoukei
+
+# 認知症加算
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_NINCHISHOU_KASAN |
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:期間TO：元号   8:期間TO：年   9:期間TO：月   10:期間TO：日
+# 11:期間FROM：西暦
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "Ninchi",$0}' > $tmp-ninchi
+
+# 在宅医学総合管理指導
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ZAITAKU_IGAKU |
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "Igaku",$0}' > $tmp-igaku
+
+# 在宅薬剤管理指導
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ZAITAKU_YAKUZAI |
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "Yakuzai",$0}' > $tmp-yakuzai
+
+# 訪問薬剤管理指導
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_HOUMON_YAKUZAI |
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "HoumonYakuzai",$0}' > $tmp-houmon_yakuzai
+
+
+
+#cp $tmp-* /home/hands/work/okuda
+#----------------------------------------------------------------------
+ echo "result ok" |
+# # 該当データがあれば、金融機関名称、支店名を取得
+ if [ -s "$tmp-kaigohoken" -o -s "$tmp-kyotaku" -o -s "$tmp-service" -o -s "$tmp-iryoukei" -o -s "$tmp-ninchi" -o -s "$tmp-igaku" -o -s "$tmp-yakuzai" -o -s "$tmp-houmon_yakuzai" ] ; then    
+   cat - $tmp-kaigohoken $tmp-kyotaku $tmp-service $tmp-iryoukei $tmp-ninchi $tmp-igaku $tmp-yakuzai $tmp-houmon_yakuzai
+ else
+   :
+ fi 
+
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

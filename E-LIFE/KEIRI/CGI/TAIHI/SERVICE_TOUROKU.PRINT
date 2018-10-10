@@ -1,0 +1,245 @@
+#!/bin/bash
+#
+# SERVICE_TOUROKU.PRINT : サービス登録印刷
+#
+# Usage : SERVICE_TOUROKU.PRINT namefile datafile
+#
+# Written by j.aoyagi(HandsLab.inc)
+
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/SERVICE_TOUROKU"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+domain="http://e-life.hands-lab.com/"
+current_time="$(date "+%Y%m%d%H%M%S")"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+#--------------------------------------------------------------
+# 対象者を決める
+
+# 出力順を居室番号順にする
+taikyogo=$(mdate ${hd_kensaku_hiduke_from}/-31)
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS       |
+# 1:施設id 2:建屋id 3:フロア 4:ユニッid 5:居室
+# 6:入居者id 7:入居日 8:退去日
+join0 key=1 <(echo ${shisetsu})                   |
+LANG=C sort -k7,7n                                |
+awk '$7<="'${hd_kensaku_hiduke_to}'" && $8>="'${taikyogo}'"'        |
+self 6 5                                          |
+LANG=C sort -k1,1                                 |
+getlast 1 1                                       > $tmp-riyosha_room
+cp $tmp-riyosha_room ${work}/room_number
+
+cat ${searchfile}              |
+# 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+# 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+self 1                         |
+LANG=C sort -u -k1,1           |
+join2 +"000" key=1 $tmp-riyosha_room |
+tee ${work}/room_riyosha |
+LANG=C sort -k2,2n             |
+delf 2                         > $tmp-member
+
+
+
+# 施設名
+echo ${shisetsu}               |
+join1 key=1 ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 2                         > $tmp-shisetsu_name
+shisetsu_name=$(cat $tmp-shisetsu_name)
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+# # サービスマスターの取得
+cat ${master_tbl_dir}/SERVICE_MASTER |
+# 1:施設         2:建屋      3:サービスID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価      8:表示順     9:課税               10:有効フラグ
+# 11:処理時間    12:ユーザID
+
+LANG=C sort -k1,1n -k2,2n            |
+join0 key=1 <(echo ${shisetsu})      |
+join0 key=2 <(echo ${tateya})        |
+self 8 3 5                           |
+# 1:表示順 2:サービスID 3:サービス名
+LANG=C sort -k1,1                   |
+self 2 3                             > ${tmp}-service_basemas
+echo "0" "全て"                      |
+cat - ${tmp}-service_basemas         |
+awk '{print $0,"'${serch_service_koumoku}'"}' |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-service_master
+cat $tmp-service_master              |
+awk '$3=="selected"'                 |
+self 2                               > $tmp-service
+
+cat $tmp-service_basemas             |
+LANG=C sort -k1,1                   > $tmp-sort_service
+
+for member in $(cat $tmp-member);do
+  cat ${searchfile}            |
+  # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+  # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+  # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+  LANG=C sort -k1,1n           |
+  join0 key=1 <(echo ${member}) > $tmp-taisho_data
+
+  cat $tmp-taisho_data         |
+  # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+  # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+  # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+  self 2 3 8 4 5 6 7 9        |
+  awk '{if($3==1){$4=$4*(1+$8)};print $1,$2,$3,$4,$5,$6,$7}' |
+  marume -sage 4.0             |
+  # 1:日付 2:サービス項目 3:課税区分 4:金額 5:数量
+  # 6:合計額 7:備考
+  awk '{if($7=="_"){$7="&nbsp;"};print}' |
+  LANG=C sort -k2,2           |
+  join1 key=2 $tmp-sort_service |
+  delf 2                        |
+  awk '{if($3=="1"){$3="課税"}else{$3="&nbsp;"};print}' |
+  comma 4 5 6                   > $tmp-meisai
+
+  # 合計行の計算
+  cat $tmp-taisho_data         |
+  # 1:riyosha_id 2:日付 3:サービス項目 4:金額 5:数量
+  # 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+  # 11:税込み金額 12:所属建屋 13:userid 14:ID 15:登録日時
+  self 1 8 6 10                > $tmp-taisho_1
+  # 1:riyosha_id 2:課税区分 3:合計額 4:消費税額
+
+  # 課税
+  cat $tmp-taisho_1            |
+  # 1:riyosha_id 2:課税区分 3:合計額 4:消費税額
+  awk '$2=="1"'                |
+  sm2 1 2 3 4                  > $tmp-kazei_kei
+
+  if [ "$(gyo $tmp-kazei_kei )" = 0 ];then
+    echo "${member}" "1" "0" "0" > $tmp-kazei_kei
+  else
+    :
+  fi
+
+  # 非課税
+  cat $tmp-taisho_1            |
+  # 1:riyosha_id 2:課税区分 3:合計額 4:消費税額
+  awk '$2=="0"'                |
+  sm2 1 2 3 4                  > $tmp-hikazei_kei
+
+  if [ "$(gyo $tmp-hikazei_kei )" = 0 ];then
+    echo "${member}" "0" "0" "0" > $tmp-hikazei_kei
+  else
+    :
+  fi
+  # 合体
+  loopj num=1 $tmp-kazei_kei $tmp-hikazei_kei  |
+  # 1:riyosha_id 2:課税区分 3:合計額 4:消費税額 5:課税区分
+  # 6:合計額 7:消費税額
+  self 3 4 6                                   |
+  lcalc '$1,$2,$3,$1+$3'                       |
+  comma 1 2 3 4                                > $tmp-goukei
+  # 入居者名
+  echo ${member}                  |
+  join1 key=1 $tmp-riyosha_master |
+  self 2                          |
+  awk '{print $1"　様"}'          > $tmp-riyoshamei
+  riyoshamei=$(cat $tmp-riyoshamei)
+  
+  # 居室
+  taikyogo=$(mdate ${hd_kensaku_hiduke_from}/-31)
+  awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS       |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニッid 5:居室
+  # 6:入居者id 7:入居日 8:退去日
+  join0 key=1 <(echo ${shisetsu})                   |
+  LANG=C sort -k6,6                                 |
+  join0 key=6 <(echo ${member})                     |
+  awk '$7<="'${hd_kensaku_hiduke_to}'" && $8>="'${taikyogo}'"'        |
+  self 5                                            |
+  tail -n1                                          > $tmp-room
+  room=$(cat $tmp-room)
+
+# calsedするfile
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/_/," ",$2);print}' >> ${tmp}-calsed
+###DOMAIN### ${domain}
+###SEIKYU_SHISETSU### ${shisetsu_name}
+###RIYOSHAMEI### ${riyoshamei}
+###ROOM### ${room}
+FIN
+  
+cat ${html_dir}/SERVICE_TOUROKU_MEISAISHO.html  |
+mojihame -l###MEISAI### - ${tmp}-meisai    |
+mojihame -l###GOUKEI### - ${tmp}-goukei    |
+calsed -f ${tmp}-calsed -                  |
+sed 's/\\n/<br>/g'          >> $tmp-base_pdf.html
+  
+# データクリア
+rm $tmp-meisai $tmp-goukei $tmp-calsed
+
+done
+
+#######################################################################################
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Portrait $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.SERVICE_TOUROKU.pdf
+#gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sPAPERSIZE=a4 -dNOPLATFONTS -sOutputFile=${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${current_time}.SERVICE_TOUROKU.pdf ${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${today}/${userid}/${current_time}/*.pdf
+
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.SERVICE_TOUROKU.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

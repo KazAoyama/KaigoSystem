@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# FB_SAKUSEI.PRINT :
+#
+# Usage : FB_SAKUSEI.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 請求年月
+NENGETSU=$(echo "${year}年${month}月")
+
+# 送付日
+sendday=$(echo ${today} | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+
+# 振替日
+furikaebi=$(mdate ${year}${month}m/+1 | awk '{print substr($1,1,4)"年"substr($1,5,2)"月'${hikiotoshi_date}'日"}')
+
+
+
+# 結果アップロードのファイルがあったら結果を、なければダウンロードしたファイルを使う
+cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo} > $tmp-file
+# 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+# 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+# 16:振替結果コード
+
+# 合計件数
+goukeikensu=$(gyo $tmp-file)
+
+# 合計金額
+goukeikingaku=$(sm2 0 0 13 13 $tmp-file | comma 1)
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###SEND_DAY### ${sendday}
+###FURIKAE_DAY### $furikaebi
+###ITAKUSHA_NO### ${itakushaNo}
+###GOUKEI_KENSU### ${goukeikensu}
+###GOUKEI_KINGAKU### ${goukeikingaku}
+FIN
+
+
+cat ${html_dir}/FB_FAX.html               > $tmp-base.html
+
+# html作成
+cat $tmp-base.html                                   |
+calsed -f ${tmp}-calsed -                            > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64  $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.FB_FAX.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.FB_FAX.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0
+

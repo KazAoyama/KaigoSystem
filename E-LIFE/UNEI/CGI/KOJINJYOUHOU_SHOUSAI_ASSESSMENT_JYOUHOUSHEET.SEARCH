@@ -1,0 +1,282 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.SEARCH
+# 個人情報詳細(介護保険)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+#-------------------------------------------------------------
+# 利用者基本情報テーブルの取得
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+  # 必要な情報のみに
+  self 1/8 14 15 9 10 > $tmp-kihon
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別   5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:現住所 10:携帯電話番号
+# 11:西暦：生年月日  12:感染症
+
+# 年齢の取得
+  Birthday="$(awk '{print substr($11,5,4)}' $tmp-kihon)"
+  Today="$(date +%m%d)"
+  today="$(date +%Y%m%d)"
+
+  # 誕生日が来ていれば
+#  if [ "${Birthday}" -le "${Today}" ] ;then
+    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000}' $tmp-kihon | marume -sage 1.0)"
+  # 誕生日が来ていなければ
+#  else
+#    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000-1}' $tmp-kihon | marume -sage 1.0)"
+#  fi
+
+  awk '{print "kihon",$0,"'${Nenrei}'"}' $tmp-kihon |
+  self 1/9 NF 10 11 NF-1                > $tmp-kihon_data
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別 5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:年齢 10:現住所
+# 11:携帯電話番号
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_RENRAKUSAKI        |
+  awk '$1=="'${RIYOUSHAID}'"&&$20>"0"&&$(NF-2)!="9"{print "renrakusaki",$0}' > $tmp-renrakusaki_before
+
+  if [ -s "$tmp-renrakusaki_before" ] ; then
+    cat $tmp-renrakusaki_before |
+    cjoin2 +"@" key=7 ${tbl_dir}/CONFIG/ZOKUGARA_MASTER - |
+#  delf 7  |
+    awk '{if($7=="999"){print $0,$9}else{print $0,$8}}'     |
+    self 1/6 NF 9/NF-1       
+# 1:利用者(入居者)ID 2:連絡先ＩＤ     3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄       7:連絡先続柄備考 8:連絡先優先順位 9:電話番号1      10:電話番号2
+# 11:E-mail          12:郵便番号      13:住所          14:勤務先        15:請求書送先
+# 16:身元引受人      17:返還金受取人  18:代理人        19:備考          20:緊急時個人データ反映
+# 21:予備1           22:予備２        23:予備３
+  else
+   :
+  fi  > $tmp-renrakusaki_data
+
+#--------------------------------------------------------------------
+
+### モードによる表示の分岐
+#case "${MODE}" in
+#
+#  init | pdf_print)
+
+# 1:利用者(入居者)ID         2:住所                 3:固定電話              4:携帯電話             5:入居日
+# 6:更新日                   7:希望医療機関1        8:希望医療機関2         9:希望医療機関3        10:希望しない金融機関1
+# 11:希望しない金融機関2     12:希望しない金融機関3 13:緊急時連絡先1：氏名  14:緊急時連絡先1：続柄 15:緊急時連絡先1：固定電話
+# 16:緊急時連絡先1：携帯電話 17:緊急時連絡先1：住所 18:緊急時連絡先2：氏名  19:緊急時連絡先2：続柄 20:緊急時連絡先2：固定電話
+# 21:緊急時連絡先2：携帯電話 22:緊急時連絡先2：住所 23:緊急時連絡先3：氏名  24:緊急時連絡先3：続柄 25:緊急時連絡先3：固定電話
+# 26:緊急時連絡先3：携帯電話 27:緊急時連絡先3：住所 28:治療病1：病名        29:治療病1：医療機関名 30:治療病1：電話番号
+# 31:治療病1：医師           32:治療病1：その他     33:治療病2：病名        34:治療病2：医療機関名 35:治療病2：電話番号
+# 36:治療病2：医師           37:治療病2：その他     38:治療病3：病名        39:治療病3：医療機関名 40:治療病3：電話番号
+# 41:治療病3：医師           42:治療病3：その他     43:アレルギー           44:アレルギー備考      45:感染症
+# 46:感染症備考              47:介護認定            48:身体障害者手帳       49:血液型              50:血液型Rh式
+# 51:血液型備考              52:肺炎球菌ワクチン    53:肺炎球菌ワクチン備考 54:内服薬              55:既往歴1：病名
+# 56:既往歴1：年齢           57:既往歴1：治療法     58:既往歴2：病名        59:既往歴2：年齢       60:既往歴2：治療法
+# 61:既往歴3：病名           62:既往歴3：年齢       63:既往歴3：治療法      64:既往歴4：病名       65:既往歴4：年齢
+# 66:既往歴4：治療法         67:既往歴5：病名       68:既往歴5：年齢        69:既往歴5：治療法
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KINKYUUJI_KOJINJYOUHOU    |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "kinkyuuji",$0}'     > $tmp-kinkyuuji_data
+
+# 利用者アセスメント情報シート
+# 1:利用者(入居者)ID                     2:アセスメント情報シートID              3:施設                                    4:移動屋内1:自立                          5:移動屋内2:杖使用
+# 6:移動屋内3:その他                     7:移動屋内3:その他シルバーカー          8:移動屋内3:その他歩行器                  9:移動屋内3:その他車椅子                  10:移動屋外1:自立
+# 11:移動屋外2:杖使用                    12:移動屋外3:その他                     13:移動屋外3:その他シルバーカー           14:移動屋外3:その他歩行器                 15:移動屋外3:その他車椅子
+# 16:コミュニケーション視力1:良好        17:コミュニケーション視力2:メガネ       18:コミュニケーション視力2:コンタクト     19:コミュニケーション視力2:その他         20:コミュニケーション視力2:備考
+# 21:コミュニケーション聴力1:良好        22:コミュニケーション聴力2:聞こえずらい 23:コミュニケーション聴力2:聞こえずらい右 24:コミュニケーション聴力2:聞こえずらい左 25:コミュニケーション聴力3:補聴器使用
+# 26:コミュニケーション聴力3:補聴器右    27:コミュニケーション聴力3:補聴器左     28:コミュニケーション聴力3:補聴器外出時   29:コミュニケーション発話障害：なし       30:コミュニケーション発話障害：有り
+# 31:コミュニケーション発話障害：備考    32:食事形態1:普通                       33:食事形態2:主食                         34:食事形態2:主食1:軟飯                   35:食事形態2:主食2:粥
+# 36:食事形態3:副食                      37:食事形態3:副食1:一口大               38:食事形態3:副食2:刻み                   39:禁止食1：なし                          40:禁止食2:あり
+# 41:禁止食：備考                        42:食事制限1：なし                      43:食事制限2:カロリー                     44:食事制限2:カロリー備考                 45:食事制限3:塩分
+# 46:食事制限3:塩分備考                  47:食事準備                             48:食事後片付け                           49:食事後片付け                           50:洗濯機の使用
+# 51:洗濯干して取り込む                  52:洗濯備考                             53:掃除機の使用                           54:整理整頓                               55:掃除備考
+# 56:ゴミだし                            57:ゴミだし備考                         58:買い物                                 59:買い物備考                             60:通院予約
+# 61:通院受診                            62:通院備考                             63:通院薬受け取り                         64:通院備考                               65:金銭管理
+# 66:郵便管理                            67:管理備考１                           68:電話･来客管理                          69:戸締り・火の元管理                     70:管理備考２
+# 71:服薬管理                            72:服薬備考                             73:交通機関の利用                         74:交通手段備考                           75:自家用車の利用1：なし
+# 76:自家用車の利用1：あり               77:自家用車の利用1：あり自分で運転      78:自家用車の利用1：あり家族が運転        79:社会活動老人会1:なし                   80:社会活動老人会2:あり
+# 81:社会活動老人会2:あり回数            82:社会活動老人会備考                   83:社会活動ボランティア1:なし             84:社会活動ボランティア2:あり             85:社会活動ボランティア2:あり回数
+# 86:社会活動ボランティア備考            87:社会活動サークル1:なし               88:社会活動サークル1:あり                 89:社会活動サークル1:あり回数             90:社会活動サークル備考
+# 91:介護保険サービス家事援助1:なし      92:介護保険サービス家事援助2:有り       93:介護保険サービス家事援助月             94:介護保険サービス家事援助火曜           95:介護保険サービス家事援助水曜
+# 96:介護保険サービス家事援助木曜        97:介護保険サービス家事援助金曜         98:介護保険サービス家事援助土曜           99:介護保険サービス家事援助日曜           100:介護保険サービス家事援助備考
+# 101:介護保険サービス入浴介助1:なし     102:介護保険サービス入浴介助2:あろ      103:介護保険サービス入浴介助月曜          104:介護保険サービス入浴介助火曜          105:介護保険サービス入浴介助水曜
+# 106:介護保険サービス入浴介助木曜       107:介護保険サービス入浴介助金曜        108:介護保険サービス入浴介助土曜          109:介護保険サービス入浴介助日曜          110:介護保険サービス入浴介助備考
+# 111:介護保険サービス訪問リハ1:なし     112:介護保険サービス訪問リハ2:有り      113:介護保険サービス訪問リハ月曜          114:介護保険サービス訪問リハ火曜          115:介護保険サービス訪問リハ水曜
+# 116:介護保険サービス訪問リハ木曜       117:介護保険サービス訪問リハ金曜        118:介護保険サービス訪問リハ土曜          119:介護保険サービス訪問リハ日曜          120:介護保険サービス訪問リハ備考
+# 121:介護保険外サービス家事手伝い1:なし 122:介護保険外サービス家事手伝い2:有り  123:介護保険外サービス家事手伝い月曜      124:介護保険外サービス家事手伝い火曜      125:介護保険外サービス家事手伝い水曜
+# 126:介護保険外サービス家事手伝い木曜   127:介護保険外サービス家事手伝い金曜    128:介護保険外サービス家事手伝い土曜      129:介護保険外サービス家事手伝い日曜      130:介護保険外サービス家事手伝い備考
+# 131:介護保険外サービスその他1:なし     132:介護保険外サービスその他2:あり      133:介護保険外サービスその他月曜          134:介護保険外サービスその他火曜          135:介護保険外サービスその他水曜
+# 136:介護保険外サービスその他木曜       137:介護保険外サービスその他金曜        138:介護保険外サービスその他土曜          139:介護保険外サービスその他日曜          140:介護保険外サービスその他備考
+# 141:本人の要望                         142:家族の要望                          143:備考
+
+  # 最新のファイル
+#  find ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID} -maxdepth 1 -type f -name "${RIYOUSHAID}"*_ASSESSMENT_JYOUHOUSHEET > ${tmp}-search_data
+
+#if [ -s ${tmp}-search_data ] ; then
+#  Number="$(cat ${tmp}-search_data | sed 's/_/ /g' | self NF-2 | LANG=C sort -u | tail -1)"
+
+#  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${Number}_ASSESSMENT_JYOUHOUSHEET > $tmp-data
+
+#  if [  -s $tmp-data -a "$(self NF-2 $tmp-data)" = "9" ] ; then
+#    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT_JYOUHOUSHEET |
+#    awk '$(NF-2)!="9"'                                                                                  |
+#    LANG=C sort -u                                                                                      |
+#    getlast 1 1
+#  else
+#    cat $tmp-data
+#  fi |
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT_JYOUHOUSHEET |
+  awk '$(NF-2)!="9"' |
+  if [ -z "${Rireki}" -o "${Rireki}" = "_" ] ; then
+     getlast 1 1
+  else
+     awk '$2=="'${Rireki}'"'
+  fi |
+  awk '{print "jyouhoudata",$0}'  > $tmp-assessment_data
+
+  jyouhoudataid=$(awk '{print $3}' $tmp-assessment_data | head -1)
+
+  # 介護保険データ
+  if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_ASSESSMENT_JYOUHOUSHEET_KAIGOHOKEN ] ; then
+    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_ASSESSMENT_JYOUHOUSHEET_KAIGOHOKEN |
+    awk '$2=="'${jyouhoudataid}'"&&$(NF-2)!="9"{print "kaigohoken",$0}'  >> $tmp-assessment_data
+  else
+   :
+  fi
+
+#else
+#  :
+#fi
+
+
+  # 現病データ
+:> ${tmp}-assessment_genbyou
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${jyouhoudataid}_ASSESSMENT_GENBYOU ] ; then
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${jyouhoudataid}_ASSESSMENT_GENBYOU |
+  awk '$(NF-2)!="9"' |
+  tee ${tmp}-genbyou_num |
+  self 4 5 6 7 8 |
+  yarr > ${tmp}-genbyou_value
+  # ヘッダ設定
+  genbyounum=$(gyo ${tmp}-genbyou_num)
+  echo "genbyou" "GenbyouVal" "${genbyounum}" > $tmp-genbyounum
+  seq ${genbyounum} |
+  while read gennum ; do
+  gnnum=$((gennum-1))
+cat <<- FIN >> ${tmp}-header_genbyou
+txtGenbyouByoumei$gnnum
+txtGenbyouIryouKikan$gnnum
+txtGenbyouTel$gnnum
+txtGenbyouIshi$gnnum
+txtGenbyouSonota$gnnum
+FIN
+done
+
+cat ${tmp}-header_genbyou |
+tee /home/hands/E-LIFE/UNEI/WORK/genbyou_rec1 |
+tateyoko               |
+cat - ${tmp}-genbyou_value  |
+tee /home/hands/E-LIFE/UNEI/WORK/genbyou_rec2 |
+tateyoko               |
+awk '{print "genbyou",$0}' > ${tmp}-assessment_genbyou
+
+fi
+
+
+# 既往歴データ
+:> ${tmp}-assessment_kioureki
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${jyouhoudataid}_ASSESSMENT_KIOUREKI ] ; then
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${jyouhoudataid}_ASSESSMENT_KIOUREKI |
+  awk '$(NF-2)!="9"' |
+  tee ${tmp}-kioureki_num |
+  self 4 5 6 |
+  yarr > ${tmp}-kioureki_value
+  # ヘッダ設定
+  kiourekinum=$(gyo ${tmp}-kioureki_num)
+  echo "kioureki" "KiourekiVal" "${kiourekinum}" > $tmp-kiourekinum
+  seq ${kiourekinum} |
+  while read krknum ; do
+  krnum=$((krknum-1))
+cat <<- FIN >> ${tmp}-header_kioureki
+txtKiourekiByoumei$krnum
+txtKiourekiNenrei$krnum
+txtKiourekiChiryouhou$krnum
+FIN
+done
+
+cat ${tmp}-header_kioureki |
+tateyoko               |
+cat - ${tmp}-kioureki_value  |
+tateyoko               |
+awk '{print "kioureki",$0}' > ${tmp}-assessment_kioureki
+
+fi
+  
+  
+
+#-----------------------------------------------------------------------------------
+# # 該当データ
+ if [ -s "$tmp-kihon_data" -a -s "$tmp-assessment_data" ] ; then
+   cat - $tmp-kihon_data $tmp-assessment_data $tmp-genbyounum ${tmp}-assessment_genbyou $tmp-kiourekinum ${tmp}-assessment_kioureki $tmp-kinkyuuji_data 
+ elif [ -s "$tmp-kihon_data" ] ; then
+   cat - $tmp-kihon_data $tmp-kinkyuuji_data
+ else
+   :
+ fi
+
+#-------------------------------------------------------------
+#  ;;
+#esac
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,255 @@
+#!/bin/bash
+#
+# ZEIRITSU_GENGOU_MASTER.TOUROKU : 税率・元号マスタ
+#
+# Written by S.Otsubo
+############################日付大小関係のチェックが動いていない疑惑？
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-lock |
+  while read table shikibetu ;do
+    rm -f $table.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--------------------------------------------------------
+# 必要な値の取得
+namedata=$1
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------
+# 本日のinputディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+#--------------------------------------------------------
+
+#--------------------------------------------------------
+# 日付はスラッシュ入るのでinput用に編集
+# (初期入力時はtoの値はパターメータ渡ってこないのでアンスコ)
+Zeiritsu_From="$(echo "${ZeiritsuTekiyoubiFrom}" | sed 's/\///g')"
+Zeiritsu_To="$([ -n "${ZeiritsuTekiyoubiTo}" ] && ( echo "${ZeiritsuTekiyoubiTo}" | sed 's/\///g' ) || echo "_")"
+Gengou_From="$(echo "${GengouTekiyoubiFrom}" | sed 's/\///g')"
+Gengou_To="$([ -n "${GengouTekiyoubiTo}" ] && ( echo "${GengouTekiyoubiTo}" | sed 's/\///g' ) || ehco "_")"
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+#--------------------------------------------------------------
+
+# ------------------------------------------
+# 更新対象の確認
+
+# 画面に表示しているマスタ(＝有効マスタ)が0行なら項目名と適用開始日が必須
+# 有効マスタ＞0ならば項目名と適用終了日適用開始日が必須
+
+cat << FIN > ${tmp}-check_list
+GENGOU ${Gengou} ${Gengou_From} ${Gengou_To} 元号マスタ 1
+ZEIRITSU ${Zeiritsu} ${Zeiritsu_From} ${Zeiritsu_To} 税率マスタ 2
+FIN
+# 1:マスタファイル名称         2:マスタ名称 3:マスタ適用日from 4:マスタ適用日to 5:マスタ名称(アラート用)
+# 6:項目名チェック用分岐フラグ
+
+# 更新対象除外ファイル初期化(joinで落ちることを防ぐため＠埋め行を入れておく)
+echo "@" > ${tmp}-taisyou_jyogai
+
+# 更新対象の決定と項目チェック
+while read Mst_file Mst_name Mst_from Mst_to Mst_alert_name Check_flg; do
+  mst_gyo="$([ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Mst_file} ] && ( awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Mst_file} | gyo) || echo "0")"
+  if [ "${mst_gyo}" == "0" ] ; then
+    # --------------------------------------
+    # 有効マスタ＝0：項目名、適用開始日必須
+    if [ \( "${Mst_name}" != "" -a "${Mst_name}" != "_" \) -a \( "${Mst_from}" != "" -a "${Mst_from}" != "_" \) ] ; then
+      # 項目名チェック
+      case "${Check_flg}" in
+        1 )
+          # 全角文字チェック
+          [[ "${Mst_name}" =~ [\ -~｡-ﾟ].* ]] && error_exit "${Mst_alert_name}は全角文字で入力してください"
+        ;;
+        2 )
+          # 数値チェック
+          [[ "${Mst_name}" =~ [^0123456789.] ]] && error_exit "${Mst_alert_name}は半角数字で入力してください"
+          [ "$(echo "${Mst_name} > 1" | bc)" -eq 1 ] && error_exit "${Mst_alert_name}の数字の大きさが不正です" #数値が1以上ならエラー
+        ;;
+      esac
+      # 適用fromチェック
+      isdate ${Mst_from} || error_exit "${Mst_alert_name}の日付の値が不正です"
+    elif [ \( "${Mst_name}" != "" -a "${Mst_name}" != "_" \) -o \( "${Mst_from}" != "" -a "${Mst_from}" != "_" \) ] ; then
+      # 必須項目漏れ
+      error_exit "${Mst_alert_name}の入力項目が足りません"
+    else
+      # 更新しないので対象から除外
+      echo "${Mst_file}" >> ${tmp}-taisyou_jyogai
+    fi
+    # --------------------------------------
+  else
+    # --------------------------------------
+    # 有効マスタ＞0：項目名、適用開始日、適用終了日が必須
+    if [ \( "${Mst_name}" != "" -a "${Mst_name}" != "_" \) -a \( "${Mst_from}" != "" -a "${Mst_from}" != "_" \) -a \( "${Mst_to}" != "" -a "${Mst_to}" != "_" \) ] ; then
+      # 項目名チェック
+      case "${Check_flg}" in
+        1 )
+          # 全角文字チェック
+          [[ "${Mst_name}" =~ [\ -~｡-ﾟ].* ]] && error_exit "${Mst_alert_name}は全角文字で入力してください"
+        ;;
+        2 )
+          # 数値チェック
+          [[ "${Mst_name}" =~ [^0123456789.] ]] && error_exit "${Mst_alert_name}は半角数字で入力してください"
+          [ "$(echo "${Mst_name} > 1" | bc)" -eq 1 ] && error_exit "${Mst_alert_name}の数字の大きさが不正です" #数値が1以上ならエラー
+        ;;
+      esac
+      # 適用fromチェック
+      isdate ${Mst_from} || error_exit "${Mst_alert_name}の日付の値が不正です"
+      # fromとtoの関係チェック(ふるいのfrom＜ふるいのtoならよい)
+      old_from="$(awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Mst_file} | tail -2 | head -1 | self 3)"
+      [ "${Mst_to}" -le "${old_from}" ] && error_exit "${Mst_alert_name}の日付の大小関係が不正です"
+      # fromとtoの関係チェック(ふるいのto＜あたらしいのfromならよい)
+      [ "${Mst_from}" -le "${Mst_to}" ] && error_exit "${Mst_alert_name}の日付の大小関係が不正です"
+      # 適用toチェック
+      isdate ${Mst_to} || error_exit "${Mst_alert_name}の日付の値が不正です"
+    elif [ \( "${Mst_name}" != "" -a "${Mst_name}" != "_" \) -o \( "${Mst_from}" != "" -a "${Mst_from}" != "_" \) -o \( "${Mst_to}" != "" -a "${Mst_to}" != "_" \) ] ; then
+      error_exit "${Mst_alert_name}の入力項目が足りません"
+    else
+      # 更新しないので対象から除外
+      echo "${Mst_file}" >> ${tmp}-taisyou_jyogai
+    fi
+    # --------------------------------------
+  fi
+done < ${tmp}-check_list
+
+# ------------------------------------------
+
+# ------------------------------------------
+# inputの作成
+
+# 更新対象が同じ並びなので繰り返し処理で更新する
+
+# 更新対象リスト(除外するものはここで除外)
+cat << FIN | cjoin0 +ng key=1 ${tmp}-taisyou_jyogai - > /dev/null 2> ${tmp}-taisyou
+GENGOU 1 2 6 6 ${Gengou} ${Gengou_From} ${Gengou_To}
+ZEIRITSU 1 2 6 6 ${Zeiritsu} ${Zeiritsu_From} ${Zeiritsu_To}
+FIN
+# 1:キー   2:ソートキーfrom 3:ソートキーto 4:更新時間キーfrom 5:更新時間キーto
+# 6:項目名 7:適用日from     8:適用日to
+
+# 更新対象がなければエラーで返す
+[ ! -s ${tmp}-taisyou ] && error_exit "更新対象はありません"
+
+# データ作成
+cat ${tmp}-taisyou |
+while read Name key_from key_to time_key_from time_key_to h_koumoku h_teki_from h_teki_to ; do
+  # キー番号(行番号に近い)取得
+  last_key_no="$([ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} ] && ( awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} | LANG=C sort | tail -1 | self 1) || echo "00")"
+  new_key_no="$(echo "${last_key_no}" | awk '{new_no=int($1+1); printf("%02d",new_no)}')" #last_key_noが空でもうごく
+
+  # 有効マスタ行数により分岐
+  # =0：項目名と適用fromのみ
+  # >0：有効マスタ最終行の適用toと、新しい項目名と適用fromを更新
+  tbl_gyo="$([ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} ] && (awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} | LANG=C sort | self 1) || echo "0")"
+
+  case "${tbl_gyo}" in
+    # ---------------
+    # 新しく作成
+    0 )
+      # input
+      echo "${new_key_no} ${h_koumoku} ${h_teki_from} 99999999 1 ${sdaytime} ${userid}" > ${tmp}-${Name}_input
+      cp -p ${tmp}-${Name}_input ${tmp}-${Name}_pompa
+    ;;
+    # ---------------
+    # ---------------
+    # データ追加
+    * )
+      # 有効マスタ最終行input
+      awk '$5!="9"{print}' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} |
+      tail -1 |
+      awk '{$4="'${h_teki_to}'"; $6="'${sdaytime}'";$7="'${userid}'"; print}' - > ${tmp}-${Name}_input
+      # 新しく作成するinput(うえのぶんに追記)
+      echo "${new_key_no} ${h_koumoku} ${h_teki_from} 99999999 1 ${sdaytime} ${userid}" >> ${tmp}-${Name}_input
+  
+      # pompa
+      cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name} ${tmp}-${Name}_input               |
+      LANG=C sort -k${key_from},${key_to} -k${time_key_from},${time_key_to} |
+      getlast ${key_from} ${key_to}                                         > ${tmp}-${Name}_pompa
+    ;;
+    # ---------------
+  esac
+done
+
+
+# 列チェック
+cat << FIN | cjoin0 +ng key=3 ${tmp}-taisyou_jyogai - > /dev/null 2> ${tmp}-retu_check
+${tmp}-GENGOU_input 7 GENGOU
+${tmp}-GENGOU_pompa 7 GENGOU
+${tmp}-ZEIRITSU_input 7 ZEIRITSU
+${tmp}-ZEIRITSU_pompa 7 ZEIRITSU
+FIN
+# 1:更新対象名 2:列数 3:識別
+
+cat ${tmp}-retu_check |
+while read File retu_no shikibetu; do
+  [ "$(retu ${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${File} | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+
+
+# ロックファイル作成
+cat << FIN | cjoin0 +ng key=2 ${tmp}-taisyou_jyogai - > /dev/null 2> ${tmp}-lock
+${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU GENGOU
+${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU ZEIRITSU
+FIN
+
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 10 ${File}.LOCK
+done
+
+
+# 更新
+cat ${tmp}-taisyou |
+while read Name key_from key_to time_key_from time_key_to h_koumoku h_teki_from h_teki_to ; do
+  # pompa
+  cp -p ${tmp}-${Name}_pompa ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/${Name}
+  # input
+  cp -p ${tmp}-${Name}_input ${input_dir}/${today}/$(basename ${0}).$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+done
+
+
+# ロックファイル削除
+cat ${tmp}-lock |
+while read File retu_no shikibetu; do
+  rm ${File}.LOCK
+done
+# ------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

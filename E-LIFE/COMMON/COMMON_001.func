@@ -1,0 +1,267 @@
+# COMMON_001.func
+# 共通ファンクション定義ファイル
+#
+# Written by R.suzuki Date:2015/09/17
+
+
+# 部品名：ファイルロック
+#
+# 説明：テーブルリストをもとにロックファイルを作成
+#
+#       テーブルリストのレイアウト 1:テーブル名 2:ロックファイル名 3:ディレクトリ作成区分[0 or 1]
+#          ディレクトリ作成区分:0  $tmplock_dir/[ロックファイル名].lockを削除（推奨）
+#          ディレクトリ作成区分:1  $tmplock_dir/[テーブル名]/[ロックファイル名].lockを削除(時間がかかるので非推奨)
+# 補足：
+#       前回更新から長時間経過（30秒　$4で変更可）してロックファイルが残っていた場合、
+#       そのファイルを削除して5秒後(固定)にリトライ。待機するのは作成した新しいファイルが誤って
+#       他プロセスに削除されないようにするためとlockfileコマンドヘルプに記載あるため、同じように実装。
+#
+#       ロック競合、ロックファイル強制削除が発生した際は、各アプリのログディレクトリ直下にログを出力。
+#       パラメータの見直しは必要に応じて行う。
+#
+# 注意： $tmpのファイルは呼び出し元のシェルで削除することを前提
+#        次の変数は呼び出し側で定義すること tmp  tmplock_dir log_dir
+# 引数：
+# $1:テーブルリストのパス 必須
+# $2:リトライ間隔[数値] 　　　　　　　 (初期：3秒） ※必要な場合に指定
+# $3:リトライ回数[数値]　      　　　　(初期：1)  　※必要な場合に指定
+# $4:強制削除経過秒数[数値]　　  　　　(初期：30秒) ※必要な場合に指定
+#                                                     特にロック時間が30秒を超える場合は必須　参考：unlock_funcのログ出力「ロック時間」←参考程度に。5秒が45秒と表示されるケースあり。
+function filelock_func () {
+
+  #処理時間計測用
+  _filelock_start=$(date +%Y%m%d%H%M%S.%N)
+
+  _filelock_func_locked_log=${log_dir}/LOG.FILELOCK_INFO.$(basename ${0}).$HOSTNAME.${_filelock_start}_$$
+
+  #-------------------------------------------------------------
+  # パラメーターの取得
+
+  #テーブルリストの取得とファイル有無判定
+  [ -z "$1" ] && return 1
+  local table_list="$1"
+
+  # ファイルなけれはNG
+  [ ! -s "$table_list" ] && return 1
+
+
+  local roop_interval_def=3
+  #リトライ間隔の取得（指定されていたら）
+  if [ "$2" != ""  -a "$2" != "_" ] ; then
+   roop_interval_def=$2
+  fi
+
+  local roop_retry=1
+  #ループリトライ回数上限の取得（指定されていたら）
+  if [ "$3" != "" -a "$3" != "_" ] ; then
+   roop_retry=$3
+  fi
+
+  #:強制削除の経過時間取得
+  local force_delete_time=30
+  if [ "$4" != "" -a "$4" != "_" ] ; then
+    force_delete_time=$4
+  fi
+
+  local roop_interval=$roop_interval_def
+
+#  #ロックリトライ回数
+  local lock_retry=1
+
+
+  #-------------------------------------------------------------
+
+  #-------------------------------------------------------------
+  # 対象テーブルのlockfileが全てない状態をまって、lockfileを作成
+  local repeat_cnt=0
+  local lock_file_path=""
+  :> $tmp-filelock_func_locked_table
+  while true ;do
+
+    # テーブルリストにあるテーブルのlockfileが全てないかチェック 
+#    if [ "$(ls $(cat $table_list | awk '{print "'$tmplock_dir'/"$1"/"$2".lock"}' | LANG=C sort -u | tr "\n" " ") | wc -l)" == "0" ]; then
+    if [ "$(ls $(cat $table_list | awk '{print $3=="1"?"'$tmplock_dir'/"$1"/"$2".lock":"'$tmplock_dir'/"$2".lock"}' | LANG=C sort -u | tr "\n" " ") | wc -l)" == "0" ]; then
+
+    #ロックファイルが存在しない場合
+
+      cat $table_list |
+      while read table base dir_kbn ;do
+
+
+        if [ "$dir_kbn" = "0" ] ; then
+          #テーブル名(ロックファイルパス)
+          lock_file_path=$tmplock_dir/$base.lock
+
+        elif [ "$dir_kbn" = "1" ] ; then
+          # tableに対応するディレクトリを作成
+	  mkdir -p $tmplock_dir/$table
+
+          #テーブル名(ロックファイルパス)
+          lock_file_path=$tmplock_dir/$table/$base.lock
+
+        else
+          _filelock_func_msg="error occurred : need parameter(dir_kbn)"
+          #ディレクトリ作成区分指定がない場合はエラー
+          :> $tmp-filelock_func_err
+          break;
+        fi
+
+	#lockfile実行  もしlockfile作成に失敗したらエラーフラグを立てる
+#	lockfile -1 -r $lock_retry $lock_file_path -l $force_delete_time -s 5
+       lockfile -1 -r $lock_retry $lock_file_path 
+	[ $? -ne 0 ] && :> $tmp-filelock_func_err
+	[ -e $tmp-filelock_func_err ] && break;
+
+	# エラー時に本シェルが作成したlockfileのみを削除できるようにテーブル名を出力
+	echo $lock_file_path >> $tmp-filelock_func_locked_table
+      : ;done
+
+      # lockfileを作り終えたら終了
+      break;
+
+    else
+    #すでにロックファイルが存在する場合
+
+      #経過秒数判定用ファイル作成
+      touch  -t $(date +"%Y%m%d%H%M.%S" -d "$force_delete_time seconds ago") $tmp-filelock_func_chktime
+
+      cat $table_list |
+      while read table base dir_kbn ;do
+
+
+        if [ "$dir_kbn" = "0" ] ; then
+          #テーブル名(ロックファイルパス)
+          lock_file_path=$tmplock_dir/$base.lock
+
+        elif [ "$dir_kbn" = "1" ] ; then
+          #テーブル名(ロックファイルパス)
+          lock_file_path=$tmplock_dir/$table/$base.lock
+
+        else
+          _filelock_func_msg="error occurred : need parameter(dir_kbn)"
+          #ディレクトリ作成区分指定がない場合はエラー
+          :> $tmp-filelock_func_err
+          break;
+        fi
+
+        #経過秒数判定ファイルより古かったら既存のロックファイル削除
+        if [ -f "$lock_file_path" -a "$lock_file_path" -ot  "$tmp-filelock_func_chktime" ] ; then
+
+          #ロックファイル強制削除のログ
+          echo "$(date +'%Y/%m/%d %H:%M:%S.%N') ロック情報(PID:$$ - $repeat_cnt )：時間超過ロックファイルを削除。：$lock_file_path $(stat $lock_file_path  | tail -n 1)"  >> $_filelock_func_locked_log
+
+
+          #該当のロックファイルを削除
+          rm -f $lock_file_path
+
+          #削除実施済判定ファイル作成(パイプがあるとループの外に変数の値を引き継げないのでファイルをフラグとして代替)
+          touch $tmp-filelock_func_del_file
+
+        elif [ -f "$lock_file_path" ] ; then
+
+          #ロックファイル競合発生
+          echo "$(date +'%Y/%m/%d %H:%M:%S.%N') ロック情報(PID:$$ - $repeat_cnt)：ロック競合発生：$lock_file_path  $(stat $lock_file_path  | tail -n 1)"  >> $_filelock_func_locked_log
+        fi
+
+      : ;done
+
+    fi
+    # リピート上限を超えたらエラーフラグを立てる
+    repeat_cnt="$(plus $repeat_cnt 1)"
+  #  [ "$repeat_cnt" -gt 1 ] && :> $tmp-filelock_func_err
+    [ "$repeat_cnt" -gt $roop_retry ] && :> $tmp-filelock_func_err
+
+
+    # エラーフラグが立っていたら終了
+    [ -e $tmp-filelock_func_err ] && break;
+
+    #削除実施済判定ファイルが存在したら
+    if [ -f $tmp-filelock_func_del_file ] ; then
+      #ループ間隔を５秒に強制変更
+      roop_interval=5
+
+      #削除実施済判定ファイル削除
+      rm -f $tmp-filelock_func_del_file
+    else
+       #ループ間隔を初期設定値にする。(変更されてたら戻す)
+      roop_interval=$roop_interval_def
+    fi
+    sleep $roop_interval
+
+  : ;done
+  #-------------------------------------------------------------
+
+  #-------------------------------------------------------------
+  # エラー処理
+  if [ -e $tmp-filelock_func_err ]; then
+
+    # 作成したlockfileは削除
+    cat $tmp-filelock_func_locked_table |
+    while read locked ;do
+      rm -f "$locked"
+    : ;done
+
+    return 1
+  fi
+  #-------------------------------------------------------------
+
+  # 終了
+  return  0
+
+}
+
+# 部品名：ロックファイル削除
+#
+# 説明：テーブルリストをもとにロックファイルを削除
+#       テーブルリストのレイアウト 1:テーブル名 2:ロックファイル名 3:ディレクトリ作成区分[0 or 1]
+#       ディレクトリ作成区分:0  $tmplock_dir/[ロックファイル名].lockを削除
+#       ディレクトリ作成区分:1  $tmplock_dir/[テーブル名]/[ロックファイル名].lockを削除
+#
+# 引数：　※以下の引数はfilelock_funcと同じ値を指定する
+# $1:テーブルリストのパス 必須
+function unlock_func () {
+
+  # パラメーターの取得
+  [ -z "$1" ] && return 1
+
+  local table_list="$1"
+
+  [ ! -s "$table_list" ] && return 1
+
+  cat $table_list |
+  while read table base dir_kbn ;do
+
+
+    if [ "$dir_kbn" = "0" ] ; then
+      #テーブル名(ロックファイルパス)
+      lock_file_path=$tmplock_dir/$base.lock
+
+    elif [ "$dir_kbn" = "1" ] ; then
+      #テーブル名(ロックファイルパス)
+      lock_file_path=$tmplock_dir/$table/$base.lock
+
+    else
+      _filelock_func_msg="error occurred : need parameter(dir_kbn)"
+      #ディレクトリ作成区分指定がない場合はエラー
+      :> $tmp-filelock_func_err
+      break;
+    fi
+
+    rm -f $lock_file_path
+
+  : ;done
+
+  #-------------------------------------------------------------
+  # エラー処理
+  if [ -e $tmp-filelock_func_err ]; then
+    return 1
+  fi
+
+  #処理時間計測用
+  _filelock_end=$(date +%Y%m%d%H%M%S.%N)
+  _filelock_procname=$(basename ${0})
+  _filelock_time_info=$_filelock_procname" ロック時間: "$(lcalc -d "$_filelock_end - $_filelock_start")
+
+  return 0
+
+}

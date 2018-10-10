@@ -1,0 +1,196 @@
+#!/bin/bash
+#
+# NISSHI_CARE_TOUROKU.SEARCH
+# スケジュール詳細　検索用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# 登録日付
+if [ -z "${hdKijunDate}" -o "${hdKijunDate}" = "_" ]; then
+  hdTourokuDate=$(mdate today | self 1)
+else
+  hdTourokuDate=$(echo ${hdKijunDate})
+fi
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+Floor
+hdTourokuDate
+FloorShokusyu0
+Shift0
+Tantousha0
+FloorShokusyu1
+Shift1
+Tantousha1
+FloorShokusyu2
+Shift2
+Tantousha2
+FloorShokusyu3
+Shift3
+Tantousha3
+FloorShokusyu4
+Shift4
+Tantousha4
+FloorShokusyu5
+Shift5
+Tantousha5
+FloorShokusyu6
+Shift6
+Tantousha6
+FloorShokusyu7
+Shift7
+Tantousha7
+FloorShokusyu8
+Shift8
+Tantousha8
+FloorShokusyu9
+Shift9
+Tantousha9
+FloorShokusyu10
+Shift10
+Tantousha10
+FloorShokusyu11
+Shift11
+Tantousha11
+taNyuyokuBiko
+NikkinTokki
+YakinTokki
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+cat <<- FIN > $tmp-header_phs
+PHS0
+PHS1
+PHS2
+PHS3
+PHS4
+PHS5
+PHS6
+PHS7
+PHS8
+PHS9
+PHS10
+PHS11
+FIN
+
+cat ${tmp}-header_phs   |
+yarr                > ${tmp}-header_phs_yoko
+
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+: > ${tmp}-nisshi_care
+if [ -s ${pompa_dir}/NISSHI/${shisetsu}/NISSHI_CARE ] ; then
+cat ${pompa_dir}/NISSHI/${shisetsu}/NISSHI_CARE |
+# 1:施設            2:フロア          3:登録日付     4:フロア職種0   5:シフト0
+# 6:担当者0         7:フロア職種1     8:シフト1      9:担当者1       10:フロア職種2
+# 11:シフト2        12:担当者2        13:フロア職種3 14:シフト3      15:担当者3
+# 16:フロア職種4    17:シフト4        18:担当者4     19:フロア職種5  20:シフト5
+# 21:担当者5        22:フロア職種6    23:シフト6     24:担当者6      25:フロア職種7
+# 26:シフト7        27:担当者7        28:フロア職種8 29:シフト8      30:担当者8
+# 31:フロア職種9    32:シフト9        33:担当者9     34:フロア職種10 35:シフト10
+# 36:担当者10       37:フロア職種11   38:シフト11    39:担当者11     40:入浴備考
+# 41:日勤業務引継ぎ 42:夜勤業務引継ぎ 43:有効フラグ  44:処理時間     45:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$2=="'$Floor'"&&$3=="'$hdTourokuDate'"'     |
+delf 1 NF-2/NF  |
+# 1:フロア          2:登録日付     3:フロア職種0   4:シフト0      5:担当者0
+# 6:フロア職種1     7:シフト1      8:担当者1       9:フロア職種2  10:シフト2
+# 11:担当者2        12:フロア職種3 13:シフト3      14:担当者3     15:フロア職種4
+# 16:シフト4        17:担当者4     18:フロア職種5  19:シフト5     20:担当者5
+# 21:フロア職種6    22:シフト6     23:担当者6      24:フロア職種7 25:シフト7
+# 26:担当者7        27:フロア職種8 28:シフト8      29:担当者8     30:フロア職種9
+# 31:シフト9        32:担当者9     33:フロア職種10 34:シフト10    35:担当者10
+# 36:フロア職種11   37:シフト11    38:担当者11     39:入浴備考    40:日勤業務引継ぎ
+# 41:夜勤業務引継ぎ
+tee $tmp-result             |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}' > ${tmp}-nisshi_care
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "ケア日誌取得エラー"
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-nisshi_care
+fi
+
+
+
+#--------------------------------------------------------------
+# 入浴データファイルの取得
+: > $tmp-nyuyoku
+if [ -s ${pompa_dir}/NISSHI/${shisetsu}/NYUYOKU_KYOSHITSU ] ; then
+cat ${pompa_dir}/NISSHI/${shisetsu}/NYUYOKU_KYOSHITSU  |
+# 1:施設     2:フロア   3:登録日付 4:居室ID 5:有効フラグ
+# 6:処理時間 7:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$Floor'"&&$3=="'$hdTourokuDate'"'     |
+delf 1/3 NF-2/NF                                   |
+# 1:データ区分 2:入浴居室ID 3:チェック
+awk '{print "n",$0,"1"}'                           > $tmp-nyuyoku
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "入浴データ取得エラー"
+fi
+
+#--------------------------------------------------------------
+# PHSデータファイルの取得
+: > $tmp-phs
+if [ -s ${pompa_dir}/NISSHI/${shisetsu}/CARE_PHS ] ; then
+cat ${pompa_dir}/NISSHI/${shisetsu}/CARE_PHS  |
+# 1:施設      2:フロア    3:PHS0   4:PHS1   5:PHS2
+# 6:PHS3      7:PHS4      8:PHS5   9:PHS6   10:PHS7
+# 11:PHS8     12:PHS9     13:PHS10 14:PHS11 15:有効フラグ
+# 16:処理時間 17:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$Floor'"'     |
+delf 1/2 NF-2/NF                                   |
+tee $tmp-result_phs             |
+cat ${tmp}-header_phs_yoko -    |
+tateyoko                    |
+awk '{print "p",$0}'        > $tmp-phs
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "PHSデータ取得エラー"
+[ "$(gyo $tmp-result_phs)" = "0" ] && : > ${tmp}-phs
+fi
+
+cp ${tmp}-phs $work_dir/data_phs
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-nisshi_care $tmp-nyuyoku $tmp-phs
+
+
+## 終了
+rm -f $tmp-*
+exit 0

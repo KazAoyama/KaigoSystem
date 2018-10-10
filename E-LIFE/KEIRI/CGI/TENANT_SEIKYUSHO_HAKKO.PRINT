@@ -1,0 +1,221 @@
+#!/bin/bash
+#
+# TATEKAEKIN.EXCEL : 立替金管理EXCEL出力
+#
+# Usage : TATEKAEKIN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 対象のテナントを取得
+awk '$1~/taishosha_check/{print $2}' ${namefile}         > $tmp-tenant_name
+
+# 明細ファイルを取得
+NENGETSU="$(echo ${nengetsu} | sed 's/-//g')"
+lastmonth=$(mdate ${NENGETSU}m/-1)
+TEMPLA=${temp_dir}/TENANT_SEIKYUSHO_HAKKO.xls
+cp ${temp_dir}/TENANT_SEIKYUSHO_HAKKO_HOGO.xls $tmp-template.xls
+awk '$(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_MEISAI > $tmp-meisaifile
+# 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+# 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+# 11:インターネット 12:クレールホール 13:自販機   14:有効フラグ 15:更新時間
+# 16:userid
+
+# 請求書設定ファイル呼び出し
+awk '$(NF-2)!=9' ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SEIKYUSHO |
+delf 2/5 NF-2/NF                                                                 > $tmp-settei
+# 1:賃料     2:共益費 3:電気代         4:水道代         5:駐車場代
+# 6:駐輪場代 7:空調費 8:インターネット 9:クレールホール 10:パーク24
+# 11:自販機
+
+# 順番
+juni $tmp-tenant_name                                    |
+self 2 1                                                 > $tmp-junban
+
+for tenant in $(yarr $tmp-tenant_name);do
+  NUMBER=$(awk '$1=="'${tenant}'"{print $2}' $tmp-junban)
+  awk '$1=="'${tenant}'"' $tmp-settei > $tmp-settei_tnt
+  awk '$1=="'${tenant}'" && $2=="'${NENGETSU}'"' $tmp-meisaifile  |
+  delf NF-2/NF                                                    > $tmp-tougetsu
+  # 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+  # 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+  # 11:インターネット 12:クレールホール 13:自販機
+
+  loopj num=1 $tmp-tougetsu $tmp-settei_tnt                       |
+# 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+# 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+# 11:インターネット 12:クレールホール 13:自販機    14:賃料      15:共益費
+# 16:電気代         17:水道代         18:駐車場代  19:駐輪場代  20:空調費
+# 21:インターネット 22:クレールホール 23:パーク24  24:自販機
+  awk '{if($14!=1){$3=0};if($15!=1){$4=0};if($16!=1){$6=0};if($17!=1){$7=0};if($18!=1){$5=0};if($19!=1){$10=0};if($20!=1){$8=0;$9=0};if($21!=1){$11=0};if($22!=1){$12=0};if($24!=1){$13=0};print}'                        |
+  delf 14/NF                                                      |
+  ysum num=2                                                      > $tmp-meisai_kansei
+  # 1:テナントID      2:年月            3:賃料       4:共益費     5:駐車場代
+  # 6:電気使用料      7:水道使用料      8:空調費固定 9:空調費変動 10:駐輪場代
+  # 11:インターネット 12:クレールホール 13:自販機    14:合計金額
+
+  # 合計行
+  self 2 NF $tmp-meisai_kansei                                    |
+  awk '{print $0,substr($1,5,2)}'                                 |
+  1bai 3                                                          |
+  #awk '{print "グランクレールセンター南"$3"月ご請求分","1",$2,$2}' > $tmp-goukeigyo
+  awk '{print "グランクレールセンター南"$3"月ご請求分","@","@",$2}' > $tmp-goukeigyo
+cp $tmp-goukeigyo ${work}/goukeigyo
+
+  # 賃料・共益費・駐車場代他
+  TINRYO=$(awk '$1=="'${tenant}'"' $tmp-settei | self 2)
+  if [ "${TINRYO}" = 1 ];then
+    self 3 4 5 $tmp-meisai_kansei                                 |
+    tarr                                                          |
+    juni                                                          |
+    awk '{if($1=="1"){print "内)","賃料","1","@",$2,$2,"_月分賃料"};if($1=="2"){print "内)","共益費","1","@",$2,$2,"_月分共益費"};if($1=="3"){print "内)","駐車場代","1","@",$2,$2,"_月分駐車場代"}}'
+  else
+    echo "@ (賃料・共益費・駐車場代別途)"
+  fi                                                              > $tmp-tinryomeisai
+
+  # 電気料金
+  # 使用料取得
+  awk '$1=="'${tenant}'" && $2=="'${NENGETSU}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_GETSUJI |
+  self 3                    > $tmp-denkiryo
+  self 6 $tmp-meisai_kansei                                       |
+  ycat $tmp-denkiryo -                                            |
+  awk '{print "@","電気使用量：　"$1"kWh","@","@",$2}'            > $tmp-meisai_1
+
+  # 水道料金
+  awk '$1=="'${tenant}'" && $2=="'${NENGETSU}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_GETSUJI |
+  self 4                    > $tmp-suidoryo
+  self 7 $tmp-meisai_kansei                                       |
+  ycat $tmp-suidoryo -                                            |
+  awk '{print "@","水道使用量：　"$1"m3","@","@",$2}'             > $tmp-meisai_2
+
+  # 空調費
+  self 1 8 9 $tmp-meisai_kansei                                   |
+  ysum num=1                                                      |
+  awk '{print "@","空調費","@","@",$4}'                           > $tmp-meisai_3
+
+  # 駐輪場
+  awk '$1=="'${tenant}'" && $2=="'${NENGETSU}'" && $(NF-2)!=9' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_GETSUJI |
+  self 7                    > $tmp-tyurin
+  self 10 $tmp-meisai_kansei                                      |
+  ycat $tmp-tyurin -                                              |
+  awk '{print "@","駐輪場"$1"台使用","@","@",$2}'                 > $tmp-meisai_4
+
+  # インターネット
+  self 11 $tmp-meisai_kansei                                      |
+  awk '{print "@","インターネット使用","@","@",$1}'               > $tmp-meisai_5
+  
+  # クレールホール利用料
+  self 12 $tmp-meisai_kansei                                      |
+  awk '{print "@","クレールホール利用料","@","@",$1}'             > $tmp-meisai_6
+  
+  # 諸料金合計
+  self 1 6/NF-1 $tmp-meisai_kansei                                |
+  ysum num=1                                                      |
+  self NF                                                         |
+  awk '{print "内)","諸料金","1","@",$1,$1}'                      > $tmp-meisai_goukei
+
+  # 合体
+  cat $tmp-tinryomeisai $tmp-meisai_goukei $tmp-meisai_1 $tmp-meisai_2 $tmp-meisai_3 $tmp-meisai_4 $tmp-meisai_5 $tmp-meisai_6 |
+  awk '$5!=0' > $tmp-meisai_gattai
+
+  # 区画番号
+  awk '$1=="'${tenant}'" && $(NF-2)!=9{print $3}' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_TENANT_MASTER > $tmp-kukaku
+
+  # 宛名
+  awk '$1=="'${tenant}'" && $(NF-2)!=9{print}' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SEIKYUSHO > $tmp-seikyusho
+  self 2 $tmp-seikyusho > $tmp-yuubinbango
+  self 3 $tmp-seikyusho > $tmp-address
+  self 4 $tmp-seikyusho > $tmp-shamei
+  self 5 $tmp-seikyusho |
+  awk '{print $1"　様"}' |
+  sed 's/##/　　　 /g'        |
+  tarr                  > $tmp-atena
+
+  # 支払期日
+  mdate ${lastmonth}m |
+  tarr               |
+  tail -n1           |
+  awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}' > $tmp-kijitu
+
+  # 分割して配置
+  self 1 $tmp-goukeigyo                                           > $tmp-goukeigyo1
+  self 2 $tmp-goukeigyo                                           > $tmp-goukeigyo2
+  self 3/NF $tmp-goukeigyo                                        > $tmp-goukeigyo3
+Ehexcel $tmp-template.xls ${NUMBER} a18 $tmp-goukeigyo1                 \
+                    ${NUMBER} b2  $tmp-kukaku                     \
+                    ${NUMBER} b4  $tmp-yuubinbango                \
+                    ${NUMBER} b5  $tmp-address                    \
+                    ${NUMBER} b6  $tmp-shamei                     \
+                    ${NUMBER} b7  $tmp-atena                      \
+                    ${NUMBER} c18 $tmp-goukeigyo2                 \
+                    ${NUMBER} e18 $tmp-goukeigyo3                 \
+                    ${NUMBER} a19 ${tmp}-meisai_gattai            > ${download_dir}/${userid}_$$.download.xls_new
+cp ${download_dir}/${userid}_$$.download.xls_new $tmp-template.xls
+cp $tmp-template.xls ${download_dir}/${userid}_$$.download.xls
+done
+
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

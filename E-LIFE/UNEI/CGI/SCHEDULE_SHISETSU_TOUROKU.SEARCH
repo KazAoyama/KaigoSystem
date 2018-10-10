@@ -1,0 +1,132 @@
+#!/bin/bash
+#
+# SCHEDULE_CARE_TOUROKU.SEARCH
+# スケジュール詳細　検索用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# スケジュールID
+[ -z "${ScheduleID}" -o "${ScheduleID}" = "_" ] && error_exit "スケジュールが特定されていません"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+ScheduleID
+EventType
+EventName
+EventDate
+EventStart
+EventEnd
+EventYoyaku
+EventPlace
+EventFee
+EventTantousha1
+EventTantousha2
+EventSupplement
+EventTateya
+EventKazeiKbn
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_SHOUSAI |
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"'     |
+delf 1 NF-2/NF  |
+# 1:データ区分 2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻   7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1   12:担当者2       13:追記              14:建屋          15:課税区分
+tee $tmp-result             |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}' > ${tmp}-schedule_detail
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュール詳細取得エラー"
+
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-schedule_detail
+
+
+#--------------------------------------------------------------
+# 利用者ファイルの取得
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_SANKASHA  |
+# 1:施設   2:スケジュールID 3:利用者ID 4:利用チェック 5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$7!="9"'     |
+delf 1 2 NF-2/NF                                   |
+self 1 3 2 4                                       |
+# 1:データ区分 2:利用者ID 3:備考 4:利用チェック 5:費用
+awk '{print "s",$0}'                               > $tmp-sankasha
+
+
+#--------------------------------------------------------------
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_GUEST    |
+# 1:施設 2:スケジュールID 3:ゲスト名 4:関係入居者     5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ログインユーザ
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$9!="9"'     |
+delf 1 2 NF-2/NF                                   |
+# 1:データ区分 2:ゲスト名 3:関係入居者 4:備考 5:費用 6:性別
+awk '{print "g",$0}'                               > $tmp-guest
+
+#--------------------------------------------------------------
+# 部屋予約
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_RESERVATION    |
+# 1:施設        2:スケジュールID 3:部屋ID 4:部屋名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+awk '$1=="'${shisetsu}'"&&$2=="'$ScheduleID'"&&$9!="9"'     |
+self 3                                                    |
+# 1:データ区分 2:ゲスト名 3:関係入居者 4:備考 5:費用 6:性別
+awk '{print "r",$0}'                               > $tmp-reservation
+
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-schedule_detail $tmp-sankasha $tmp-guest $tmp-reservation
+
+
+## 終了
+rm -f $tmp-*
+exit 0

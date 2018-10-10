@@ -1,0 +1,70 @@
+#!/bin/bash
+#
+# TATEKAEKIN_KINSHUHYO.SEARCH : 立替金金種表登録.DISPLAY
+#
+# Usage : TATEKAEKIN_KINSHUHYO.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+downloadfile=${3}
+
+# eval
+eval $(name-source ${namefile})
+
+# 日にちが渡って来なかったら当日をセット
+if [ "${hd_date}" = "_" -o -z "${hd_date}" ];then
+  hd_date=$(date +%Y%m%d)
+  text_date=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}')
+else
+  :
+fi
+
+# 検索する年月
+month=$(echo ${hd_date} | awk '{print substr($1,1,6)}')
+
+# 検索
+cat ${pompa_dir}/KINSHUHYO/${shisetsu}-${tateya}/${month}/${month}.${shisetsu}-${tateya}_KINSHUHYO          |
+# 1:日付 2:万 3:五千 4:千 5:五百 6:百 7:五十 8:十 9:五 10:一 11:登録日時
+LANG=C sort -k1,1n                                                                                          |
+join0 key=1 <(echo ${hd_date})                                                                              > ${tmp}-data
+
+if [ "$(gyo ${tmp}-data)" = 0 ];then
+  echo ${hd_date} "0" "0" "0" "0" "0" "0" "0" "0" "0"  > ${tmp}-search
+else
+  cat ${tmp}-data                                      > ${tmp}-search
+fi
+
+cat ${tmp}-search
+
+rm -f ${tmp}-*
+exit 0
+

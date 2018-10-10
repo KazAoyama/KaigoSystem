@@ -1,0 +1,148 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.SAIKAKUTEI : 介護請求居宅支援　データを消す
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.SAIKAKUTEI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+member=${1}
+shisetsu=${2}
+seikyu_nengetsu=${3}
+teikyo_nengetsu=${4}
+
+# まだ確定されていなかったら終わり
+[ ! -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu} ] && exit 0
+  
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124 ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124    |
+  awk '$1!="'${member}'"'
+else
+  :
+fi                                                               |
+# 1:利用者ID 2:登録時間 3:識別番号 4:事業所番号 5:事業所区分(ここでは指定事業所を表す1)
+# 6:提供年月 7:保険者番号 8:単価 9:被保険者番号 10:_
+# 11:_ 12:被保険者生年月日 13:性別 14:要介護度区分 15:認定有効期間開始
+# 16:認定有効期間終了 17:サービス計画届出日 18:サービス計画費明細行番号（ここではすべて99) 19:サービスコード 20:単位数
+# 21:回数 22:サービス単位数 23:サービス単位数合計 24:請求金額合計 25:ケアマネ番号
+delf 1 2                                                         |
+# 1:識別番号 2:事業所番号 3:事業所区分(ここでは指定事業所を表す1) 4:提供年月 5:保険者番号
+# 6:単価 7:被保険者番号 8:_ 9:_ 10:被保険者生年月日
+# 11:性別 12:要介護度区分 13:認定有効期間開始 14:認定有効期間終了 15:サービス計画届出日
+# 16:サービス計画費明細行番号（ここではすべて99) 17:サービスコード 18:単位数 19:回数 20:サービス単位数
+# 21:サービス単位数合計 22:請求金額合計 23:ケアマネ番号
+awk '$16=="99"'                                                  > $tmp-kyotaku_shukei_base
+kyotaku_kensu=$(cat $tmp-kyotaku_shukei_base | gyo)
+JIGYOSHO_CODE=$(cat ${master_tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER | awk '$1=="'${shisetsu}'" && $3=="43"' | self 2)
+# 事業所情報を取得
+cat ${master_tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER          |
+# 1:事業所ID           2:サービス供給事業者番号 3:サービス供給事業者名 4:サービスコード種類 5:事業所区分
+# 6:指定基準事業所区分 7:地域区分               8:生活保護指定         9:割引率             10:施設等の区分?????????????????????????????
+self 1 2 6                                                       |
+# 1:事業所ID 2:サービス供給事業者番号 3:指定基準事業所区分
+awk '$1=="'${JIGYOSHO_CODE}'"'                                   > ${tmp}-kyotaku_jigyosho_bangou
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+kyotaku_bangou=$(cat $tmp-kyotaku_jigyosho_bangou | self 2)
+JIGYOSHO_KUBUN=$(cat $tmp-kyotaku_jigyosho_bangou | self 3)
+cat $tmp-kyotaku_shukei_base                                     |
+# 1:識別番号 2:事業所番号 3:事業所区分(ここでは指定事業所を表す1) 4:提供年月 5:保険者番号
+# 6:単価 7:被保険者番号 8:_ 9:_ 10:被保険者生年月日
+# 11:性別 12:要介護度区分 13:認定有効期間開始 14:認定有効期間終了 15:サービス計画届出日
+# 16:サービス計画費明細行番号（ここではすべて99) 17:サービスコード 18:単位数 19:回数 20:サービス単位数
+# 21:サービス単位数合計 22:請求金額合計 23:ケアマネ番号
+self 4 21 22                                                     |
+sm2 1 1 2 3                                                      |
+self 2 3                                                         |
+# 1:単位数合計 2:請求金額合計
+awk '{print "7111","'${teikyo_nengetsu}'","'${kyotaku_bangou}'","1","0","2","'${kyotaku_kensu}'",$1,$2,$2,"0","0","0","0","0","0","0","0"}' > $tmp-${teikyo_nengetsu}-input_kyotaku_7111
+# 1:識別番号 2:提供年月 3:事業所番号 4:保険・公費区分 5:法別番号
+# 6:請求情報区分 7:サービス費用件数 8:サービス単位数 9:サービス費用合計 10:サービス費保険請求額
+# 11～18:0
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+############################################################################################################################################
+
+# POMPA更新
+lock_file=${pompa_dir}/KAIGOSEIKYU_KYOTAKU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124 ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124     |
+  awk '$1!="'${member}'"'                                                                          > $tmp-member_igai_8124
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124     |
+  awk '$1=="'${member}'"'                                                                          |
+  awk '$6!="'${teikyo_nengetsu}'"'                                                                           |
+  cat  - $tmp-member_igai_8124                                                                     |
+  LANG=C sort -k1,1 -k18,18                                                                        > $tmp-new_pompa_8124
+  mv $tmp-new_pompa_8124 ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124
+else
+  :
+fi
+if [ -e $tmp-${teikyo_nengetsu}-input_kyotaku_7111 ];then
+  cp -p $tmp-${teikyo_nengetsu}-input_kyotaku_7111 ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYOTAKU_SEIKYUJOHO_7111
+else
+  :
+fi
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYUFUKANRI ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYUFUKANRI             |
+  awk '$1!="'${member}'"'                                                                          |
+  LANG=C sort -k1,1 -k10,10                                                                        > $tmp-new_pompa_kyufukanri
+  mv $tmp-new_pompa_kyufukanri ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.KYUFUKANRI
+else
+  :
+fi
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.YOBO_KYUFUKANRI ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.YOBO_KYUFUKANRI             |
+  awk '$1!="'${member}'"'                                                                          |
+  LANG=C sort -k1,1 -k10,10                                                                        > $tmp-new_pompa_yobokyufukanri
+  mv $tmp-new_pompa_yobokyufukanri ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${teikyo_nengetsu}.YOBO_KYUFUKANRI
+else
+  :
+fi
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+    
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+rm -f ${tmp}-*
+exit 0
+

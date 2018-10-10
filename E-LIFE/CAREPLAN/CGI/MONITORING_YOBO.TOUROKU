@@ -1,0 +1,460 @@
+#!/bin/bash
+#
+# MONITORING_YOBO.TOUROKU : モニタリング予防登録
+#
+# Usage : MONITORING_YOBO.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d).$$ ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--- 日付 ---
+sday=$(date +%Y%m%d)
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+chkChoukiMokuhyouHyouka="_"
+chkTankiMokuhyouHyouka="_"
+rdoZengetsuHenka1="_"
+rdoZengetsuHenka2="_"
+rdoZengetsuHenka3="_"
+rdoZengetsuHenka4="_"
+rdoZengetsuHenka5="_"
+rdoZengetsuHenka6="_"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# ケアプラン作成年月日
+[ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] && error_exit "作成年月日が不明です"
+# モニタリング作成年月日(削除の場合の処理も追加)
+if [ "${MODE}" = "update" -o "$MODE" = "delete" ] ; then
+    if [ -z "${hdMonitoringSakuseiDate}" -o "${hdMonitoringSakuseiDate}" = "_" ] ; then
+       sday=$(date +%Y%m%d)
+    else
+       sday=${hdMonitoringSakuseiDate}
+    fi
+fi 
+
+# 削除処理追加（2014/10/7）
+yukoflg="1"
+[ "$MODE" = "delete" ] && yukoflg="9"
+
+# モニタリング実践記録表年
+#input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $MonitoringYear 9)
+#[ "${input_res}" != "OK" ] && error_exit $input_res
+# 支援実践期間
+ShienJissenStart_kakunin=$(echo $ShienJissenStart | sed 's/年//g' | sed 's/月//g' | sed 's/日//g')
+ShienJissenEnd_kakunin=$(echo $ShienJissenEnd | sed 's/年//g' | sed 's/月//g' | sed 's/日//g')
+[ "$ShienJissenStart_kakunin" -gt "$ShienJissenEnd_kakunin" ] && error_exit "日付を確認して下さい"
+#--------------------------------------------------------------
+# データ作成
+# 基本情報
+# 1:利用者ID                 2:ケアプラン作成年月日     3:モニタリング作成年月日   4:評価基準月１             5:評価基準日１
+# 6:評価基準月２             7:評価基準日２             8:評価基準月３             9:評価基準日３             10:評価基準月４
+# 11:評価基準日４            12:評価基準月５            13:評価基準日５            14:評価基準月６            15:評価基準日６
+# 16:評価項目１              17:評価項目１基準１        18:評価項目１基準２        19:評価項目１基準３        20:評価項目１基準４
+# 21:評価項目１基準５        22:評価項目１基準６        23:評価項目２              24:評価項目２基準１        25:評価項目２基準２
+# 26:評価項目２基準３        27:評価項目２基準４        28:評価項目２基準５        29:評価項目２基準６        30:評価項目３
+# 31:評価項目３基準１        32:評価項目３基準２        33:評価項目３基準３        34:評価項目３基準４        35:評価項目３基準５
+# 36:評価項目３基準６        37:評価項目４              38:評価項目４基準１        39:評価項目４基準２        40:評価項目４基準３
+# 41:評価項目４基準４        42:評価項目４基準５        43:評価項目４基準６        44:評価項目５              45:評価項目５基準１
+# 46:評価項目５基準２        47:評価項目５基準３        48:評価項目５基準４        49:評価項目５基準５        50:評価項目５基準６
+# 51:状況１基準１            52:状況１基準２            53:状況１基準３            54:状況１基準４            55:状況１基準５
+# 56:状況１基準６            57:状況２基準１            58:状況２基準２            59:状況２基準３            60:状況２基準４
+# 61:状況２基準５            62:状況２基準６            63:状況３基準１            64:状況３基準２            65:状況３基準３
+# 66:状況３基準４            67:状況３基準５            68:状況３基準６            69:長期目標1               70:評価プラン1上段1
+# 71:評価プラン1上段2        72:評価プラン1上段3        73:評価プラン1上段4        74:評価プラン1上段5        75:評価プラン1上段6
+# 76:評価プラン1中段1        77:評価プラン1中段2        78:評価プラン1中段3        79:評価プラン1中段4        80:評価プラン1中段5
+# 81:評価プラン1中段6        82:長期目標2               83:評価プラン2上段1        84:評価プラン2上段2        85:評価プラン2上段3
+# 86:評価プラン2上段4        87:評価プラン2上段5        88:評価プラン2上段6        89:評価プラン2中段1        90:評価プラン2中段2
+# 91:評価プラン2中段3        92:評価プラン2中段4        93:評価プラン2中段5        94:評価プラン2中段6        95:長期目標3
+# 96:評価プラン3上段1        97:評価プラン3上段2        98:評価プラン3上段3        99:評価プラン3上段4        100:評価プラン3上段5
+# 101:評価プラン3上段6       102:評価プラン3中段1       103:評価プラン3中段2       104:評価プラン3中段3       105:評価プラン3中段4
+# 106:評価プラン3中段5       107:評価プラン3中段6       108:長期目標4              109:評価プラン4上段1       110:評価プラン4上段2
+# 111:評価プラン4上段3       112:評価プラン4上段4       113:評価プラン4上段5       114:評価プラン4上段6       115:評価プラン4中段1
+# 116:評価プラン4中段2       117:評価プラン4中段3       118:評価プラン4中段4       119:評価プラン4中段5       120:評価プラン4中段6
+# 121:長期目標5              122:評価プラン5上段1       123:評価プラン5上段2       124:評価プラン5上段3       125:評価プラン5上段4
+# 126:評価プラン5上段5       127:評価プラン5上段6       128:評価プラン5中段1       129:評価プラン5中段2       130:評価プラン5中段3
+# 131:評価プラン5中段4       132:評価プラン5中段5       133:評価プラン5中段6       134:所見適正度１回目       135:所見適正度２回目
+# 136:所見適正度３回目       137:所見適正度４回目       138:所見適正度５回目       139:所見適正度６回目       140:所見生活課題１回目
+# 141:所見生活課題２回目     142:所見生活課題３回目     143:所見生活課題４回目     144:所見生活課題５回目     145:所見生活課題６回目
+# 146:所見ケアプラン１回目   147:所見ケアプラン２回目   148:所見ケアプラン３回目   149:所見ケアプラン４回目   150:所見ケアプラン５回目
+# 151:所見ケアプラン６回目   152:所見連絡１回目         153:所見連絡２回目         154:所見連絡３回目         155:所見連絡４回目
+# 156:所見連絡５回目         157:所見連絡６回目         158:所見会議１回目         159:所見会議２回目         160:所見会議３回目
+# 161:所見会議４回目         162:所見会議５回目         163:所見会議６回目         164:所見アセスメント１回目 165:所見アセスメント２回目
+# 166:所見アセスメント３回目 167:所見アセスメント４回目 168:所見アセスメント５回目 169:所見アセスメント６回目 170:記入者１回目
+# 171:記入者２回目           172:記入者３回目           173:記入者４回目           174:記入者５回目           175:記入者６回目
+# 176:変化内容1              177:変化内容2              178:変化内容3              179:変化内容4              180:変化内容5
+# 181:変化内容6              182:モニタリング年         183:飲水摂取評価1          184:飲水摂取評価2          185:飲水摂取評価3
+# 186:飲水摂取評価4          187:飲水摂取評価5          188:飲水摂取評価6          189:食事摂取評価1          190:食事摂取評価2
+# 191:食事摂取評価3          192:食事摂取評価4          193:食事摂取評価5          194:食事摂取評価6          195:食事形態評価1
+# 196:食事形態評価2          197:食事形態評価3          198:食事形態評価4          199:食事形態評価5          200:食事摂取評価6
+# 201:排尿評価1              202:排尿評価2              203:排尿評価3              204:排尿評価4              205:排尿評価5
+# 206:排尿評価6              207:排便評価1              208:排便評価2              209:排便評価3              210:排便評価4
+# 211:排便評価5              212:排便評価6              213:失禁評価1              214:失禁評価2              215:失禁評価3
+# 216:失禁評価4              217:失禁評価5              218:失禁評価6              219:排泄方法日中評価1      220:排泄方法日中評価2
+# 221:排泄方法日中評価3      222:排泄方法日中評価4      223:排泄方法日中評価5      224:排泄方法日中評価6      225:排泄方法夜間評価1
+# 226:排泄方法夜間評価2      227:排泄方法夜間評価3      228:排泄方法夜間評価4      229:排泄方法夜間評価5      230:排泄方法夜間評価6
+# 231:洗身評価1              232:洗身評価2              233:洗身評価3              234:洗身評価4              235:洗身評価5
+# 236:洗身評価6              237:入浴方法評価1          238:入浴方法評価2          239:入浴方法評価3          240:入浴方法評価4
+# 241:入浴方法評価5          242:入浴方法評価6          243:上着着脱評価1          244:上着着脱評価2          245:上着着脱評価3
+# 246:上着着脱評価4          247:上着着脱評価5          248:上着着脱評価6          249:ズボン着脱評価1        250:ズボン着脱評価2
+# 251:ズボン着脱評価3        252:ズボン着脱評価4        253:ズボン着脱評価5        254:ズボン着脱評価6        255:口腔評価1
+# 256:口腔評価2              257:口腔評価3              258:口腔評価4              259:口腔評価5              260:口腔評価6
+# 261:洗顔評価1              262:洗顔評価2              263:洗顔評価3              264:洗顔評価4              265:洗顔評価5
+# 266:洗顔評価6              267:起き上がり評価1        268:起き上がり評価2        269:起き上がり評価3        270:起き上がり評価4
+# 271:起き上がり評価5        272:起き上がり評価6        273:座位評価1              274:座位評価2              275:座位評価3
+# 276:座位評価4              277:座位評価5              278:座位評価6              279:たち上がり評価1        280:たち上がり評価2
+# 281:たち上がり評価3        282:たち上がり評価4        283:たち上がり評価5        284:たち上がり評価6        285:歩行評価1
+# 286:歩行評価2              287:歩行評価3              288:歩行評価4              289:歩行評価5              290:歩行評価6
+# 291:移乗評価1              292:移乗評価2              293:移乗評価3              294:移乗評価4              295:移乗評価5
+# 296:移乗評価6              297:移動方法屋内評価1      298:移動方法屋内評価2      299:移動方法屋内評価3      300:移動方法屋内評価4
+# 301:移動方法屋内評価5      302:移動方法屋内評価6      303:移動方法屋外評価1      304:移動方法屋外評価2      305:移動方法屋外評価3
+# 306:移動方法屋外評価4      307:移動方法屋外評価5      308:移動方法屋外評価6      309:意思伝達評価1          310:意思伝達評価2
+# 311:意思伝達評価3          312:意思伝達評価4          313:意思伝達評価5          314:意思伝達評価6          315:意思決定評価1
+# 316:意思決定評価2          317:意思決定評価3          318:意思決定評価4          319:意思決定評価5          320:意思決定評価6
+# 321:指示への反応1          322:指示への反応2          323:指示への反応3          324:指示への反応4          325:指示への反応5
+# 326:指示への反応6          327:電話利用評価1          328:電話利用評価2          329:電話利用評価3          330:電話利用評価4
+# 331:電話利用評価5          332:電話利用評価6          333:薬内服評価1            334:薬内服評価2            335:薬内服評価3
+# 336:薬内服評価4            337:薬内服評価5            338:薬内服評価6            339:金銭管理評価1          340:金銭管理評価2
+# 341:金銭管理評価3          342:金銭管理評価4          343:金銭管理評価5          344:金銭管理評価6          345:被害妄想評価1
+# 346:被害妄想評価2          347:被害妄想評価3          348:被害妄想評価4          349:被害妄想評価5          350:被害妄想評価6
+# 351:幻覚評価1              352:幻覚評価2              353:幻覚評価3              354:幻覚評価4              355:幻覚評価5
+# 356:幻覚評価6              357:感情不安定評価1        358:感情不安定評価2        359:感情不安定評価3        360:感情不安定評価4
+# 361:感情不安定評価5        362:感情不安定評価6        363:昼夜逆転評価1          364:昼夜逆転評価2          365:昼夜逆転評価3
+# 366:昼夜逆転評価4          367:昼夜逆転評価5          368:昼夜逆転評価6          369:暴言評価1              370:暴言評価2
+# 371:暴言評価3              372:暴言評価4              373:暴言評価5              374:暴言評価6              375:大声評価1
+# 376:大声評価2              377:大声評価3              378:大声評価4              379:大声評価5              380:大声評価6
+# 381:介護抵抗評価1          382:介護抵抗評価2          383:介護抵抗評価3          384:介護抵抗評価4          385:介護抵抗評価5
+# 386:介護抵抗評価6          387:徘徊評価1              388:徘徊評価2              389:徘徊評価3              390:徘徊評価4
+# 391:徘徊評価5              392:徘徊評価6              393:帰宅願望評価1          394:帰宅願望評価2          395:帰宅願望評価3
+# 396:帰宅願望評価4          397:帰宅願望評価5          398:帰宅願望評価6          399:記入者名1              400:記入者名2
+# 401:記入者名3              402:記入者名4              403:記入者名5              404:記入者名6              405:有効フラグ
+# 406:処理日                 407:ユーザID
+
+echo "$Riyoushaid" "$hdKeikakuSakuseiDate" "$sday" \
+"$HyoukakikanFirstMonth" "$HyoukakikanFirstDay" "$HyoukakikanSecondMonth" "$HyoukakikanSecondDay" \
+"$HyoukakikanThirdMonth" "$HyoukakikanThirdDay" "$HyoukakikanFourthMonth" "$HyoukakikanFourthDay" \
+"$HyoukakikanFifthMonth" "$HyoukakikanFifthDay" "$HyoukakikanSixthMonth" "$HyoukakikanSixthDay" \
+"$HyoukaKoumoku1" "$HyoukakijunFirst1" "$HyoukakijunSecond1" "$HyoukakijunThird1" \
+"$HyoukakijunFourth1" "$HyoukakijunFifth1" "$HyoukakijunSixth1" \
+"$HyoukaKoumoku2" "$HyoukakijunFirst2" "$HyoukakijunSecond2" "$HyoukakijunThird2" \
+"$HyoukakijunFourth2" "$HyoukakijunFifth2" "$HyoukakijunSixth2" \
+"$HyoukaKoumoku3" "$HyoukakijunFirst3" "$HyoukakijunSecond3" "$HyoukakijunThird3" \
+"$HyoukakijunFourth3" "$HyoukakijunFifth3" "$HyoukakijunSixth3" \
+"$HyoukaKoumoku4" "$HyoukakijunFirst4" "$HyoukakijunSecond4" "$HyoukakijunThird4" \
+"$HyoukakijunFourth4" "$HyoukakijunFifth4" "$HyoukakijunSixth4" \
+"$HyoukaKoumoku5" "$HyoukakijunFirst5" "$HyoukakijunSecond5" "$HyoukakijunThird5" \
+"$HyoukakijunFourth5" "$HyoukakijunFifth5" "$HyoukakijunSixth5" \
+"$JoukyoukijunFirst1" "$JoukyoukijunSecond1" "$JoukyoukijunThird1" "$JoukyoukijunFourth1" \
+"$JoukyoukijunFifth1" "$JoukyoukijunSixth1" \
+"$JoukyoukijunFirst2" "$JoukyoukijunSecond2" "$JoukyoukijunThird2" "$JoukyoukijunFourth2" \
+"$JoukyoukijunFifth2" "$JoukyoukijunSixth2" \
+"$JoukyoukijunFirst3" "$JoukyoukijunSecond3" "$JoukyoukijunThird3" "$JoukyoukijunFourth3" \
+"$JoukyoukijunFifth3" "$JoukyoukijunSixth3" \
+"$taChoukiMokuhyou1" \
+"$HyoukaPlanJoudanFirst1" "$HyoukaPlanJoudanSecond1" "$HyoukaPlanJoudanThird1" \
+"$HyoukaPlanJoudanFourth1" "$HyoukaPlanJoudanFifth1" "$HyoukaPlanJoudanSixth1" \
+"$HyoukaPlanChudanFirst1" "$HyoukaPlanChudanSecond1" "$HyoukaPlanChudanThird1" \
+"$HyoukaPlanChudanFourth1" "$HyoukaPlanChudanFifth1" "$HyoukaPlanChudanSixth1" \
+"$taChoukiMokuhyou2" \
+"$HyoukaPlanJoudanFirst2" "$HyoukaPlanJoudanSecond2" "$HyoukaPlanJoudanThird2" \
+"$HyoukaPlanJoudanFourth2" "$HyoukaPlanJoudanFifth2" "$HyoukaPlanJoudanSixth2" \
+"$HyoukaPlanChudanFirst2" "$HyoukaPlanChudanSecond2" "$HyoukaPlanChudanThird2" \
+"$HyoukaPlanChudanFourth2" "$HyoukaPlanChudanFifth2" "$HyoukaPlanChudanSixth2" \
+"$taChoukiMokuhyou3" \
+"$HyoukaPlanJoudanFirst3" "$HyoukaPlanJoudanSecond3" "$HyoukaPlanJoudanThird3" \
+"$HyoukaPlanJoudanFourth3" "$HyoukaPlanJoudanFifth3" "$HyoukaPlanJoudanSixth3" \
+"$HyoukaPlanChudanFirst3" "$HyoukaPlanChudanSecond3" "$HyoukaPlanChudanThird3" \
+"$HyoukaPlanChudanFourth3" "$HyoukaPlanChudanFifth3" "$HyoukaPlanChudanSixth3" \
+"$taChoukiMokuhyou4" \
+"$HyoukaPlanJoudanFirst4" "$HyoukaPlanJoudanSecond4" "$HyoukaPlanJoudanThird4" \
+"$HyoukaPlanJoudanFourth4" "$HyoukaPlanJoudanFifth4" "$HyoukaPlanJoudanSixth4" \
+"$HyoukaPlanChudanFirst4" "$HyoukaPlanChudanSecond4" "$HyoukaPlanChudanThird4" \
+"$HyoukaPlanChudanFourth4" "$HyoukaPlanChudanFifth4" "$HyoukaPlanChudanSixth4" \
+"$taChoukiMokuhyou5" \
+"$HyoukaPlanJoudanFirst5" "$HyoukaPlanJoudanSecond5" "$HyoukaPlanJoudanThird5" \
+"$HyoukaPlanJoudanFourth5" "$HyoukaPlanJoudanFifth5" "$HyoukaPlanJoudanSixth5" \
+"$HyoukaPlanChudanFirst5" "$HyoukaPlanChudanSecond5" "$HyoukaPlanChudanThird5" \
+"$HyoukaPlanChudanFourth5" "$HyoukaPlanChudanFifth5" "$HyoukaPlanChudanSixth5" \
+"$ShokenFirst1" "$ShokenSecond1" "$ShokenThird1" "$ShokenFourth1" "$ShokenFifth1" "$ShokenSixth1" \
+"$ShokenFirst2" "$ShokenSecond2" "$ShokenThird2" "$ShokenFourth2" "$ShokenFifth2" "$ShokenSixth2" \
+"$ShokenFirst3" "$ShokenSecond3" "$ShokenThird3" "$ShokenFourth3" "$ShokenFifth3" "$ShokenSixth3" \
+"$ShokenFirst4" "$ShokenSecond4" "$ShokenThird4" "$ShokenFourth4" "$ShokenFifth4" "$ShokenSixth4" \
+"$ShokenFirst5" "$ShokenSecond5" "$ShokenThird5" "$ShokenFourth5" "$ShokenFifth5" "$ShokenSixth5" \
+"$ShokenFirst6" "$ShokenSecond6" "$ShokenThird6" "$ShokenFourth6" "$ShokenFifth6" "$ShokenSixth6" \
+"$KinyuMei1" "$KinyuMei2" "$KinyuMei3" "$KinyuMei4" "$KinyuMei5" "$KinyuMei6" \
+"$taMonitoringNaiyo1" "$taMonitoringNaiyo2" "$taMonitoringNaiyo3" \
+"$taMonitoringNaiyo4" "$taMonitoringNaiyo5" "$taMonitoringNaiyo6" \
+"$MonitoringYear" \
+"$slInsui1" "$slInsui2" "$slInsui3" "$slInsui4" "$slInsui5" "$slInsui6" \
+"$slShokujiSesshu1" "$slShokujiSesshu2" "$slShokujiSesshu3" "$slShokujiSesshu4" \
+"$slShokujiSesshu5" "$slShokujiSesshu6" \
+"$slShokujiKeitai1" "$slShokujiKeitai2" "$slShokujiKeitai3" "$slShokujiKeitai4" \
+"$slShokujiKeitai5" "$slShokujiKeitai6" \
+"$slHainyou1" "$slHainyou2" "$slHainyou3" "$slHainyou4" "$slHainyou5" "$slHainyou6" \
+"$slHaiben1" "$slHaiben2" "$slHaiben3" "$slHaiben4" "$slHaiben5" "$slHaiben6" \
+"$slShikkin1" "$slShikkin2" "$slShikkin3" "$slShikkin4" "$slShikkin5" "$slShikkin6" \
+"$slHaisetsuNicchu1" "$slHaisetsuNicchu2" "$slHaisetsuNicchu3" "$slHaisetsuNicchu4" \
+"$slHaisetsuNicchu5" "$slHaisetsuNicchu6" \
+"$slHaisetsuYakan1" "$slHaisetsuYakan2" "$slHaisetsuYakan3" "$slHaisetsuYakan4" \
+"$slHaisetsuYakan5" "$slHaisetsuYakan6" \
+"$slSenshin1" "$slSenshin2" "$slSenshin3" "$slSenshin4" "$slSenshin5" "$slSenshin6" \
+"$slNyuyokuHouhou1" "$slNyuyokuHouhou2" "$slNyuyokuHouhou3" "$slNyuyokuHouhou4" \
+"$slNyuyokuHouhou5" "$slNyuyokuHouhou6" \
+"$slChakudatsuUwagi1" "$slChakudatsuUwagi2" "$slChakudatsuUwagi3" "$slChakudatsuUwagi4" \
+"$slChakudatsuUwagi5" "$slChakudatsuUwagi6" \
+"$slChakudatsuPants1" "$slChakudatsuPants2" "$slChakudatsuPants3" "$slChakudatsuPants4" \
+"$slChakudatsuPants5" "$slChakudatsuPants6" \
+"$slKouku1" "$slKouku2" "$slKouku3" "$slKouku4" "$slKouku5" "$slKouku6" \
+"$slSengan1" "$slSengan2" "$slSengan3" "$slSengan4" "$slSengan5" "$slSengan6" \
+"$slOkiagari1" "$slOkiagari2" "$slOkiagari3" "$slOkiagari4" "$slOkiagari5" "$slOkiagari6" \
+"$slZai1" "$slZai2" "$slZai3" "$slZai4" "$slZai5" "$slZai6" \
+"$slTachiagari1" "$slTachiagari2" "$slTachiagari3" "$slTachiagari4" "$slTachiagari5" "$slTachiagari6" \
+"$slHokou1" "$slHokou2" "$slHokou3" "$slHokou4" "$slHokou5" "$slHokou6" \
+"$slIjou1" "$slIjou2" "$slIjou3" "$slIjou4" "$slIjou5" "$slIjou6" \
+"$slIdouNicchu1" "$slIdouNicchu2" "$slIdouNicchu3" "$slIdouNicchu4" "$slIdouNicchu5" "$slIdouNicchu6" \
+"$slIdouYakan1" "$slIdouYakan2" "$slIdouYakan3" "$slIdouYakan4" "$slIdouYakan5" "$slIdouYakan6" \
+"$slIshiDentatsu1" "$slIshiDentatsu2" "$slIshiDentatsu3" "$slIshiDentatsu4" "$slIshiDentatsu5" \
+"$slIshiDentatsu6" \
+"$slIshiKettei1" "$slIshiKettei2" "$slIshiKettei3" "$slIshiKettei4" "$slIshiKettei5" "$slIshiKettei6" \
+"$slShijiHanno1" "$slShijiHanno2" "$slShijiHanno3" "$slShijiHanno4" "$slShijiHanno5" "$slShijiHanno6" \
+"$slDenwa1" "$slDenwa2" "$slDenwa3" "$slDenwa4" "$slDenwa5" "$slDenwa6" \
+"$slKusuri1" "$slKusuri2" "$slKusuri3" "$slKusuri4" "$slKusuri5" "$slKusuri6" \
+"$slKinsen1" "$slKinsen2" "$slKinsen3" "$slKinsen4" "$slKinsen5" "$slKinsen6" \
+"$slHigaiMousou1" "$slHigaiMousou2" "$slHigaiMousou3" "$slHigaiMousou4" "$slHigaiMousou5" \
+"$slHigaiMousou6" \
+"$slGenkaku1" "$slGenkaku2" "$slGenkaku3" "$slGenkaku4" "$slGenkaku5" "$slGenkaku6" \
+"$slKanjou1" "$slKanjou2" "$slKanjou3" "$slKanjou4" "$slKanjou5" "$slKanjou6" \
+"$slChuya1" "$slChuya2" "$slChuya3" "$slChuya4" "$slChuya5" "$slChuya6" \
+"$slBougen1" "$slBougen2" "$slBougen3" "$slBougen4" "$slBougen5" "$slBougen6" \
+"$slOogoe1" "$slOogoe2" "$slOogoe3" "$slOogoe4" "$slOogoe5" "$slOogoe6" \
+"$slKaigoTeiko1" "$slKaigoTeiko2" "$slKaigoTeiko3" "$slKaigoTeiko4" "$slKaigoTeiko5" \
+"$slKaigoTeiko6" \
+"$slHaikai1" "$slHaikai2" "$slHaikai3" "$slHaikai4" "$slHaikai5" "$slHaikai6" \
+"$slKitakuGanbou1" "$slKitakuGanbou2" "$slKitakuGanbou3" "$slKitakuGanbou4" \
+"$slKitakuGanbou5" "$slKitakuGanbou6" \
+"$KirokuMei1" "$KirokuMei2" "$KirokuMei3" "$KirokuMei4" "$KirokuMei5" "$KirokuMei6" \
+"${yukoflg}" "${sdaytime}" "${USER_ID}" > ${tmp}-monitoring_input
+
+cp -p $tmp-monitoring_input $work_dir/monitoring_input
+
+echo "$Riyoushaid" "$hdKeikakuSakuseiDate" "$sday" \
+"$taChoukiMokuhyou6" \
+"$HyoukaPlanJoudanFirst6" "$HyoukaPlanJoudanSecond6" "$HyoukaPlanJoudanThird6" \
+"$HyoukaPlanJoudanFourth6" "$HyoukaPlanJoudanFifth6" "$HyoukaPlanJoudanSixth6" \
+"$HyoukaPlanChudanFirst6" "$HyoukaPlanChudanSecond6" "$HyoukaPlanChudanThird6" \
+"$HyoukaPlanChudanFourth6" "$HyoukaPlanChudanFifth6" "$HyoukaPlanChudanSixth6" \
+"$taChoukiMokuhyou7" \
+"$HyoukaPlanJoudanFirst7" "$HyoukaPlanJoudanSecond7" "$HyoukaPlanJoudanThird7" \
+"$HyoukaPlanJoudanFourth7" "$HyoukaPlanJoudanFifth7" "$HyoukaPlanJoudanSixth7" \
+"$HyoukaPlanChudanFirst7" "$HyoukaPlanChudanSecond7" "$HyoukaPlanChudanThird7" \
+"$HyoukaPlanChudanFourth7" "$HyoukaPlanChudanFifth7" "$HyoukaPlanChudanSixth7" \
+"$taChoukiMokuhyou8" \
+"$HyoukaPlanJoudanFirst8" "$HyoukaPlanJoudanSecond8" "$HyoukaPlanJoudanThird8" \
+"$HyoukaPlanJoudanFourth8" "$HyoukaPlanJoudanFifth8" "$HyoukaPlanJoudanSixth8" \
+"$HyoukaPlanChudanFirst8" "$HyoukaPlanChudanSecond8" "$HyoukaPlanChudanThird8" \
+"$HyoukaPlanChudanFourth8" "$HyoukaPlanChudanFifth8" "$HyoukaPlanChudanSixth8" \
+"$taChoukiMokuhyou9" \
+"$HyoukaPlanJoudanFirst9" "$HyoukaPlanJoudanSecond9" "$HyoukaPlanJoudanThird9" \
+"$HyoukaPlanJoudanFourth9" "$HyoukaPlanJoudanFifth9" "$HyoukaPlanJoudanSixth9" \
+"$HyoukaPlanChudanFirst9" "$HyoukaPlanChudanSecond9" "$HyoukaPlanChudanThird9" \
+"$HyoukaPlanChudanFourth9" "$HyoukaPlanChudanFifth9" "$HyoukaPlanChudanSixth9" \
+"$taChoukiMokuhyou10" \
+"$HyoukaPlanJoudanFirst10" "$HyoukaPlanJoudanSecond10" "$HyoukaPlanJoudanThird10" \
+"$HyoukaPlanJoudanFourth10" "$HyoukaPlanJoudanFifth10" "$HyoukaPlanJoudanSixth10" \
+"$HyoukaPlanChudanFirst10" "$HyoukaPlanChudanSecond10" "$HyoukaPlanChudanThird10" \
+"$HyoukaPlanChudanFourth10" "$HyoukaPlanChudanFifth10" "$HyoukaPlanChudanSixth10" \
+"_" "_" "_" "_" "${yukoflg}" "${sdaytime}" "${USER_ID}" > ${tmp}-monitoring_extra_input
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW   MONITORING_YOBO_NEW
+CAREPLAN_YOBO/${Riyoushaid}/MONITORING_YOBO_NEW_EXTRA   MONITORING_YOBO_NEW_EXTRA
+FIN
+
+input_detail_dir=MONITORING_YOBO/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+monitoring MONITORING_YOBO_NEW 3 406 407 ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid} ${input_dir}
+monitoring_extra MONITORING_YOBO_NEW_EXTRA 3 74 75 ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'$Riyoushaid'"||$2!="'$hdKeikakuSakuseiDate'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

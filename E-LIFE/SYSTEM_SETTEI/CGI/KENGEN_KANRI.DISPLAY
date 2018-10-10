@@ -1,0 +1,506 @@
+#!/bin/bash
+#
+# KENGEN_KANRI.DISPLAY : 権限管理表示
+#
+# Usage : KENGEN_KANRI.DISPLAY
+#
+# Written by aoyagi(handslab.Inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KENGEN_KANRI"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+
+# eval
+eval $(name-source ${namefile})
+
+
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+if [ "${MODE}" = "init" ];then
+  shisetsu_name=""
+  kengen_name=""
+else
+  :
+fi
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+if [ -n "${MODE}" -a "${MODE}" = "search" ];then
+  if [ "$(gyo ${searchfile})" -ne 0 ];then
+    :
+  else
+    message="データありません"
+cat <<- FIN > $tmp-html2
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+  fi
+else
+  :
+fi
+
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+awk '(NF-2)!=9' /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid          2:SHISETSU_ID 3:KENGEN_GROUP 4:appID      5:MENU_NAME
+# 6:DROPDOWN_STATUS 7:CGI_NAME    8:RINK_STATUS  9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+cp $tmp-shisetsu_kengen ${work}/shisetsu_kengen
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+
+awk '$(NF-2)!=9' ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON      |
+# 1:施設コード 2:施設名 3・・・・
+join1 key=1 ${tmp}-shisetsu                            |
+self 2                                                 > ${tmp}-user_shisetsu
+
+# 権限名の取得
+echo "0" "選択してください"                            > $tmp-kengen_name_sentaku
+cat   ${hometbl_dir}/KENGEN_KANRI/KENGEN_NAME          |
+awk '{print $0,"'${kengen_name}'"}'                    |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' |
+LANG=C sort -k2,2                                      |
+cat $tmp-kengen_name_sentaku -                         > ${tmp}-kengen_name
+
+# 施設名の取得
+# 全施設権限持ってるかどうか
+echo "_" "選択してください"                            > $tmp-default 
+cat ${pompa_dir}/USER_KENGEN/${userid}.USER_KENGEN     |
+self 2                                                 |
+LANG=C sort -u                                         > $tmp-userkengen_shisetsu
+if [ "$(awk '$1=="0000"' $tmp-userkengen_shisetsu | gyo)" = 0 ];then
+  :
+else
+  echo "0000" "全施設"
+fi                                                     |
+cat $tmp-default - $tmp-shisetsu_kengen                |
+self 1 2                                               |
+#awk '$1!="1000"{print}'                                |
+awk '{print $0,"'${shisetsu_name}'"}'                  |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > ${tmp}-shisetsu_name
+
+############################################################ SEARCH_FILEの処理
+cp ${searchfile} ${tmp}-searchfile
+
+########################   所属メンバーを取得   ##############################
+cat ${tmp}-searchfile             |
+# 1:目印(MEMBER) 2:SHISETSU_NAME 3:STAFF_NAME
+awk '$1=="MEMBER"{print $2,$3}'                > ${tmp}-search_member
+# 1:USER_ID 2:STAFF_NAME
+
+
+########################   name用ファイルを取得   ##############################
+cat ${tmp}-searchfile             |
+# 1:目印(NAME) 2:変数名 3:権限ステータス
+awk '$1=="NAME"{print $2,$3}'                > ${tmp}-for_name
+# 1:変数名 2:権限ステータス
+
+
+########################   calsed用ファイルを取得   ##############################
+cat ${tmp}-searchfile             |
+# 1:目印 2:置換文字 3:CGIフラグ
+awk '$1=="CALSED"{print $2,$3}'                > ${tmp}-for_calsed
+# 1:置換文字 2:CGIフラグ
+
+# 追加メンバーを取得
+# 施設マスタの準備
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2                                          > $tmp-shisetsu_kihon
+cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+self 1 2                                          > $tmp-jigyousho_kihon
+cat $tmp-shisetsu_kihon $tmp-jigyousho_kihon      |
+LANG=C sort -k1,1n                                > $tmp-shisetsu_master
+echo "999" "選択してください"                        |
+cat - $tmp-shisetsu_kengen                           |
+self 1 2                                             > ${tmp}-input_shisetsu_name
+echo "@" "選択してください"        > $tmp-sentaku_shitekudsadai
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU  ${hometbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+self 2 1                                           |
+tee ${work}/user_shisetu |
+LANG=C sort -k1,1                                  |
+join0 key=1 $tmp-shisetsu_kengen                   |
+self 2                                             |
+tee ${work}/butahabuta |
+LANG=C sort -u -k1,1                               > $tmp-user_totyu
+awk '$(NF-2)!=9' ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON    |
+self 1 2 3                                         > $tmp-user_master
+join1 key=1 $tmp-user_master $tmp-user_totyu       |
+LANG=C sort -k3,3                                  |
+cat $tmp-sentaku_shitekudsadai -                    > ${tmp}-member_name
+
+
+#######################################################################################
+# formhame前の実態参照変換
+calsed "&" "&amp;" ${namefile}                      |
+calsed "<" "&lt;"                                   |
+calsed ">" "&gt;"                                   |
+calsed "\"" "&quot;"                                |
+# formhame前にキーワードが　"_"　のみの場合、消去
+awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+# formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+
+#######################################################################################
+
+#######################################################################################
+# namefileの再構成
+if [ "${MODE}" = "search" ];then
+cat <<- FIN > ${tmp}-name_1
+MODE ${MODE}
+kengen_name ${kengen_name}
+shisetsu_name ${shisetsu_name}
+shisetsu ${shisetsu}
+FIN
+
+  cat ${tmp}-name_1 ${tmp}-for_name > ${tmp}-namefile
+
+elif [ "${MODE}" = "all_delete" ];then
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+kengen_name ${kengen_name}
+shisetsu_name ${shisetsu_name}
+FIN
+
+elif [ "${MODE}" = "init" ];then
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+shisetsu ${shisetsu}
+FIN
+
+elif [ "${MODE}" = "touroku" ];then
+cat <<- FIN > ${tmp}-name_1
+MODE ${MODE}
+shisetsu ${shisetsu}
+shisetsu_name ${shisetsu_name}
+shisetsu ${shisetsu}
+FIN
+
+cat ${tmp}-name_1 ${tmp}-for_name > ${tmp}-namefile
+
+elif [ -n "${shinki_name}" -a "${shinki_name}" != "_" ];then
+cat <<- FIN > ${tmp}-name_1
+MODE ${MODE}
+shisetsu_name ${shisetsu_name}
+shisetsu ${shisetsu}
+FIN
+
+echo "kengen_name" "$(gyo ${apptbl}/KENGEN_NAME)" > ${tmp}-name_2
+  cat ${tmp}-name_1 ${tmp}-name_2 ${tmp}-for_name > ${tmp}-namefile
+
+else
+
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+kengen_name ${kengen_name}
+shisetsu_name ${shisetsu_name}
+shisetsu ${shisetsu}
+shinki_name ${shinki_name}
+nisshi_select ${nisshi_select}
+schedule_kanri_select ${schedule_kanri_select}
+gonyukyosha_schedule_select ${gonyukyosha_schedule_select}
+schedule_ichiran_select ${schedule_ichiran_select}
+kihonjoho_ichiran_select ${kihonjoho_ichiran_select}
+nyuuin_gaihaku_joho_select ${nyuuin_gaihaku_joho_select}
+moushiokuri_ichiran_select ${moushiokuri_ichiran_select}
+keiyakujoho_ichiran_select ${keiyakujoho_ichiran_select}
+shokuji_yoyaku_select ${shokuji_yoyaku_select}
+shokuji_jisseki_monthly_select ${shokuji_jisseki_monthly_select}
+shokuji_jisseki_nyukyosha_select ${shokuji_jisseki_nyukyosha_select}
+shokuji_meisai_select ${shokuji_meisai_select}
+shokuji_shosai_select ${shokuji_shosai_select}
+shokuji_shurui_select ${shokuji_shurui_select}
+shokuji_shukei_select ${shokuji_shukei_select}
+kesshoku_select ${kesshoku_select}
+tatekaekin_select ${tatekaekin_select}
+kobetsu_service_select ${kobetsu_service_select}
+kojin_seikyu_select ${kojin_seikyu_select}
+seikyu_ichiran_select ${seikyu_ichiran_select}
+torikuzushi_select ${torikuzushi_select}
+denwa_kakin_select ${denwa_kakin_select}
+firmbanking_select ${firmbanking_select}
+kyotaku_seikyu_select ${kyotaku_seikyu_select}
+houmon_seikyu_select ${houmon_seikyu_select}
+shisetsu_care_seikyu_select ${shisetsu_care_seikyu_select}
+kokuhodata_select ${kokuhodata_select}
+kaigo_kango_youyaku_select ${kaigo_kango_youyaku_select}
+shisetsu_assessment_select ${shisetsu_assessment_select}
+kaigojisseki_ikkatsu_select ${kaigojisseki_ikkatsu_select}
+kaigojisseki_ichiran_touroku_select ${kaigojisseki_ichiran_touroku_select}
+kaigojisseki_ichiran_select ${kaigojisseki_ichiran_select}
+kaigojisseki_kensaku_select ${kaigojisseki_kensaku_select}
+kaigojisseki_suii_select ${kaigojisseki_suii_select}
+monthly_vital_graph_select ${monthly_vital_graph_select}
+weekly_vital_graph_select ${weekly_vital_graph_select}
+monthly_haiben_graph_select ${monthly_haiben_graph_select}
+weekly_haiben_graph_select ${weekly_haiben_graph_select}
+monthly_haibenhyo_select ${monthly_haibenhyo_select}
+weekly_haibenhyo_select ${weekly_haibenhyo_select}
+carecall_rireki_select ${carecall_rireki_select}
+careplan_menu_select ${careplan_menu_select}
+houmonkaigo_menu_select ${houmonkaigo_menu_select}
+schedule_master_select ${schedule_master_select}
+schedule_type_master_select ${schedule_type_master_select}
+shisetsujoho_master_select ${shisetsujoho_master_select}
+senior_assenment_select ${senior_assenment_select}
+ikou_assenment_select ${ikou_assenment_select}
+butyo_shiryo_select ${butyo_shiryo_select}
+jikohou_touroku_select ${jikohou_touroku_select}
+jikohou_etsuran_select ${jikohou_etsuran_select}
+kenkoushindan_select ${kenkoushindan_select}
+denki_suido_select ${denki_suido_select}
+taikyo_seisan_select ${taikyo_seisan_select}
+jyugyoin_master_select ${jyugyoin_master_select}
+kengen_master_select ${kengen_master_select}
+keiyaku_master_select ${keiyaku_master_select}
+riyoryo_master_select ${riyoryo_master_select}
+service_master_select ${service_master_select}
+shukeigroup_master_select ${shukeigroup_master_select}
+tatekaekin_master_select ${tatekaekin_master_select}
+kaigojisseki_master_select ${kaigojisseki_master_select}
+kaigojisseki_alert_master_select ${kaigojisseki_alert_master_select}
+moushiokuri_master_select ${moushiokuri_master_select}
+zeiritsu_master_select ${zeiritsu_master_select}
+kinyu_master_select ${kinyu_master_select}
+hokensha_master_select ${hokensha_master_select}
+jigyousho_master_select ${jigyousho_master_select}
+service_jigyousho_master_select ${service_jigyousho_master_select}
+seikyu_master_select ${seikyu_master_select}
+seikyusho_shomei_select ${seikyusho_shomei_select}
+kisshoku_select ${kisshoku_select}
+kondate_select ${kondate_select}
+shukou_select ${shukou_select}
+FIN
+
+fi
+#######################################################################################
+
+# calsedするfileをつくろう
+if [ "${MODE}" = "search" ];then
+  cat ${tmp}-for_calsed > ${tmp}-calsed_1
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/on/,"checked",$2);print}' > ${tmp}-calsed_2
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+cat ${tmp}-calsed_1 ${tmp}-calsed_2 > ${tmp}-calsed
+
+elif [ "${MODE}" = "touroku" ];then
+  cat ${tmp}-for_calsed > ${tmp}-calsed_1
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/on/,"checked",$2);print}' > ${tmp}-calsed_2
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+cat ${tmp}-calsed_1 ${tmp}-calsed_2 > ${tmp}-calsed
+
+elif [ "${MODE}" = "init" ];then
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/on/,"checked",$2);print}' > ${tmp}-calsed
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+else
+cat <<- FIN | sed 's/ _$/ @/g' | awk '{gsub(/on/,"checked",$2);print}' > ${tmp}-calsed
+###DROPDOWN_ACTIVE9### active
+###LI_SYSTEMSETTEI5### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SELECT_SHISETSU### $select_shisetsu
+###unei_chk_box### ${unei_chk_box}
+###nisshi### ${nisshi}
+###schedule_kanri### ${schedule_kanri}
+###gonyukyosha_schedule### ${gonyukyosha_schedule}
+###schedule_ichiran### ${schedule_ichiran}
+###kihonjoho_ichiran### ${kihonjoho_ichiran}
+###senior_assenment### ${senior_assenment}
+###ikou_assenment### ${ikou_assenment}
+###butyo_shiryo### ${butyo_shiryo}
+###jikohou_touroku### ${jikohou_touroku}
+###jikohou_etsuran### ${jikohou_etsuran}
+###kenkoushindan### ${kenkoushindan}
+###denki_suido### ${denki_suido}
+###taikyo_seisan### ${taikyo_seisan}
+###nyuuin_gaihaku_joho### ${nyuuin_gaihaku_joho}
+###moushiokuri_ichiran### ${moushiokuri_ichiran}
+###keiyakujoho_ichiran### ${keiyakujoho_ichiran}
+###shokuji_chk_box### ${shokuji_chk_box}
+###shokuji_yoyaku### ${shokuji_yoyaku}
+###shokuji_jisseki_monthly### ${shokuji_jisseki_monthly}
+###shokuji_jisseki_nyukyosha### ${shokuji_jisseki_nyukyosha}
+###shokuji_meisai### ${shokuji_meisai}
+###shokuji_shosai### ${shokuji_shosai}
+###shokuji_shurui### ${shokuji_shurui}
+###shokuji_shukei### ${shokuji_shukei}
+###kesshoku### ${kesshoku}
+###tatekaekin### ${tatekaekin}
+###keiri_chk_box### ${keiri_chk_box}
+###kobetsu_service### ${kobetsu_service}
+###kojin_seikyu### ${kojin_seikyu}
+###seikyu_ichiran### ${seikyu_ichiran}
+###torikuzushi### ${torikuzushi}
+###denwa_kakin### ${denwa_kakin}
+###firmbanking### ${firmbanking}
+###kaigoseikyu_chk_box### ${kaigoseikyu_chk_box}
+###kyotaku_seikyu### ${kyotaku_seikyu}
+###houmon_seikyu### ${houmon_seikyu}
+###shisetsu_care_seikyu### ${shisetsu_care_seikyu}
+###kokuhodata### ${kokuhodata}
+###kankai_chk_box### ${kankai_chk_box}
+###kaigo_kango_youyaku### ${kaigo_kango_youyaku}
+###shisetsu_assessment### ${shisetsu_assessment}
+###kaigojisseki_ikkatsu### ${kaigojisseki_ikkatsu}
+###kaigojisseki_ichiran_touroku### ${kaigojisseki_ichiran_touroku}
+###kaigojisseki_ichiran### ${kaigojisseki_ichiran}
+###kaigojisseki_kensaku### ${kaigojisseki_kensaku}
+###kaigojisseki_suii### ${kaigojisseki_suii}
+###monthly_vital_graph### ${monthly_vital_graph}
+###weekly_vital_graph### ${weekly_vital_graph}
+###monthly_haiben_graph### ${monthly_haiben_graph}
+###weekly_haiben_graph### ${weekly_haiben_graph}
+###monthly_haibenhyo### ${monthly_haibenhyo}
+###weekly_haibenhyo### ${weekly_haibenhyo}
+###carecall_rireki### ${carecall_rireki}
+###careplan_menu### ${careplan_menu}
+###houmonkaigo_menu### ${houmonkaigo_menu}
+###system_settei### ${system_chk_box}
+###schedule_master### ${schedule_master}
+###schedule_type_master### ${schedule_type_master}
+###shisetsujoho_master### ${shisetsujoho_master}
+###jyugyoin_master### ${jyugyoin_master}
+###kengen_master### ${kengen_master}
+###keiyaku_master### ${keiyaku_master}
+###riyoryo_master### ${riyoryo_master}
+###service_master### ${service_master}
+###shukeigroup_master### ${shukeigroup_master}
+###tatekaekin_master### ${tatekaekin_master}
+###kaigojisseki_master### ${kaigojisseki_master}
+###kaigojisseki_alert_master### ${kaigojisseki_alert_master}
+###moushiokuri_master### ${moushiokuri_master}
+###zeiritsu_master### ${zeiritsu_master}
+###kinyu_master### ${kinyu_master}
+###hokensha_master### ${hokensha_master}
+###jigyousho_master### ${jigyousho_master}
+###service_jigyousho_master### ${service_jigyousho_master}
+###seikyusaki_master### ${seikyusaki_master}
+###seikyusho_shomei### ${seikyusho_shomei}
+###kisshoku### ${kisshoku}
+###kondate### ${kondate}
+###shukou### ${shukou}
+FIN
+
+fi
+
+# 権限チェックファイルを呼び出し
+cat $tmp-calsed ${checkfile} > $tmp-calsed_all
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KENGEN_KANRI.CGI"{print $1,$9}'                                           |
+LANG=C sort -u -k2,2n                                                                      |
+tail -n1                                                                                  |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" -o "$(cat $tmp-btn_kengen)" = "2" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed_all
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed_all
+
+# HTMLの作成
+cat ${html_dir}/KENGEN_MASTER1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KENGEN_MASTER2.html      |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###KENGEN_NAME### - ${tmp}-kengen_name |
+mojihame -l###SHISETSU_NAME### - ${tmp}-shisetsu_name |
+mojihame -l###SHOZOKU_MEMBER### - ${tmp}-search_member   |
+mojihame -l###INPUT_SHISETSU_NAME### - ${tmp}-input_shisetsu_name |
+mojihame -l###INPUT_NAME### - ${tmp}-member_name |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed_all - |
+formhame -d"_" - ${tmp}-namefile   |
+
+if [ -e $tmp-html2 ];then
+  cat - $tmp-html2
+else
+  cat -
+fi
+cat -
+
+rm -f ${tmp}-*
+exit 0
+

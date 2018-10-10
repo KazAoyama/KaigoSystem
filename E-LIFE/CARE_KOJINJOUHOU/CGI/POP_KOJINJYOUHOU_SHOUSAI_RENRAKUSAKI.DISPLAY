@@ -1,0 +1,452 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KEIYAKU.DISPLAY
+# 個人情報詳細(契約)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/10
+
+#--------------------------------------------------------------
+# ログ
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+
+[ "${MODE}" = "sakujyo" ] && MODE="touroku"
+#--------------------------------------------------------------
+
+if [ "$MODE" = "init" ]; then
+  RenrakuShimei=""
+  RenrakuShimeikana=""
+  RenrakuSeibetu=""
+  RenrakuZokugara=""
+  ZokugaraBikou=""
+  YuusenJyuni=""
+  RenrakuTel1=""
+  RenrakuTel2=""
+  RenrakuEmail=""
+  RenrakuYuubinbangou=""
+  RenrakuJyuusho=""
+  RenrakuKinmusaki=""
+  SonotaSeikyuusaki=""
+  SonotaMimotohikitori=""
+  SonotaHenreikin=""
+  SonotaDairinin=""
+  RenrakuBikou=""
+  RENRAKUSAKIID=""
+  Hanneri=""
+else
+ RenrakuShimei=$(nameread     "RenrakuShimei"      $namedata)
+ RenrakuShimeikana=$(nameread     "RenrakuShimeikana"      $namedata)
+ RenrakuSeibetu=$(nameread     "RenrakuSeibetu"      $namedata)
+ RenrakuZokugara=$(nameread     "RenrakuZokugara"      $namedata)
+ ZokugaraBikou=$(nameread     "ZokugaraBikou"      $namedata)
+ YuusenJyuni=$(nameread     "YuusenJyuni"      $namedata)
+ RenrakuTel1=$(nameread     "RenrakuTel1"      $namedata)
+ RenrakuTel2=$(nameread     "RenrakuTel2"      $namedata)
+ RenrakuEmail=$(nameread     "RenrakuEmail"      $namedata)
+ RenrakuYuubinbangou=$(nameread     "RenrakuYuubinbangou"      $namedata)
+ RenrakuJyuusho=$(nameread     "RenrakuJyuusho"      $namedata)
+ RenrakuKinmusaki=$(nameread     "RenrakuKinmusaki"      $namedata)
+ SonotaSeikyuusaki=$(nameread     "SonotaSeikyuusaki"      $namedata)
+ SonotaMimotohikitori=$(nameread     "SonotaMimotohikitori"      $namedata)
+ SonotaHenreikin=$(nameread     "SonotaHenreikin"      $namedata)
+ SonotaDairinin=$(nameread     "SonotaDairinin"      $namedata)
+ RenrakuBikou=$(nameread     "RenrakuBikou"      $namedata)
+ RENRAKUSAKIID=$(nameread     "RENRAKUSAKIID"      $namedata)
+ Hannei=$(nameread     "Hannei"      $namedata)
+
+  [ -z "${SonotaSeikyuusaki}" ] && SonotaSeikyuusaki="_"
+  [ -z "${SonotaMimotohikitori}" ] && SonotaMimotohikitori="_"
+  [ -z "${SonotaHenreikin}" ] && SonotaHenreikin="_"
+  [ -z "${SonotaDairinin}" ] && SonotaDairinin="_"
+
+fi
+
+USERID="$(nameread  "USERID" $namedata)"
+SHISETSUID="$(nameread  "SHISETSUID" $namedata)"
+RIYOUSHAID="$(nameread  "RIYOUSHAID" $namedata)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+NYUUKYOTATEYAID=$(nameread         "NYUUKYOTATEYAID"      $namedata)
+NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+if [ "$MODE" = "touroku" -a "KOUZAID" = "_" ] ; then
+ KOUZAID="$(cat ${data} | self 3)"
+fi
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}
+###SHISETSUID###   ${SHISETSUID}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###RIYOUSHANAME###   ${RIYOUSHANAME}
+###RENRAKUSAKIID###    ${RENRAKUSAKIID}
+###NYUUKYOSHISETSUID###  ${NYUUKYOSHISETSUID}
+###NYUUKYOTATEYAID###  ${NYUUKYOTATEYAID}
+###NYUUKYOFLOOR###  ${NYUUKYOFLOOR}
+###NYUUKYOUNITID###  ${NYUUKYOUNITID}
+###NYUUKYOKYOSHITSU###  ${NYUUKYOKYOSHITSU}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+# serchでも結果なしのものはinitへ
+if [ "${MODE}" = "serach" ] ;then
+  result="$(awk '$1=="search_result"{print $2}' ${data})"
+
+  if [ "${result}" = "result_ng" ] ; then
+    MODE="init"
+  fi
+
+fi
+
+
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init)
+  
+  ;;
+
+ # 検索結果
+ search )
+    awk '$1=="renrakusaki"{print $0}' ${data}   |
+    delf 1              > $tmp-search_renrakusaki_data
+# 1:利用者(入居者)ID 2:連絡先ＩＤ     3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄       7:連絡先続柄備考 8:連絡先優先順位 9:電話番号1      10:電話番号2
+# 11:E-mail          12:郵便番号      13:住所          14:勤務先        15:請求書送先
+# 16:身元引受人      17:返還金受取人  18:代理人        19:備考
+
+ RenrakuShimei=$(awk '{print $3}' $tmp-search_renrakusaki_data)
+ RenrakuShimeikana=$(awk '{print $4}' $tmp-search_renrakusaki_data)
+ RenrakuSeibetu=$(awk '{print $5}' $tmp-search_renrakusaki_data)
+ RenrakuZokugara=$(awk '{print $6}' $tmp-search_renrakusaki_data)
+ ZokugaraBikou=$(awk '{print $7}' $tmp-search_renrakusaki_data)
+ YuusenJyuni=$(awk '{print $8}' $tmp-search_renrakusaki_data)
+ RenrakuTel1=$(awk '{print $9}' $tmp-search_renrakusaki_data)
+ RenrakuTel2=$(awk '{print $10}' $tmp-search_renrakusaki_data)
+ RenrakuEmail=$(awk '{print $11}' $tmp-search_renrakusaki_data)
+ RenrakuYuubinbangou=$(awk '{print $12}' $tmp-search_renrakusaki_data)
+ RenrakuJyuusho=$(awk '{print $13}' $tmp-search_renrakusaki_data)
+ RenrakuKinmusaki=$(awk '{print $14}' $tmp-search_renrakusaki_data)
+ SonotaSeikyuusaki=$(awk '{print $15}' $tmp-search_renrakusaki_data)
+ SonotaMimotohikitori=$(awk '{print $16}' $tmp-search_renrakusaki_data)
+ SonotaHenreikin=$(awk '{print $17}' $tmp-search_renrakusaki_data)
+ SonotaDairinin=$(awk '{print $18}' $tmp-search_renrakusaki_data)
+ RenrakuBikou=$(awk '{print $19}' $tmp-search_renrakusaki_data)
+ Hannei=$(awk '{print $20}' $tmp-search_renrakusaki_data)
+
+[ -z "${Shisetsu}" -o  "${Shisetsu}" = "_" ] && Shisetsu="$(nameread  "NYUUKYOSHISETSUID" $namedata)" 
+[ -z "${Tateya}" -o  "${Tateya}" = "_" ] && Tateya="$(nameread  "NYUUKYOTATEYAID" $namedata)" 
+
+if [ ! -z "${TanyuukyoshaShimei}" -a "${TanyuukyoshaShimei}" != "_" ] ;then
+  cat ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID 2:建屋ID 3:フロア  4:ユニット  5:居室 6:入居者ID 5:入居日
+# 6:退去日
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$6=="'${TanyuukyoshaShimei}'"&&$(NF-2)!="9"{print $6}' > $tmp-kyoshitsu
+# 1:施設ID 2:建屋ID 3:居室
+  Kyoshitsu="$(cat $tmp-kyoshitsu |head -1 )"
+
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"{print $3,$4}'  >$tmp-floor_unit
+
+  Floor="$(cat $tmp-floor_unit |head -1 |self 1)"
+  Unit=""$(cat $tmp-floor_unit |head -1 |self 2)""
+else
+  Floor="$(nameread  "NYUUKYOFLOOR" $namedata)"
+  Unit="$(nameread  "NYUUKYOUNITID" $namedata)"
+  Kyoshitsu="$(nameread  "NYUUKYOKYOSHITSU" $namedata)"  
+
+fi
+
+
+ ;;
+  # 登録の場合
+  touroku | sakujyo)
+
+
+  result=$(awk '$1=="result"{print $2}' ${data})
+
+    if [ "${result}" = "ng" ] ; then
+     message="$(awk '$1=="message"{print $2}' ${data})"
+
+#    else
+#     message="登録完了しました。"
+    fi
+
+  ;;
+esac
+
+#--------------------------------------------------------------
+# 共通処理
+
+#----------------------------------------------------------
+# プルダウンの用意
+#----------------------------------------------------------
+
+# 性別
+echo "1" "2" |
+tarr                 |
+awk '{if($1=="2"){print $1,"女"}
+     else{print $1,"男"}
+      }'             |
+awk '{if($1=="'${RenrakuSeibetu}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'             > $tmp-seibetsu
+
+# 続柄
+cat ${tbl_dir}/CONFIG/ZOKUGARA_MASTER |
+# 1:続柄コード 2:続柄名
+awk 'BEGIN{print "_ @"}{print $0}'    |
+awk '{if($1=="'${RenrakuZokugara}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }' > $tmp-zokugara
+#awk 'BEGIN{print "@","@","@"}{print $0}' > $tmp-zokugara
+
+# 優先順位
+echo "1 2 3 4 5 6 7 8 9 10" |
+tarr         |
+awk '{if($1=="'${YuusenJyuni}'"){print $1,$1,"selected"}
+      else{print $1,$1,"@"}
+     }'      > $tmp-yuusenjyunni
+
+
+# 緊急個人データへ反映
+cat << FIN > $tmp-kojindata_jyunbi
+0 反映しない
+1 連絡先1に反映
+2 連絡先2に反映
+3 連絡先3に反映
+FIN
+
+cat $tmp-kojindata_jyunbi |
+awk '{if($1=="'${Hannei}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }'     > $tmp-kojindata_hannei
+
+#----------------------------------------------------------
+# チェックボックスの用意
+#----------------------------------------------------------
+
+# その他項目
+if [ ! -z "${SonotaSeikyuusaki}" -a "${SonotaSeikyuusaki}" = "1" ] ; then
+ echo "###SonotaSeikyuusaki###" "checked"  >> $tmp-calsed_data
+else
+ echo "###SonotaSeikyuusaki###" "@"  >> $tmp-calsed_data
+fi
+
+if [ ! -z "${SonotaMimotohikitori}" -a "${SonotaMimotohikitori}" = "1" ] ; then
+ echo "###SonotaMimotohikitori###" "checked" >> $tmp-calsed_data
+else
+ echo "###SonotaMimotohikitori###" "@" >> $tmp-calsed_data
+fi
+
+if [ ! -z "${SonotaHenreikin}" -a "${SonotaHenreikin}" = "1" ] ; then
+ echo "###SonotaHenreikin###" "checked"  >> $tmp-calsed_data
+else
+ echo "###SonotaHenreikin###" "@"  >> $tmp-calsed_data
+fi
+
+if [ ! -z "${SonotaDairinin}" -a "${SonotaDairinin}" = "1" ] ; then
+ echo "###SonotaDairinin###" "checked"   >> $tmp-calsed_data
+else
+ echo "###SonotaDairinin###" "@"   >> $tmp-calsed_data
+fi
+
+
+#-------------------------------------------------------------
+# ボタン表示系
+#-------------------------------------------------------------
+
+if [ "${MODE}" = "init" ] ; then
+  echo "###SAKUJYODISP###" "none"   >> $tmp-calsed_data
+else
+  echo "###SAKUJYODISP###" "@"   >> $tmp-calsed_data
+fi
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html1
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ "${MODE}" = "touroku" -a "${result}" = "ok" ] ; then
+cat <<- FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+        var obj =document.forms["PopKanryou"];
+        shousai_kihon = window.open("KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.CGI","shousai_kihon");
+//      shousai_kihon.close();
+        obj.target="shousai_kihon";
+        obj.method="post";
+        obj.action="KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.CGI";
+        obj.submit();
+        resizeTo(300,130);
+//      window.close();
+    </script>
+	FIN
+fi
+
+#     window.opener.location.href = "KOJINJYOUHOU_SHOUSAI_KEIYAKU.CGI";
+#     window.opener.document.tab.submit();
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${Bikou}" = "_" ] && Bikou=""
+bikou=$(echo "${Bikou}" | sed 's/\\n/###RETURN###/g')
+#--------------------------------------------------------------
+[ "${RenrakuShimei}" == "_" ] && RenrakuShimei="$(echo @)"
+[ "${RenrakuShimeikana}" == "_" ] && RenrakuShimeikana="$(echo @)"
+[ "${ZokugaraBikou}" == "_" ] && ZokugaraBikou="$(echo @)"
+[ "${YuusenJyuni}" == "_" ] && YuusenJyuni="$(echo @)"
+[ "${RenrakuTel1}" == "_" ] && RenrakuTel1="$(echo @)"
+[ "${RenrakuTel2}" == "_" ] && RenrakuTel2="$(echo @)"
+[ "${RenrakuEmail}" == "_" ] && RenrakuEmail="$(echo @)"
+[ "${RenrakuYuubinbangou}" == "_" ] && RenrakuYuubinbangou="$(echo @)"
+[ "${RenrakuJyuusho}" == "_" ] && RenrakuJyuusho="$(echo @)"
+[ "${RenrakuKinmusaki}" == "_" ] && RenrakuKinmusaki="$(echo @)"
+[ "${RenrakuBikou}" == "_" ] && RenrakuBikou="$(echo @)"
+
+if [ "${RenrakuZokugara}" = "999" ] ; then
+   ZokugaraFreeDisp="@"
+else
+   ZokugaraFreeDisp="none"
+fi
+
+    # calsed用データ
+  echo "###RenrakuShimei###"         "${RenrakuShimei}"      >> $tmp-calsed_data
+  echo "###RenrakuShimeikana###"     "${RenrakuShimeikana}"  >> $tmp-calsed_data
+  echo "###ZokugaraBikou###"         "${ZokugaraBikou}"      >> $tmp-calsed_data
+  echo "###YuusenJyuni###"           "${YuusenJyuni}"        >> $tmp-calsed_data
+  echo "###RenrakuTel1###"           "${RenrakuTel1}"        >> $tmp-calsed_data
+  echo "###RenrakuTel2###"           "${RenrakuTel2}"        >> $tmp-calsed_data
+  echo "###RenrakuEmail###"          "${RenrakuEmail}"       >> $tmp-calsed_data
+  echo "###RenrakuYuubinbangou###"   "${RenrakuYuubinbangou}"   >> $tmp-calsed_data
+  echo "###RenrakuJyuusho###"         "${RenrakuJyuusho}"    >> $tmp-calsed_data
+  echo "###RenrakuKinmusaki###"      "${RenrakuKinmusaki}"   >> $tmp-calsed_data
+  echo "###RenrakuBikou###"          "${RenrakuBikou}"       >> $tmp-calsed_data
+  echo "###ZokugaraFreeDisp###"      "${ZokugaraFreeDisp}"   >> $tmp-calsed_data
+
+#cat $tmp-calsed_data  |
+#sed 's/_/@/g' -        > $tmp-calsed_data_result
+cat $tmp-calsed_data > $tmp-calsed_data_result
+#--------------------------------------------------------------
+# データのはめ込み
+#cp $tmp-* /home/hands/work/okuda
+
+# 登録時登録okだったら新規htmlではなく、通常の詳細htmlを表示
+#if [ "${MODE}" = "touroku" -a "${result}" = "touroku_ok" ] ; then
+#else
+#fi |
+if [ "${MODE}" = "touroku" -a "${result}" = "ok" ] ; then
+  cat ${html_dir}/POP_KOJINJYOUHOU_TOUROKU_KANRYOU.html
+else
+  cat ${html_dir}/POP_KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.html   |
+  mojihame -lseibetsu_select - $tmp-seibetsu                  |
+  mojihame -lzokugara_select - $tmp-zokugara                  |
+  mojihame -lyuusenjyuni_select - $tmp-yuusenjyunni           |
+  mojihame -lkojindata_hannei_select - $tmp-kojindata_hannei    
+fi |
+
+calsed -f $tmp-calsed_data_result -                    |
+sed 's/###SPACE###/ /g'                                |
+sed 's/\\n/\n/g'                                       |
+sed 's/###KAIGYO###/\n/g'                              |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+if [ -e $tmp-html1 ] ; then
+  cat - $tmp-html1
+else
+  cat -
+fi |
+
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

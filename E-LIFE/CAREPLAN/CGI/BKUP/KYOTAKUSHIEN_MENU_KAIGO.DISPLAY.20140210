@@ -1,0 +1,203 @@
+#!/bin/bash
+#
+# KYOTAKUSHIEN_MENU_KAIGO.DISPLAY : 居宅支援メニュー（介護）MENU表示
+#
+# Usage : KYOTAKUSHIEN_MENU_KAIGO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+result_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} $work_dir/namedata_menu
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+tee $tmp-shisetsu_mst                              |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# 居宅、訪問介護事業施設をはずす
+cat $tmp-shisetsu_mst                              |
+awk 'substr($1,1,1)!="1"'                          |
+self 1 2                                           > $tmp-shisetsulist
+
+# ケアマネ抽出
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+LANG=C sort -k2,2                                   |
+join1 key=2 ${tmp}-shisetsu                         |
+awk '$8!="_"{print $1}'                             |
+LANG=C sort -k1,1                                   |
+join1 key=1 $tmp-user_mst                           > $tmp-caremanagerlist
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 検索結果
+  search)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+      # 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終>更新日時
+      # 6:最終更新者
+#      LANG=C sort -k6,6nr       |
+#      self 1 2 3 4 5            |
+#      rank                      |
+#      head -10                  > $tmp-listdata
+    else
+      : > $tmp-listdata
+    fi
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata)
+#--------------------------------------------------------
+
+curdate=$(mdate today | self 1)
+
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KYOTAKU_JIGYOUSHO  |
+awk '$6<="'$curdate'"&&"'$curdate'"<$7{print $1,$4,$5}'   |
+LANG=C sort -k2,2                                         |
+join2 +_ key=2 $tmp-user_mst                              |
+delf 2                                                    |
+LANG=C sort -k1,1 > $tmp-user_caremanager
+
+# テスト
+USER_ID=${userid}
+
+
+# 対象者
+#cat ${home_dir}/TBL/RIYOUSHA/RIYOUSHA_MASTER |
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+awk '$6!="9"'     |
+if [ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] ; then
+  cat -
+else
+  awk '$1=="'${Riyoushaid}'"'
+fi |
+awk '{print $1,$2,"@"}' |
+LANG=C sort -k1,1       |
+join2 +_ key=1 $tmp-user_caremanager          |
+awk '{if($2=="_"){$5=$3}else{$5=$2};print $0}'          |
+delf 2 3                                      |
+LANG=C sort -k1,1 > $tmp-taishoushalist
+
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" -o "$hdKeikakuSakuseiDate" = " " ] ; then
+    cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_DATE |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+fi
+
+
+dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!=""{print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed1
+###RIYOUSHAID### $Riyoushaid
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DROPDOWN_ACTIVE7### active
+FIN
+
+cp ${checkfile} $work_dir/checkfile
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/KYOTAKUSHIEN_MENU_KAIGO1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/KYOTAKUSHIEN_MENU_KAIGO2.html |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###TAISHOUSHA### - ${tmp}-taishoushalist |
+mojihame -l###SHISETSULIST### - ${tmp}-shisetsulist |
+mojihame -l###CAREMANAGERLIST### - $tmp-caremanagerlist |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

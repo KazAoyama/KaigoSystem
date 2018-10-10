@@ -1,0 +1,333 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.SEARCH : 介護実績一覧表示検索用CGI
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+eval $(name-source ${namefile})
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+
+# 検索条件チェック
+time_from_check=$(echo $time_from | sed 's/://g')
+time_to_check=$(echo $time_to | sed 's/://g')
+[ "$time_from_check" -gt "$time_to_check" ] && error_exit "時間帯を確認して下さい"
+
+
+
+
+echo $shisetsu > $tmp-shisetsu
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月日の取得
+from_month="$(echo ${hd_sakuseibi} | awk '{print substr($1,1,6)}')"
+to_month="$(echo ${hd_sakuseibi2} | awk '{print substr($1,1,6)}')"
+keisan=$(mdate ${from_month}m ${to_month}m)
+if [ "${keisan}" -ne "0" ];then
+  mdate -e ${to_month}m/${keisan} > ${tmp}-searchmonth
+else
+  echo ${to_month}                > ${tmp}-searchmonth
+fi
+
+echo ${hd_sakuseibi} > ${tmp}-from_day
+echo ${hd_sakuseibi2} > ${tmp}-to_day
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# unitが渡ってこなかったら0をセット
+if [ -n "${unit}" ];then
+  :
+else
+  unit="0"
+fi
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 <(echo $shisetsu_select)                         |
+awk '$7<="'${hd_sakuseibi2}'"'    > $tmp-riyosha_status
+
+# 利用者マスタの準備
+echo "99999999" "職員連絡"                                 > $tmp-riyosha_igai
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     |
+cat - $tmp-riyosha_igai                                      > $tmp-riyosha_master
+
+echo "99999999"                                              > $tmp-riyosha_igai_code
+
+[ ${MODE} = "touroku" -o ${MODE} = "new_touroku" ] && riyosha_name="00" 
+
+# 対象者を決める
+if [ "${riyosha_name}" = "00" ];then
+  if [ "${floor}" = 0 ];then
+    cat $tmp-riyosha_status                                  |
+    # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+    awk '$2=="'${tateya}'"'                                  |
+    if [ "${unit}" = "0" ];then
+      cat -                                                  |
+      self 6                                                 |
+      cat - $tmp-riyosha_igai_code                           |
+      LANG=C sort -k1,1n                                     |
+      yarr
+    else
+      cat -                                                  |
+      awk '$4=="'${unit}'"'                                  |
+      self 6                                                 |
+      cat - $tmp-riyosha_igai_code                           |
+      LANG=C sort -k1,1n                                     |
+      yarr
+    fi
+  else
+    cat $tmp-riyosha_status                                  |
+    # 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+    awk '$2=="'${tateya}'"'                                  |
+    awk '$3=="'${floor}'"'                                   |
+    if [ "${unit}" = "0" ];then
+      cat -                                                  |
+      self 6                                                 |
+      cat - $tmp-riyosha_igai_code                           |
+      LANG=C sort -k1,1n                                     |
+      yarr
+    else
+      cat -                                                  |
+      awk '$4=="'${unit}'"'                                  |
+      self 6                                                 |
+      cat - $tmp-riyosha_igai_code                           |
+      LANG=C sort -k1,1n                                     |
+      yarr
+    fi
+  fi
+else
+  echo ${riyosha_name}
+fi                                                           |
+tarr                                                         |
+LANG=C sort -u                                               |
+yarr                                                         > ${tmp}-taishosha_list
+cp ${tmp}-taishosha_list ${work}/taishosha
+# 検索する時間を決める
+[ "${time_from}" = "_" ] && time_from="0"
+[ "${time_to}" = "_" ] && time_to="99999999"
+
+# 各マスタを抽出
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_SELECT | LANG=C sort -k1,1 > $tmp-moushiokuri_select_mst
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_TAISHO | LANG=C sort -k1,1 > $tmp-moushiokuri_taisho_mst
+cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_KOUMOKU | LANG=C sort -k1,1 > $tmp-moushiokuri_koumoku_mst
+
+# 処理の分岐
+if [ "${tateya}" = "01" ];then
+  for member in $(cat ${tmp}-taishosha_list);do
+    for month in $(cat ${tmp}-searchmonth);do
+      cat ${pompa_dir}/${shisetsu_select}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR    |
+      # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+      LANG=C sort -k1,1n                                                                        |
+      join0 key=1 <(echo ${member})                                                             |
+      awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                                 |
+      LANG=C sort -k4,4                                                                         |
+      awk '$4=="_" || $4>="'${time_from}'" && $4<="'${time_to}'"'                               |
+      case ${JISSHISHA} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$7=="'${JISSHISHA}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_select} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$3=="'${moushiokuri_select}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_taisho} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$5=="'${moushiokuri_taisho}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_koumoku} in
+        0 )
+          cat -
+        ;;
+        7 )
+          awk '$6=="5" || $6=="6"'
+        ;;
+        * )
+          awk '$6=="'${moushiokuri_koumoku}'"'
+        ;;
+      esac                                                                                      |
+      case ${keyword} in
+        _ )
+          cat -
+        ;;
+        * )
+          awk '$10~/'${keyword}'/'
+        ;;
+      esac                                                                                      |
+      
+      self 1 2 4 3 5 6 7 8 9 10 11 13                                                           |
+      # 1:利用者 2:作成日 3:時刻 4:申送り種別 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+      LANG=C sort -k4,4                                                                        |
+      join1 key=4 $tmp-moushiokuri_select_mst                                             |
+#      LANG=C sort -k4,4n                                                                        |
+#      join1 key=4 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_SELECT                                              |
+      delf 4                                                                                    |
+      LANG=C sort -k5,5                                                                        |
+      join1 key=5 $tmp-moushiokuri_taisho_mst                                             |
+#      LANG=C sort -k5,5n                                                                        |
+#      join1 key=5 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_TAISHO                                              |
+      delf 5                                                                                    |
+      LANG=C sort -k6,6                                                                        |
+      join1 key=6 $tmp-moushiokuri_koumoku_mst                                            |
+#      LANG=C sort -k6,6n                                                                        |
+#      join1 key=6 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_KOUMOKU                                             |
+      delf 6                                                                                    |
+      awk '{print $1,$2,$3,$7,$4,$5,$6,$8,$9,$10,$11,$12}'   >> ${tmp}-search_kekka
+      # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+    done
+  done
+else
+  for member in $(cat ${tmp}-taishosha_list);do
+    for month in $(cat ${tmp}-searchmonth);do
+      cat ${pompa_dir}/${shisetsu_select}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI           |
+      # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+      LANG=C sort -k1,1n                                                                        |
+      join0 key=1 <(echo ${member})                                                             |
+      awk '$2>="'${hd_sakuseibi}'" && $2<="'${hd_sakuseibi2}'"'                                 |
+      LANG=C sort -k4,4                                                                         |
+      awk '$4=="_" || $4>="'${time_from}'" && $4<="'${time_to}'"'                               |
+      case ${JISSHISHA} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$7=="'${JISSHISHA}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_select} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$3=="'${moushiokuri_select}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_taisho} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$5=="'${moushiokuri_taisho}'"'
+        ;;
+      esac                                                                                      |
+      case ${moushiokuri_koumoku} in
+        0 )
+          cat -
+        ;;
+        * )
+          awk '$6=="'${moushiokuri_koumoku}'"'
+        ;;
+      esac                                                                                      |
+      case ${keyword} in
+        _ )
+          cat -
+        ;;
+        * )
+          awk '$10~/'${keyword}'/'
+        ;;
+      esac                                                                                      |
+      
+      self 1 2 4 3 5 6 7 8 9 10 11 12 13                                                        |
+      # 1:利用者 2:作成日 3:時刻 4:申送り種別 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+      LANG=C sort -k4,4                                                                        |
+      join1 key=4 $tmp-moushiokuri_select_mst                                             |
+#      LANG=C sort -k4,4n                                                                        |
+#      join1 key=4 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_SELECT                                              |
+      delf 4                                                                                    |
+      LANG=C sort -k5,5                                                                        |
+      join1 key=5 $tmp-moushiokuri_taisho_mst                                             |
+#      LANG=C sort -k5,5n                                                                        |
+#      join1 key=5 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_TAISHO                                              |
+      delf 5                                                                                    |
+      LANG=C sort -k6,6                                                                        |
+      join1 key=6 $tmp-moushiokuri_koumoku_mst                                            |
+#      LANG=C sort -k6,6n                                                                        |
+#      join1 key=6 ${apptbl_dir}/KAIGOJISSEKI/${shisetsu_select}/MOUSHIOKURI_KOUMOKU                                             |
+      delf 6                                                                                    |
+      awk '{print $1,$2,$3,$7,$4,$5,$6,$8,$9,$10,$11,$13}'   >> ${tmp}-search_kekka
+      # 1:利用者 2:作成日 3:時刻 4:実施者 5:申送り種別 6:対象 7:検索項目 8:日誌共有 9:支援経過共有 10:内容 11:色 12:ID
+    done
+  done
+fi
+cp ${tmp}-search_kekka ${work}/searchkekka
+
+if [ "$(gyo ${tmp}-search_kekka)" = 0 ];then
+  exit 0
+else
+  cat ${tmp}-search_kekka
+fi
+
+# 終了
+rm -f $tmp-*
+
+exit 0

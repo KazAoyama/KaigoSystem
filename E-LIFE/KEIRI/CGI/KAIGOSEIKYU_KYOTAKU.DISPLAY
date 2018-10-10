@@ -1,0 +1,328 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.DISPLAY : 居宅支援介護請求.DISPLAY
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+kengen_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI/POMPA/KENGEN_KANRI"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/KEIRI/DOWNLOAD/${file}\""
+fi
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KAIGOSEIKYU_KYOTAKU.CGI"{print $1,$9}'                                                                |
+LANG=C sort -u -k2,2n                                                                       |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" -o "$(cat $tmp-btn_kengen)" = "1" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+[ "$(cat $tmp-btn_kengen)" = "3" -o "$(cat $tmp-btn_kengen)" = "2" ] && echo "###INPUT_BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###INPUT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 予防が選択されていたら加算の選択等を不可にする
+if [ "${taisho}" = "yobo" ];then
+  echo "###NOT_YOBO###" "disabled" >> $tmp-calsed1
+else
+  echo "###NOT_YOBO###" "　" >> $tmp-calsed1
+fi
+
+# ログインUSER名と施設の取得
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 ${home_dir}/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" -o "${MODE}" = "jigyosho_ichiran_print" ];then
+  seikyu_shurui="all"
+  kakutei_flag="all"
+  taisho="kaigo"
+  seikyu_nengetsu="${this_month}"
+  # デフォルトメッセージを作成
+  echo "###DEFAULT_MES###" "「対象者表示」ボタンをクリックして請求対象者を選択し、請求データを確定してください" >> ${tmp}-calsed1
+else
+  if [ "$(gyo ${searchfile})" = "0" ];then
+    echo "###DEFAULT_MES###" "データがありません" >> ${tmp}-calsed1
+  else
+    echo "###DEFAULT_MES###" "" >> ${tmp}-calsed1
+  fi
+fi
+
+# 年月の取得
+#if [ -n "${teishutsu_nengetsu}" -a "${teishutsu_nengetsu}" != "_" ];then
+#  mdate -e ${this_month}m/-3                                |
+#  tarr                                                      |
+#  LANG=C sort -k1,1nr                                       |
+#  awk '{print $0,"'${teishutsu_nengetsu}'"}'                          |
+#  awk '{if($1==$2){print $1,"selected"}else{print $1,""}}'  |
+#  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月",$2}' > ${tmp}-teishutsu_nengetsu
+#else
+#  mdate -e ${this_month}m/-3                                |
+#  tarr                                                      |
+#  LANG=C sort -k1,1nr                                       |
+#  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-teishutsu_nengetsu
+#fi
+
+if [ -n "${seikyu_nengetsu}" -a "${seikyu_nengetsu}" != "_" ];then
+  mdate -e ${this_month}m/+1                                > $tmp-mdate1
+  mdate -e ${this_month}m/-13                                > $tmp-mdate2
+  cat $tmp-mdate1 $tmp-mdate2                               |
+  tarr                                                      |
+  LANG=C sort -u -k1,1nr                                    |
+  awk '{print $0,"'${seikyu_nengetsu}'"}'                          |
+  awk '{if($1==$2){print $1,"selected"}else{print $1,""}}'  |
+  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月",$2}' > ${tmp}-seikyu_nengetsu
+else
+  mdate -e ${this_month}m/+1                                > $tmp-mdate1
+  mdate -e ${this_month}m/-13                                > $tmp-mdate2
+  cat $tmp-mdate1 $tmp-mdate2                               |
+  tarr                                                      |
+  LANG=C sort -u -k1,1nr                                    |
+  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-seikyu_nengetsu
+fi
+
+# 絞込み項目の準備
+[ "${seikyu_shurui}" = "tujyo" ] && echo "###TUJYO###" "checked" >> $tmp-calsed1
+[ "${seikyu_shurui}" = "okure" ] && echo "###OKURE###" "checked" >> $tmp-calsed1
+[ "${seikyu_shurui}" = "saiseikyu" ] && echo "###SAISEIKYU###" "checked" >> $tmp-calsed1
+[ "${seikyu_shurui}" = "all" ] && echo "###SEIKYU_SHURUI_ALL###" "checked" >> $tmp-calsed1
+[ "${kakutei_flag}" = "mikakutei" ] && echo "###MIKAKUTEI###" "checked" >> $tmp-calsed1
+[ "${kakutei_flag}" = "kakutei" ] && echo "###KAKUTEI###" "checked" >> $tmp-calsed1
+[ "${kakutei_flag}" = "all" ] && echo "###KAKUTEI_ALL###" "checked" >> $tmp-calsed1
+[ "${taisho}" = "kaigo" ] && echo "###KAIGO_CHECKED###" "checked" >> $tmp-calsed1
+[ "${taisho}" = "yobo" ] && echo "###YOBO_CHECKED###" "checked" >> $tmp-calsed1
+
+
+
+# searchfileの処理
+if [ -e "${searchfile}" ];then
+  cat ${searchfile}              > $tmp-search_data
+  cat $tmp-search_data           |
+tee ${work}/schiko |
+  self 1 2 7/NF-1                > $tmp-flag
+  # 1:利用者ID    2:年月     3:特定事業所加算 4:初回加算 5:運営減算
+  # 6:退院加算    7:入院加算 8:認知加算       9:独居加算 10:小規模加算
+  # 11:確定フラグ 12:給付管理作成区分
+
+  # 特定事業所加算
+  cat $tmp-flag                  |
+  awk '{if($3=="1"){print "###TOKUTEI2"$1$2"###","selected"}else if($3=="2"){print "###TOKUTEI3"$1$2"###","selected"}else if($3=="3"){print "###TOKUTEI4"$1$2"###","selected"}else{print "###TOKUTEI1"$1$2"###","selected"}}' > $tmp-tokutei_kasan
+
+  # 初回加算
+  cat $tmp-flag                  |
+  awk '{if($4=="1"){print "###SHOKAI"$1$2"###","selected"}else{print "###SHOKAI"$1$2"###",""}}' > $tmp-shokai_kasan
+
+  # 運営減算
+  cat $tmp-flag                  |
+  awk '{if($5=="1"){print "###UNEI1"$1$2"###","selected"}else if($5=="2"){print "###UNEI2"$1$2"###","selected"}else{print "###UNEI"$1$2"###",""}}' > $tmp-unei_kasan
+
+  # 退院加算
+  cat $tmp-flag                  |
+  awk '{if($6=="1"){print "###TAIIN1"$1$2"###","selected"}else if($6=="2"){print "###TAIIN2"$1$2"###","selected"}else if($6=="3"){print "###TAIIN3"$1$2"###","selected"}else{print "###TAIIN"$1$2"###",""}}' > $tmp-taiin_kasan
+
+  # 入院加算
+  cat $tmp-flag                  |
+  awk '{if($7=="1"){print "###NYUUIN1"$1$2"###","selected"}else if($7=="2"){print "###NYUUIN2"$1$2"###","selected"}else{print "###NYUUIN"$1$2"###",""}}' > $tmp-nyuuin_kasan
+
+  # 認知加算
+  cat $tmp-flag                  |
+  awk '{if($8=="1"){print "###NINCHI"$1$2"###","checked"}else{print "###NINCHI"$1$2"###",""}}' > $tmp-ninchi_kasan
+
+  # 独居加算
+  cat $tmp-flag                  |
+  awk '{if($9=="1"){print "###DOKKYO"$1$2"###","checked"}else{print "###DOKKYO"$1$2"###",""}}' > $tmp-dokkyo_kasan
+
+  # 小規模加算
+  cat $tmp-flag                  |
+  awk '{if($10=="1"){print "###SHOKIBO"$1$2"###","checked"}else{print "###SHOKIBO"$1$2"###",""}}' > $tmp-shokibo_kasan
+
+  # 確定フラグ
+  cat $tmp-flag                  |
+  awk '{if($11=="1"){print "###KAKUTEI"$1$2"###","済"}else{print "###KAKUTEI"$1$2"###",""}}' > $tmp-kakutei_kasan
+
+  # 合体してcalsed用ファイル作成
+  cat $tmp-tokutei_kasan $tmp-shokai_kasan $tmp-unei_kasan $tmp-taiin_kasan $tmp-nyuuin_kasan $tmp-ninchi_kasan $tmp-dokkyo_kasan $tmp-shokibo_kasan $tmp-kakutei_kasan  | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+
+else
+  :                              > ${tmp}-search_data
+fi
+
+# 確定した人の人数
+if [ "$(gyo ${tmp}-search_data)" -ne 0 ];then
+  KAKUTEI_SU=$(awk '$15=="1"' $tmp-search_data | gyo)
+  echo "###BAKATAIOU### 個人確定した人数：${KAKUTEI_SU}" >> $tmp-calsed1
+else
+  KAKUTEI_SU=""
+  echo "###BAKATAIOU### ${KAKUTEI_SU}" >> $tmp-calsed1
+fi
+# initの場合は確定・出力ボタン非表示
+if [ "${MODE}" = "init" -o "$(gyo ${searchfile})" = 0 ];then
+  init_display="none"
+else
+  init_display=""
+fi
+
+# 当月確定されていたら解除ボタン表示
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/KYOTAKU_KAKUTEI_FILE ];then
+  kakutei_kaijo=""
+  tougetsu_kakutei="none"
+  kakunin_zumi="none"
+  check_download="none"
+else
+  if [ -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.KYOTAKU_CHECKED -a -e ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.KYOTAKU_MEISAI_CHECKED ];then
+    kakutei_kaijo="none"
+    tougetsu_kakutei=""
+    kakunin_zumi=""
+    heck_download=""
+  else
+    tougetsu_kakutei=""
+    kakunin_zumi="none"
+    kakutei_kaijo="none"
+    check_download="none"
+  fi
+fi
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE5### active
+###LI_KAIGOHOKENSEIKYU1### active
+###TEXT_KENSAKU_HIDUKE_FROM### ${text_kensaku_hiduke_from}
+###TEXT_KENSAKU_HIDUKE_TO### ${text_kensaku_hiduke_to}
+###TEXT_TATEKAE_HIDUKE### ${text_tatekae_hiduke}
+###HD_KENSAKU_HIDUKE_FROM### ${hd_kensaku_hiduke_from}
+###HD_KENSAKU_HIDUKE_TO### ${hd_kensaku_hiduke_to}
+###HD_TATEKAE_HIDUKE### ${hd_tatekae_hiduke}
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###SELECT_SHISETSU### $select_shisetsu
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###KAIJO### ${kakutei_kaijo}
+###TOUGETSU_KAKUTEI### ${tougetsu_kakutei}
+###INIT### ${init_display}
+###CHECKED### $kakunin_zumi
+###check_download### $check_download
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/KAIGOSEIKYU_KYOTAKU1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KAIGOSEIKYU_KYOTAKU2.html   |
+mojihame -l###TEISHUTSU_NENGETSU### - ${tmp}-seikyu_nengetsu |
+mojihame -l###SEIKYU_NENGETSU### - ${tmp}-seikyu_nengetsu |
+#mojihame -l###NYURYOKU_UNIT_NAME### - ${tmp}-nyuryoku_unit_name |
+#mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+#mojihame -l###NYURYOKU_FLOOR_NAME### - ${tmp}-nyuryoku_floor_name |
+#mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+#mojihame -l###NYURYOKU_RIYOSHA_NAME### - ${tmp}-nyuryoku_riyosha_name |
+#mojihame -l###NYUKIN_KOUMOKU### - ${tmp}-nyukin_koumoku |
+#mojihame -l###NYURYOKU_NYUKIN_KOUMOKU### - ${tmp}-nyuryoku_nyukin_koumoku |
+#mojihame -l###SHUKKIN_KOUMOKU### - ${tmp}-shukkin_koumoku |
+#mojihame -l###NYURYOKU_SHUKKIN_KOUMOKU### - ${tmp}-nyuryoku_shukkin_koumoku |
+#mojihame -l###TAISHO_KOUMOKU_SONOTA### - ${tmp}-taisho__koumoku_sonota |
+#mojihame -l###SERVICE_MASTER### - ${tmp}-service_master |
+#mojihame -l###NYURYOKU_SERVICE_MASTER### - ${tmp}-nyuryoku_service_master |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-search_data |
+calsed -f ${tmp}-calsed - 
+# HTMLの作成
+
+rm -f ${tmp}-*
+exit 0
+

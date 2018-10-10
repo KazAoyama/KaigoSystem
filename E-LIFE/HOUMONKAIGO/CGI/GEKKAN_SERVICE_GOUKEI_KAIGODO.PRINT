@@ -1,0 +1,288 @@
+#!/bin/bash
+#
+# GEKKAN_SERVICE_GOUKEI_KAIGODO.PRINT : 月間サービス提供回数集計表印刷
+#
+# Usage : GEKKAN_SERVICE_GOUKEI_KAIGODO.PRINT namefile datafile
+#
+# Written by K.Aoyama(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+function error_exit {
+  message="$1"
+cat << FIN > $tmp-html
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+# ファイル名をはく
+  cat $tmp-html
+  rm -f $tmp-*
+  exit 0
+}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#///////////////////////////////////////////////////////////////////
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#//////////////////////////////////////////////////////////////////
+
+#  サーチで取得したデータをリストにセット
+if [ "$(gyo ${searchfile})" != 0 ] ; then
+   cat ${searchfile} > $tmp-listdata
+else
+# 空のリストデータを作成する
+   : > $tmp-listdata
+fi
+
+[ "$(gyo $tmp-listdata)" = "0" ] && error_exit "データが見つかりません"
+
+# 合計欄用データ作成
+awk '$1=="a"' $tmp-listdata > $tmp-listdata_jisseki
+awk '$1=="b"' $tmp-listdata > $tmp-listdata_beppyou
+awk '$1=="d"' $tmp-listdata > $tmp-listdata_jihi
+
+
+jikangoukeikaigo1=$(awk '$2=="3"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeikaigo2=$(awk '$2=="4"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeikaigo3=$(awk '$2=="5"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeikaigo4=$(awk '$2=="6"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeikaigo5=$(awk '$2=="7"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeiyobo1=$(awk '$2=="1"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeiyobo2=$(awk '$2=="2"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+jikangoukeisonota=$(awk '$2=="s"{print $3"時間"$4"分"}' $tmp-listdata_jisseki | head -1)
+
+hokengoukeikaigo1=$(awk '$2=="3"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeikaigo2=$(awk '$2=="4"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeikaigo3=$(awk '$2=="5"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeikaigo4=$(awk '$2=="6"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeikaigo5=$(awk '$2=="7"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeiyobo1=$(awk '$2=="1"{print $4}' $tmp-listdata_beppyou | head -1)
+hokengoukeiyobo2=$(awk '$2=="2"{print $4}' $tmp-listdata_beppyou | head -1)
+[ -z "$hokengoukeikaigo1" ] && hokengoukeikaigo1="0"
+[ -z "$hokengoukeikaigo2" ] && hokengoukeikaigo2="0"
+[ -z "$hokengoukeikaigo3" ] && hokengoukeikaigo3="0"
+[ -z "$hokengoukeikaigo4" ] && hokengoukeikaigo4="0"
+[ -z "$hokengoukeikaigo5" ] && hokengoukeikaigo5="0"
+[ -z "$hokengoukeiyobo1" ] && hokengoukeiyobo1="0"
+[ -z "$hokengoukeiyobo2" ] && hokengoukeiyobo2="0"
+disphokengoukeikaigo1=$(echo $hokengoukeikaigo1 | comma 1)
+disphokengoukeikaigo2=$(echo $hokengoukeikaigo2 | comma 1)
+disphokengoukeikaigo3=$(echo $hokengoukeikaigo3 | comma 1)
+disphokengoukeikaigo4=$(echo $hokengoukeikaigo4 | comma 1)
+disphokengoukeikaigo5=$(echo $hokengoukeikaigo5 | comma 1)
+disphokengoukeiyobo1=$(echo $hokengoukeiyobo1 | comma 1)
+disphokengoukeiyobo2=$(echo $hokengoukeiyobo2 | comma 1)
+disphokengoukeisonota=0
+
+jigoukeikaigo1=$(awk '$2=="3"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeikaigo2=$(awk '$2=="4"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeikaigo3=$(awk '$2=="5"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeikaigo4=$(awk '$2=="6"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeikaigo5=$(awk '$2=="7"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeiyobo1=$(awk '$2=="1"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+jigoukeiyobo2=$(awk '$2=="2"{print $3,$4}' $tmp-listdata_beppyou |lcalc '$1-$2' | head -1)
+[ -z "$jigoukeikaigo1" ] && jigoukeikaigo1=0
+[ -z "$jigoukeikaigo2" ] && jigoukeikaigo2=0
+[ -z "$jigoukeikaigo3" ] && jigoukeikaigo3=0
+[ -z "$jigoukeikaigo4" ] && jigoukeikaigo4=0
+[ -z "$jigoukeikaigo5" ] && jigoukeikaigo5=0
+[ -z "$jigoukeiyobo1" ] && jigoukeiyobo1=0
+[ -z "$jigoukeiyobo2" ] && jigoukeiyobo2=0
+dispjigoukeikaigo1=$(echo $jigoukeikaigo1 | comma 1)
+dispjigoukeikaigo2=$(echo $jigoukeikaigo2 | comma 1)
+dispjigoukeikaigo3=$(echo $jigoukeikaigo3 | comma 1)
+dispjigoukeikaigo4=$(echo $jigoukeikaigo4 | comma 1)
+dispjigoukeikaigo5=$(echo $jigoukeikaigo5 | comma 1)
+dispjigoukeiyobo1=$(echo $jigoukeiyobo1 | comma 1)
+dispjigoukeiyobo2=$(echo $jigoukeiyobo2 | comma 1)
+dispjigoukeisonota=0
+
+
+allgoukeikaigo1=$(awk '$2=="3"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeikaigo2=$(awk '$2=="4"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeikaigo3=$(awk '$2=="5"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeikaigo4=$(awk '$2=="6"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeikaigo5=$(awk '$2=="7"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeiyobo1=$(awk '$2=="1"{print $3}' $tmp-listdata_beppyou | head -1)
+allgoukeiyobo2=$(awk '$2=="2"{print $3}' $tmp-listdata_beppyou | head -1)
+[ -z "$allgoukeikaigo1" ] && allgoukeikaigo1=0
+[ -z "$allgoukeikaigo2" ] && allgoukeikaigo2=0
+[ -z "$allgoukeikaigo3" ] && allgoukeikaigo3=0
+[ -z "$allgoukeikaigo4" ] && allgoukeikaigo4=0
+[ -z "$allgoukeikaigo5" ] && allgoukeikaigo5=0
+[ -z "$allgoukeiyobo1" ] && allgoukeiyobo1=0
+[ -z "$allgoukeiyobo2" ] && allgoukeiyobo2=0
+dispallgoukeikaigo1=$(echo $allgoukeikaigo1 | comma 1)
+dispallgoukeikaigo2=$(echo $allgoukeikaigo2 | comma 1)
+dispallgoukeikaigo3=$(echo $allgoukeikaigo3 | comma 1)
+dispallgoukeikaigo4=$(echo $allgoukeikaigo4 | comma 1)
+dispallgoukeikaigo5=$(echo $allgoukeikaigo5 | comma 1)
+dispallgoukeiyobo1=$(echo $allgoukeiyobo1 | comma 1)
+dispallgoukeiyobo2=$(echo $allgoukeiyobo2 | comma 1)
+dispallgoukeisonota=0
+
+
+jihigoukeikaigo1=$(awk '$2=="3"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeikaigo2=$(awk '$2=="4"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeikaigo3=$(awk '$2=="5"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeikaigo4=$(awk '$2=="6"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeikaigo5=$(awk '$2=="7"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeiyobo1=$(awk '$2=="1"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeiyobo2=$(awk '$2=="2"{print $3}' $tmp-listdata_jihi | head -1)
+jihigoukeisonota=$(awk '$2=="s"{print $3}' $tmp-listdata_jihi | head -1)
+[ -z "$jihigoukeikaigo1" ] && jihigoukeikaigo1=0
+[ -z "$jihigoukeikaigo2" ] && jihigoukeikaigo2=0
+[ -z "$jihigoukeikaigo3" ] && jihigoukeikaigo3=0
+[ -z "$jihigoukeikaigo4" ] && jihigoukeikaigo4=0
+[ -z "$jihigoukeikaigo5" ] && jihigoukeikaigo5=0
+[ -z "$jihigoukeiyobo1" ] && jihigoukeiyobo1=0
+[ -z "$jihigoukeiyobo2" ] && jihigoukeiyobo2=0
+[ -z "$jihigoukeisonota" ] && jihigoukeisonota=0
+dispjihigoukeikaigo1=$(echo $jihigoukeikaigo1 | comma 1)
+dispjihigoukeikaigo2=$(echo $jihigoukeikaigo2 | comma 1)
+dispjihigoukeikaigo3=$(echo $jihigoukeikaigo3 | comma 1)
+dispjihigoukeikaigo4=$(echo $jihigoukeikaigo4 | comma 1)
+dispjihigoukeikaigo5=$(echo $jihigoukeikaigo5 | comma 1)
+dispjihigoukeiyobo1=$(echo $jihigoukeiyobo1 | comma 1)
+dispjihigoukeiyobo2=$(echo $jihigoukeiyobo2 | comma 1)
+dispjihigoukeisonota=$(echo $jihigoukeisonota | comma 1)
+
+jikangoukeigoukei=$(awk '$1=="c"{print $2"時間"$3"分"}' $tmp-listdata)
+hokengoukeigoukei=`expr $hokengoukeikaigo1 + $hokengoukeikaigo2 + $hokengoukeikaigo3 + $hokengoukeikaigo4 + $hokengoukeikaigo5 + $hokengoukeiyobo1 + $hokengoukeiyobo2`
+jikogoukeigoukei=`expr $jigoukeikaigo1 + $jigoukeikaigo2 + $jigoukeikaigo3 + $jigoukeikaigo4 + $jigoukeikaigo5 + $jigoukeiyobo1 + $jigoukeiyobo2`
+allgoukeigoukei=`expr $allgoukeikaigo1 + $allgoukeikaigo2 + $allgoukeikaigo3 + $allgoukeikaigo4 + $allgoukeikaigo5 + $allgoukeiyobo1 + $allgoukeiyobo2`
+jihigoukeigoukei=`expr $jihigoukeikaigo1 + $jihigoukeikaigo2 + $jihigoukeikaigo3 + $jihigoukeikaigo4 + $jihigoukeikaigo5 + $jihigoukeiyobo1 + $jihigoukeiyobo2 + $jihigoukeisonota`
+dispjikangoukeigoukei=${jikangoukeigoukei}
+disphokengoukeigoukei=$(echo $hokengoukeigoukei | comma 1)
+dispjikogoukeigoukei=$(echo $jikogoukeigoukei | comma 1)
+dispallgoukeigoukei=$(echo $allgoukeigoukei | comma 1)
+dispjihigoukeigoukei=$(echo $jihigoukeigoukei | comma 1)
+
+# 対象年月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' > $tmp-disp_nengetsu
+
+dispTaishouNengetsu=$(cat $tmp-disp_nengetsu)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###TAISHOUNENGETSU### $dispTaishouNengetsu
+###JIKANGOUKEIKAIGO1### $jikangoukeikaigo1
+###JIKANGOUKEIKAIGO2### $jikangoukeikaigo2
+###JIKANGOUKEIKAIGO3### $jikangoukeikaigo3
+###JIKANGOUKEIKAIGO4### $jikangoukeikaigo4
+###JIKANGOUKEIKAIGO5### $jikangoukeikaigo5
+###JIKANGOUKEIYOBO1### $jikangoukeiyobo1
+###JIKANGOUKEIYOBO2### $jikangoukeiyobo2
+###JIKANGOUKEINASHI### $jikangoukeisonota
+###HOKENGOUKEIKAIGO1### $disphokengoukeikaigo1
+###HOKENGOUKEIKAIGO2### $disphokengoukeikaigo2
+###HOKENGOUKEIKAIGO3### $disphokengoukeikaigo3
+###HOKENGOUKEIKAIGO4### $disphokengoukeikaigo4
+###HOKENGOUKEIKAIGO5### $disphokengoukeikaigo5
+###HOKENGOUKEIYOBO1### $disphokengoukeiyobo1
+###HOKENGOUKEIYOBO2### $disphokengoukeiyobo2
+###HOKENGOUKEINASHI### $disphokengoukeisonota
+###JIKOGOUKEIKAIGO1### $dispjigoukeikaigo1
+###JIKOGOUKEIKAIGO2### $dispjigoukeikaigo2
+###JIKOGOUKEIKAIGO3### $dispjigoukeikaigo3
+###JIKOGOUKEIKAIGO4### $dispjigoukeikaigo4
+###JIKOGOUKEIKAIGO5### $dispjigoukeikaigo5
+###JIKOGOUKEIYOBO1### $dispjigoukeiyobo1
+###JIKOGOUKEIYOBO2### $dispjigoukeiyobo2
+###JIKOGOUKEINASHI### $dispjigoukeisonota
+###JIHIGOUKEINASHI### $dispjihigoukeisonota
+###ALLGOUKEIKAIGO1### $dispallgoukeikaigo1
+###ALLGOUKEIKAIGO2### $dispallgoukeikaigo2
+###ALLGOUKEIKAIGO3### $dispallgoukeikaigo3
+###ALLGOUKEIKAIGO4### $dispallgoukeikaigo4
+###ALLGOUKEIKAIGO5### $dispallgoukeikaigo5
+###ALLGOUKEIYOBO1### $dispallgoukeiyobo1
+###ALLGOUKEIYOBO2### $dispallgoukeiyobo2
+###ALLGOUKEINASHI### $dispallgoukeisonota
+###JIHIGOUKEIKAIGO1### $dispjihigoukeikaigo1
+###JIHIGOUKEIKAIGO2### $dispjihigoukeikaigo2
+###JIHIGOUKEIKAIGO3### $dispjihigoukeikaigo3
+###JIHIGOUKEIKAIGO4### $dispjihigoukeikaigo4
+###JIHIGOUKEIKAIGO5### $dispjihigoukeikaigo5
+###JIHIGOUKEIYOBO1### $dispjihigoukeiyobo1
+###JIHIGOUKEIYOBO2### $dispjihigoukeiyobo2
+###JIHIGOUKEINASHI### $dispjihigoukeisonota
+###JIKANGOUKEIGOUKEI### $dispjikangoukeigoukei
+###HOKENGOUKEIGOUKEI### $disphokengoukeigoukei
+###JIKOGOUKEIGOUKEI### $dispjikogoukeigoukei
+###ALLGOUKEIGOUKEI### $dispallgoukeigoukei
+###JIHIGOUKEIGOUKEI### $dispjihigoukeigoukei
+###DOMAIN### $domain
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_GEKKAN_SERVICE_GOUKEI_KAIGODO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-gekkan_service_goukei_kaigodo_pdf.html
+#--------------------------------------------------------------
+cp $tmp-gekkan_service_goukei_kaigodo_pdf.html $work_dir/gekkan_service_goukei_kaigodo_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_GOUKEI_KAIGODO.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-gekkan_service_goukei_kaigodo_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_GOUKEI_KAIGODO.pdf
+
+  # HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/IKKATSU/${userid}/GEKKAN_SERVICE_GOUKEI_KAIGODO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0
+

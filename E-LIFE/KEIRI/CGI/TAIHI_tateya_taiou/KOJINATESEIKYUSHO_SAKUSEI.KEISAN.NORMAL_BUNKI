@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.NORMAL_BUNKI 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 一部後回しにしたものの特販と税と日割り計算する
+
+# 日割り処理とそうでない処理を別ファイルにする
+# 費用算出方法をみる
+#   1:日割り(30日固定)
+#   2:固定額
+cat ${tmp}-getsugaku_riyouryou_kihon ${tmp}-getsugaku_riyouryou_kako_kihon |
+# 先にレコード発生年月をつくる
+#   請求月=起算開始月：レコード発生年月日=起算開始月月初
+#   請求月!=起算開始月：レコード発生年月日=請求月月初
+awk '{kisan_from_nengetsu=substr($10,1,6);
+      kisan_to_nengetsu=substr($11,1,6);
+      print $0,kisan_from_nengetsu,kisan_to_nengetsu}' - |
+# 1:入居者ID      2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO 18:起算開始月 19:起算終了月
+awk '{if($2==$18){seikyu_nengappi=$18"01";}
+             else{seikyu_nengappi=$2"01";}; print $0,seikyu_nengappi}' - |
+# 1:入居者ID      2:請求月      3:契約ID      4:利用料種別ID 5:契約枝番
+# 6:利用料名      7:税区分      8:支払区分    9:費用算出方法 10:起算開始日
+# 11:起算終了日   12:金額       13:特販ID     14:値引額      15:値引後金額
+# 16:特販期間FROM 17:特販期間TO 18:起算開始月 19:起算終了月  20:レコードが発生した年月日
+cjoin0 +ng key=9 <(echo "1") - > ${tmp}-tujyou_hiwari_taisyou 2> ${tmp}-tujyou_hiwari_taisyougai
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 空でもファイルがある状態で処理が始まるはずなのでパイプでエラーがあったら落とす
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(NORMAL_BUNKI)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 列チェック
+
+cat << FIN > ${tmp}-check_list
+${tmp}-tujyou_hiwari_taisyou
+${tmp}-tujyou_hiwari_taisyougai
+FIN
+cat ${tmp}-check_list |
+while read File ; do
+  [ ! -s ${File} ] && continue;
+  [ "$(retu ${File})" != "20" ] && : > $tmp-err
+  [ "$(retu ${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="20"' ${File} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "処理中にエラーが発生しました(NORMAL_BUNKI)"
+#---------------------------------------------------------------
+
+exit 0
+

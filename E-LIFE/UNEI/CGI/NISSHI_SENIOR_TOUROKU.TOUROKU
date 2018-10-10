@@ -1,0 +1,288 @@
+#!/bin/bash
+#
+# NISSHI_SENIOR_TOUROKU.TOUROKU : 日誌（シニア）登録
+#
+# Usage : NISSHI_SENIOR_TOUROKU.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+HiyariNyukyoshaNikkin="_"
+HiyariShisetsuNikkin="_"
+JikohoNyukyoshaNikkin="_"
+JikohoShisetsuNikkin="_"
+KidukiNikkin="_"
+HiyariNyukyoshaYakin="_"
+HiyariShisetsuYakin="_"
+JikohoNyukyoshaYakin="_"
+JikohoShisetsuYakin="_"
+KidukiYakin="_"
+
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+
+#--------------------------------------------------------------
+
+# データ作成
+# 日誌登録データ
+# 1:施設                      2:登録日付        3:日勤入居者ヒヤリ      4:日勤施設ヒヤリ          5:日勤入居者事故報告書
+# 6:日勤施設事故報告書        7:日勤気付き      8:夜勤入居者ヒヤリ      9:夜勤施設ヒヤリ          10:夜勤入居者事故報告書
+# 11:夜勤施設事故報告書       12:夜勤気付き     13:医者への健康相談人数 14:医者への健康相談入居者 15:看護師への健康相談人数
+# 16:看護師への健康相談入居者 17:日勤業務引継ぎ 18:夜勤業務引継ぎ       19:有効フラグ             20:処理時間
+# 21:ユーザID
+echo "$shisetsu" "$hdTourokuDate" "$HiyariNyukyoshaNikkin" "$HiyariShisetsuNikkin" "$JikohoNyukyoshaNikkin" \
+"$JikohoShisetsuNikkin" "$KidukiNikkin" "$HiyariNyukyoshaYakin" "$HiyariShisetsuYakin" "$JikohoNyukyoshaYakin" \
+"$JikohoShisetsuYakin" "$KidukiYakin" "$KenkoSodanDrNinzu" "$KenkoSodanDrNyukyosha" "$KenkoSodanNsNinzu" \
+"$KenkoSodanNsNyukyosha" "$NikkinTokki" "$YakinTokki" \
+"1" "${sdaytime}" "${userid}"  > $tmp-nisshi_senior_base_input
+
+cp $tmp-nisshi_senior_base_input $work_dir/nisshi_senior_base_input
+
+
+: > $tmp-nikkin_input
+
+# 従業員データ
+# 日勤従業員ID
+echo ${dataCSVNikkinID}           |
+sed 's/,/ /g'      > $tmp-nikkin_jugyoinid
+
+# 夜勤従業員ID
+echo ${dataCSVYakinID}           |
+sed 's/,/ /g'      > $tmp-yakin_jugyoinid
+
+# 表示順
+echo ${dataCSVSort}           |
+sed 's/,/ /g'      > $tmp-jugyoin_sort
+
+# 全従業員
+echo ${dataCSVFullID}         |
+sed 's/,/ /g'      > $tmp-jugyoin_id
+
+
+cat $tmp-nikkin_jugyoinid |
+tateyoko         |
+# 1:施設     2:登録日付 3:従業員ID 4:有効フラグ 5:処理時間
+# 6:ユーザID
+awk '{print "'${shisetsu}'","'$hdTourokuDate'",$0,"1","'${sdaytime}'","'${userid}'"}' |
+awk '$3!="_"' > $tmp-nikkin_input
+
+cat $tmp-yakin_jugyoinid |
+tateyoko         |
+# 1:施設     2:登録日付 3:従業員ID 4:有効フラグ 5:処理時間
+# 6:ユーザID
+awk '{print "'${shisetsu}'","'$hdTourokuDate'",$0,"1","'${sdaytime}'","'${userid}'"}' |
+awk '$3!="_"' > $tmp-yakin_input
+
+cat $tmp-jugyoin_id $tmp-jugyoin_sort |
+# 1:従業員ID 2:表示順
+tateyoko         |
+# 1:施設 2:従業員ID 3:表示順 4:有効フラグ 5:処理時間
+# 6:ユーザID
+awk '{print "'${shisetsu}'",$0,"1","'${sdaytime}'","'${userid}'"}' |
+awk '$2!="_"' > $tmp-sort_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+NISSHI/$shisetsu/NISSHI_SENIOR NISSHI_SENIOR
+NISSHI/$shisetsu/NIKKIN_SENIOR NIKKIN_SENIOR
+NISSHI/$shisetsu/YAKIN_SENIOR YAKIN_SENIOR
+NISSHI/$shisetsu/JUGYOIN_SORT JUGYOIN_SORT
+FIN
+
+input_detail_dir=NISSHI_SENIOR/${shisetsu}
+			
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+nisshi_senior_base NISSHI_SENIOR 2 20 21 ${pompa_dir}/NISSHI/${shisetsu} ${input_dir}
+sort JUGYOIN_SORT 2 5 6 ${pompa_dir}/NISSHI/${shisetsu} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+nikkin NIKKIN_SENIOR 3 5 6 ${pompa_dir}/NISSHI/${shisetsu} ${input_dir}
+yakin YAKIN_SENIOR 3 5 6 ${pompa_dir}/NISSHI/${shisetsu} ${input_dir}
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+   
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-nisshi_senior_base_input > /home/hands/work/kashiyama/nisshi_senior_base_input
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+cat $tmp-nisshi_senior_base_new > /home/hands/work/kashiyama/nisshi_senior_base_new
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${shisetsu}'"||$2!="'${hdTourokuDate}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

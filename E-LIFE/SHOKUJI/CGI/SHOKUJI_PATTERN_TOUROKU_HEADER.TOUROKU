@@ -1,0 +1,728 @@
+#!/bin/bash
+#
+# SHOKUJI_NAIYOU_TOUROKU.TOUROKU
+# 食事内容登録
+#
+# Written by E.Okuda 20140114
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+today=$(date +%Y%m%d)
+yday=$(mdate ${today}/-1)
+thismonth="$(date +%Y%m)"
+# ディレクトリ設定
+home_dir="/home/hands/E-LIFE"
+app_dir="${home_dir}/SHOKUJI"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/SHOKUJI/KANRI"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+  Shisetsu=$(nameread       "shisetsu"    $namedata)
+  Tateya=$(nameread         "SelectTateya"      $namedata)
+  Kyoshitsu="_"
+  USERID=$(nameread         "USERID"      $namedata)
+  RIYOUSHAID=$(nameread     "SelectTaishousha"  $namedata)
+  EtsuranHenkouShinki=$(nameread         "EtsuranHenkouShinki"      $namedata)
+  TaishoubiFrom=$(nameread  "TaishoubiFrom"   $namedata | sed 's/\///g')
+  TaishoubiTo=$(nameread    "TaishoubiTo"   $namedata | sed 's/\///g') 
+  HenkoubiFrom=$(nameread   "HenkoubiFrom"   $namedata) # 選んだ対象日FromのパターンIDが入っている
+  HenkoubiTo=$(nameread     "HenkoubiTo"   $namedata | sed 's/\///g')
+
+#[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && RIYOUSHAID=$(nameread "Nyuukyosha" $namedata)
+#--------------------------------------------------------------
+# テーブル続き
+ pompa_dir="${app_dir}/POMPA/${Shisetsu}/${Tateya}"
+ mkdir -p ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN
+ touch ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER
+
+ seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${thismonth}"
+ mkdir -p ${seikyu_dir}
+ touch ${seikyu_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+
+# mkdir -p ${kanri_dir}/${Shisetsu}/${Tateya}/${thismonth}
+# touch ${kanri_dir}/${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI
+
+#--------------------------------------------------------------
+# 入力チェック
+[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者情報が不正です。"
+
+# 対象日のチェック
+
+#------------------
+# 変更の場合
+#------------------
+#-------------------------------------------------------------
+# 処理の分岐
+case "$MODE" in
+
+ sakujyo)
+
+    [ -z "${HenkoubiFrom}" -o "${HenkoubiFrom}" = "_" ] && error_exit "変更対象データが選ばれていません。変更対象がない場合は新規作成より作成してください。"
+
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER |
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+  awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+  self 1/NF-6 NF-2/NF                 >  $tmp-pattern_header_data_input
+
+    JissekiTaishouFrom=$(awk '{print $6}' $tmp-pattern_header_data_input)
+    JissekiTaishouTo=$(awk '{print $7}' $tmp-pattern_header_data_input)
+    Shisetsu=$(awk '{print $3}' $tmp-pattern_header_data_input)
+    Tateya=$(awk '{print $4}' $tmp-pattern_header_data_input)
+    Kyoshitsu=$(awk '{print $5}' $tmp-pattern_header_data_input)
+
+   # 入力された8桁日付が請求確定後のデータかどうか
+  #----------------------------
+  kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+  kakunin_nengetsu="$(echo "${JissekiTaishouFrom}" | self 1.1.6)"
+
+  [ "${kakutei_nengetsu}" -lt "${kakunin_nengetsu}" ] || error_exit "請求確定月以前のデータを削除することはできません。期間(至)を入力し登録してください。" 
+
+
+  # パターン
+  #-------------
+  cat ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN  |
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+  self 1/NF-6 NF-2/NF                 >  $tmp-pattern_data_input
+# 1:利用者ID       2:食事パターンID   3:曜日       4:食事（朝昼夜おやつ他） 5:食事ID
+# 6:食事メニューID 7:食事メニュー名称 8:食事種類ID 9:単価(税抜き)           10:数量
+# 11:色ID          12:予備項目1       13:予備項目2 14:予備項目3             15:予備項目4
+# 16:予備項目5
+
+  # 実績
+  #-------------
+  if [ -s $tmp-pattern_data_input ] ; then
+
+    # 今月の最終日
+    ThisMonthLastDay=$(mdate month | tarr | tail -1)  
+    # もし期間Toが99999999の場合は今月末として計算する
+    [ "${JissekiTaishouTo}" -gt "${ThisMonthLastDay}" ] && JissekiTaishouTo=$(echo "${ThisMonthLastDay}")
+    
+    JissekiMonthFrom="$(echo "${JissekiTaishouFrom}" | self 1.1.6)"
+    JissekiMonthTo="$(echo "${JissekiTaishouTo}" | self 1.1.6)"
+
+    mdate "${JissekiMonthTo}" "${JissekiMonthFrom}" |
+    mdate -e "${JissekiMonthFrom}"m/+"${JissekiKikan}" |
+    tarr  > $tmp-jisseki_kikan
+# 1:実績有り年月
+    : > $tmp-
+
+    for month in $(cat $tmp-jisseki_kikan) ; do
+      mdate -a ${month}m |
+      self 1 2 > $tmp-
+
+    done
+
+    cat $tmp-pattern_data_input |
+    awk '{print $5}'            |
+    LANG=C sort     > $tmp-shokujiid
+# 1:パターン登録されている食事ID 
+  
+    : > $tmp-riyousha_jisseki_input
+    : > $tmp-shokuji_jisseki_seikyutaishou_input
+
+      for i in $(cat $tmp-jisseki_kikan) ; do
+        # 対象年月の実績データ 
+        cat ${pompa_dir}/${i}/RIYOUSHA_SHOKUJI_JISSEKI      |
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室           5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニューID 10:食事メニュー名称
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:色ID          15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5
+        awk '$1=="'${RIYOUSHAID}'"&&$2=="'${Shisetsu}'"&&$3=="'${Tateya}'"&&$4=="'${Kyoshitsu}'"{print $0}' |
+        LANG=C sort -k8,8            |
+        join1 key=8 $tmp-shokujiid - |
+        awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+        self 1/NF-6 NF-2/NF          > $tmp-riyousha_jisseki${i}_input
+
+        cat $tmp-riyousha_jisseki${i}_input |
+        self 1/8    |
+        LANG=C sort |
+        join1 key=1/8 - ${pompa_dir}/${i}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+        awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+        self 1/NF-6 NF-2/NF       > $tmp-shokuji_jisseki_seikyutaishou${i}_input
+        
+      done    
+
+
+    fi
+
+
+  # 実績請求
+  #-------------
+
+;;
+
+ touroku)
+ 
+if [ "${EtsuranHenkouShinki}" = "1" ] ; then
+
+  [ -z "${HenkoubiFrom}" -o "${HenkoubiFrom}" = "_" ] && error_exit "変更対象データが選ばれていません。変更対象がない場合は新規作成より作成してください。"
+
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-henkoudata
+  awk '$1=="'${RIYOUSHAID}'"&&$2!="'${HenkoubiFrom}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-not_henkoudata
+  [ ! -s $tmp-henkoudata ] && error_exit "変更対象が存在しません。"
+
+  [ -z "${HenkoubiTo}" -o "${HenkoubiTo}" = "_" ] && HenkoubiTo="99999999"
+
+  echo "${HenkoubiTo}"          |
+  awk '$1!="_"{print $0}'       |
+  awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-henkoubito_error
+  [ -s $tmp-henkoubito_error ] && error_exit "期間(至)の値が不正です。(カレンダーより選択又は8桁の数字で入力してください。)"
+
+  if [ "${HenkoubiTo}" != "99999999" ] ; then
+    isdate "${HenkoubiTo}"  
+    echo $?  > $tmp-henkoubito
+    [ "$(cat $tmp-henkoubito)" != "0" ] && error_exit "期間(至)に不正な日付が入力されています。"
+  fi
+
+  cat $tmp-not_henkoudata |
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+  # 変更日Toが他のデータの期間と被らないかチェック
+  awk '$6<="'${HenkoubiTo}'"&&$7>="'${HenkoubiTo}'"&&$(NF-2)!="9"{print $0}' > $tmp-henkoubito_error2
+  [ -s $tmp-henkoubito_error2 ] && error_exit "対象期間内に重複するデータがあります。"
+
+  HenkoubiFrom_data="$(awk '{print $6}' $tmp-henkoudata)"
+
+  [ "${HenkoubiFrom_data}" -gt "${HenkoubiTo}" ] && error_exit "期間(至)の日付は期間(自)より後の日付を入力してください。"
+
+  # 入力された8桁日付が請求確定後のデータかどうか
+  #----------------------------
+  kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+  kakunin_nengetsu="$(echo "${HenkoubiTo}" | self 1.1.6)"
+
+  mdate ${kakutei_nengetsu}m > $tmp-kakutei_nengetsu_lastday
+
+  # 確定月の最終日と変更日Toが一致していなければ、請求確定以前の日付は入力不可
+  [ "$(cat $tmp-kakutei_nengetsu_lastday| tarr |tail -1)" != "${HenkoubiTo}" -a "${kakutei_nengetsu}" -lt "${kakunin_nengetsu}" ] || error_exit "請求確定月以前のデータを編集することはできません。"
+
+
+#---------------
+# 新規の場合
+#---------------
+else
+
+  [ -z "${TaishoubiFrom}" -o "${TaishoubiFrom}" = "_" ] && error_exit "期間(自)を入力してください。"
+  [ -z "${TaishoubiTo}" -o "${TaishoubiTo}" = "_" ] && TaishoubiTo="99999999"
+
+  echo "${TaishoubiFrom}" |
+  awk '$1!="_"{print $0}' |
+  awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-taishoubifrom_error
+
+  echo "${TaishoubiTo}" |
+  awk '$1!="_"{print $0}' |
+  awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-taishoubito_error
+
+  [ -s $tmp-taishoubifrom_error ] && error_exit "期間(自)の値が不正です。"
+  [ -s $tmp-taishoubito_error ] && error_exit "期間(至)の値が不正です。"
+
+  isdate "${TaishoubiFrom}"  
+  echo $?  > $tmp-taishoubifrom
+  [ "$(cat $tmp-taishoubifrom)" != "0" ] && error_exit "期間(自)に不正な日付が入力されています。"
+  if [ "${TaishoubiTo}" != "99999999" ] ; then
+    isdate "${TaishoubiTo}"  
+    echo $?  > $tmp-taishoubito
+    [ "$(cat $tmp-taishoubito)" != "0" ] && error_exit "期間(至)は不正な日付が入力されています。"
+  fi
+
+  [ "${TaishoubiFrom}" -gt "${TaishoubiTo}" ]  && error_exit "期間(自)は期間(至)より前の日付を入力してください。"
+
+
+  # 既存データとの比較
+  awk '$1=="'${RIYOUSHAID}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-kizondata
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+
+ if [ -s $tmp-kizondata ] ; then
+   cat $tmp-kizondata |
+   awk '{if($6<="'${TaishoubiFrom}'"&&$7>="'${TaishoubiTo}'"){print $0}
+        else if($6<="'${TaishoubiFrom}'"&&$7>="'${TaishoubiFrom}'"){print $0}
+        else if($6>="'${TaishoubiFrom}'"&&$6<="'${TaishoubiTo}'"){print $0}
+       }'            > $tmp-taishoubi_choufuku_error
+ else
+   : > $tmp-kizondata
+ fi
+    [ -s $tmp-taishoubi_choufuku_error -a "$(cat $tmp-taishoubi_choufuku_error)" != "0" ] && error_exit "期間に重複するデータがあります。"
+  
+   # 入力された8桁日付が請求確定後のデータかどうか
+  #----------------------------
+  kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+  kakunin_nengetsu="$(echo "${TaishoubiFrom}" | self 1.1.6)"
+
+  [ "${kakutei_nengetsu}" -lt "${kakunin_nengetsu}" ] || error_exit "請求確定月以前のデータを入力することはできません。"
+
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル
+
+# 食事パターンヘッダー
+# 食事パターンマスタ(変更、削除の場合のみ)
+# 食事実績(変更、削除の場合のみ)
+#--------------------------------------------------------------
+
+###############
+# 新規の場合
+###############
+if [ "${EtsuranHenkouShinki}" != "1" ] ; then
+
+   # 新規データならばIDをふる(食事ID)
+   ### 管理IDの発番
+   # 今回取得するID数
+   last_no="1"
+
+
+# 食事パターンID
+    mkdir -p ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}
+    touch ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID
+    [ -s ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID ] || echo "001" > ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID
+   # 現状の最終番号
+    now_pattern_last_no=$(cat ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID)
+    # 今回の発番後に、数字が限度を超えないかチェック
+    new_pattern_last_no=$(expr ${now_pattern_last_no} + ${last_no})
+
+    # 超えてたらリセット
+    [ ${new_pattern_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID
+
+    get_no ${last_no} ${kanri_dir}/${Shisetsu}/${RIYOUSHAID}/SHOKUJI_PATTERN_ID > $tmp-id_pattern_all
+
+    # この場合取得するのは一つなのでそのまま変数に
+    shokuji_pattern_id="$(cat $tmp-id_pattern_all)"
+    #data_id="${today}${new_no}"
+
+
+# パターンヘッダーテーブル
+    echo "${RIYOUSHAID}" "${shokuji_pattern_id}" "${Shisetsu}" "${Tateya}" "${Kyoshitsu}" "${TaishoubiFrom}" "${TaishoubiTo}" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-pattern_header_data_input
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+
+#    cat $tmp-pattern_data_jyunbi |
+#    sed 's/_/ /g' |
+# 1:曜日(数字) 2:食事(数字) 3:番号 4:メニューID
+#    awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${Tateya}'","'${Kyoshitsu}'",$1,$2,"'${shokuji_id}'","'${Menu}'","'${Kakaku}'","'${Suuryou}'","1","'${cur_time}'","'${USERID}'"}' > $tmp-pattern_data_input
+# 1:利用者(入居者)ID       2:施設ID 3:建屋         4:居室         5:曜日
+# 6:食事（朝昼夜おやつ他） 7:食事ID 8:食事メニュー 9:単価(税抜き) 10:数量
+
+
+############
+# 変更の場合
+############
+else
+
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-henkoudata
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+
+
+  awk '$7="'${HenkoubiTo}'"{print $0,"1","'${cur_time}'","'${USERID}'"}' $tmp-henkoudata |
+  self 1/NF-6 NF-2/NF > $tmp-pattern_header_data_input
+
+  KizonKikanFrom=$(awk '{print $6}' $tmp-henkoudata)
+  KizonKikanTo=$(awk '{print $7}' $tmp-henkoudata)
+  # 今月の最終日
+  ThisMonthLastDay=$(mdate month | tarr | tail -1)
+  # もし期間Toが99999999の場合は今月末として計算する
+  [ "${KizonKikanTo}" -gt "${ThisMonthLastDay}" ] && JissekiTaishouTo=$(echo "${ThisMonthLastDay}")  
+
+  # 変更日が今月末より大きな数字だったら
+  if [ "${HenkoubiTo}" -gt "${ThisMonthLastDay}" ] ; then
+    HenkoubiTo_ForJisseki="$(echo "${ThisMonthLastDay}")" 
+  else
+    HenkoubiTo_ForJisseki="$(echo "${HenkoubiTo}")"
+  fi
+
+  # 期間Toが変更されていて実績データ、請求データを更新する
+  #---------------------------------------
+  # スタート日が今月末よりは前で、新しく入力された期間Toが元データより後だったら
+  if [ "${KizonKikanFrom}" -lt "${ThisMonthLastDay}" -a "${HenkoubiTo_ForJisseki}" -gt "${KizonKikanTo}" ] ; then
+
+    tsuika_kikan=$(mdate "${HenkoubiTo_ForJisseki}" "${KizonKikanTo}")
+    KizonKikanMonth=$(echo "${KizonKikanFrom}" | awk '{print substr($1,1,6)}')
+
+    # 月リスト
+:> $tmp-nengetsu
+
+# 期間開始日が今月なら今月のデータをつくる
+  mdate -a month   |
+  awk '$1>="'${KizonKikanFrom}'"&&$1<="'${HenkoubiTo_ForJisseki}'"{print $0}' |
+  self 2 1         >> $tmp-nengetsu
+# 曜日  1:年月日
+ 
+# 期間開始日が今月以外だったら
+if [ "${KizonKikanMonth}" != "${thismonth}" ] ; then
+  mdate -a ${KizonKikanMonth}m |
+  awk '$1>="'${KizonKikanFrom}'"&&$1<="'${HenkoubiTo_ForJisseki}'"{print $0}'  |
+  self 2 1         >> $tmp-nengetsu
+fi
+ 
+    cat $tmp-nengetsu |
+    LANG=C sort -k2,2 > $tmp-nengetsu_list
+
+    mdate -e "${KizonKikanTo}"/+"${tsuika_kikan}" |
+    tarr         |
+    mdate 1      |
+    self 2 1     |
+    LANG=C sort  |
+    cjoin1 key=2 $tmp-nengetsu_list - > $tmp-tsuika_kikan_youbi
+# 1:曜日  2:実績追加日時 
+
+    # 実績
+    #-------------
+    cat ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN  |
+    awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$(NF-2)!="9"{print $0}' |
+    delf 1 2          |
+    LANG=C sort -k1,1 > $tmp-pattern
+# 1:曜日       2:食事（朝昼夜おやつ他） 3:食事ID     4:食事メニューID 5:食事メニュー名称
+# 6:食事種類ID 7:単価(税抜き)           8:数量       9:色ID           10:予備項目1
+# 11:予備項目2 12:予備項目3             13:予備項目4 14:予備項目5
+
+    if [ -s $tmp-pattern -a -s $tmp-tsuika_kikan_youbi ] ; then
+      join1 key=1 $tmp-tsuika_kikan_youbi $tmp-pattern |
+# 1:曜日             2:日付       3:食事（朝昼夜おやつ他） 4:食事ID     5:食事メニューID
+# 6:食事メニュー名称 7:食事種類ID 8:単価(税抜き)           9:数量       10:色ID
+# 11:予備項目1       12:予備項目2 13:予備項目3             14:予備項目4 15:予備項目5
+     delf 1 |
+     awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${Tateya}'","'${Kyoshitsu}'","1",$0,"1","'${cur_time}'","'${USERID}'"}' |
+     self 1/NF-6 NF-2/NF > $tmp-riyousha_jisseki_input
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室           5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニューID 10:食事メニュー名称
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:色ID          15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5
+
+    fi
+    if [ -s $tmp-riyousha_jisseki_input ] ; then 
+
+
+
+
+
+      : > $tmp-zeiritsu
+      for i in $(mdate ${thismonth}m) ; do
+        # 消費税率を取得
+        cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU        |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+        awk '$3<="'${i}'"&&$4>="'${i}'"{print "'${i}'",$2}'  >> $tmp-zeiritsu
+# 1:日付  2:税率
+      done
+
+      cat $tmp-riyousha_jisseki_input |
+# 1:利用者(入居者)ID       2:施設ID 3:建屋         4:居室         5:日付
+# 6:食事（朝昼夜おやつ他） 7:食事ID 8:食事メニュー 9:単価(税抜き) 10:数量
+      awk '$9!="0"{print $0}'     > $tmp-shokuji_jisseki_tankaari
+
+      cat $tmp-riyousha_jisseki_input |
+      awk '$9=="0"{print $0}'     > $tmp-shokuji_jisseki_0
+
+      : >$tmp-shokuji_jisseki_seikyutaishou_input
+      if [ -s $tmp-shokuji_jisseki_tankaari ] ; then
+        cat $tmp-shokuji_jisseki_tankaari |
+        LANG=C sort -k5,5           |
+        join2 key=5 $tmp-zeiritsu - > $tmp-shokuji_jisseki_tankaari_zeiari
+# 1:利用者(入居者)ID 2:施設ID                 3:建屋   4:居室         5:日付
+# 6:税率             7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニュー 10:単価(税抜き)
+# 11:数量
+        cat $tmp-shokuji_jisseki_tankaari_zeiari |
+        lcalc '$10 * $6'    |
+        marume -sage 1.0            |
+        ycat $tmp-shokuji_jisseki_tankaari_zeiari - |
+        awk '{print $0,"1"}'     |
+# 1:利用者(入居者)ID 2:施設ID                 3:建屋    4:居室         5:日付
+# 6:税率             7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニュー 10:単価(税抜き)
+# 11:数量            12:削除                  13:更新日 14:更新者      15:税
+# 16:税区分
+        self 1/5 7/10 NF 6 NF-1 11 NF-4/NF-2  >> $tmp-shokuji_jisseki_seikyutaishou_input
+# 1:利用者(入居者)ID       2:施設ID 3:建屋         4:居室         5:日付
+# 6:食事（朝昼夜おやつ他） 7:食事ID 8:食事メニュー 9:単価(税抜き) 10:税区分
+# 11:税率                  12:税    13:数量        14:削除        15:更新日
+# 16:更新者
+      fi
+      if [ -s $tmp-shokuji_jisseki_0 ] ; then
+        cat $tmp-shokuji_jisseki_0 |
+        awk '{print $0,"0","0","0"}'            |
+        self 1/9 NF-1 NF NF-2 10 NF-5/NF-3  >> $tmp-shokuji_jisseki_seikyutaishou_input
+      else
+        echo "$tmp-shokuji_jisseki_seikyutaishou_inputでok"
+      fi
+    else
+       : > $tmp-shokuji_jisseki_seikyutaishou_input
+    fi # riyousha_jisseki_inputがあったら
+
+  # 期間Toが変更されていたら実績データ、請求データを更新する
+  #---------------------------------------
+  # 新しく入力された期間Toが元データより後だったら
+  elif [ "${KizonKikanFrom}" -lt "${ThisMonthLastDay}" -a "${HenkoubiTo_ForJisseki}" -lt "${KizonKikanTo}" ] ; then
+
+    tsuika_kikan=$(mdate "${KizonKikanTo}" "${HenkoubiTo_ForJisseki}")
+
+    # 今月リスト
+    mdate month |
+    tarr        > $tmp-thismonth_list
+
+    mdate -e "${KizonKikanTo}"/-"${tsuika_kikan}" |
+    tarr         |
+    mdate 1      |
+    self 2 1     |
+    LANG=C sort  |
+    cjoin1 key=2 $tmp-thismonth_list - > $tmp-tsuika_kikan_youbi
+# 1:曜日  2:実績追加日時
+
+    # 実績
+    #-------------
+    cat ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN  |
+    awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$(NF-2)!="9"{print $0}' |
+    delf 1 2          |
+    LANG=C sort -k1,1 > $tmp-pattern
+# 1:曜日       2:食事（朝昼夜おやつ他） 3:食事ID     4:食事メニューID 5:食事メニュー名称
+# 6:食事種類ID 7:単価(税抜き)           8:数量       9:色ID           10:予備項目1
+# 11:予備項目2 12:予備項目3             13:予備項目4 14:予備項目5
+    if [ -s $tmp-pattern -a -s $tmp-tsuika_kikan_youbi ] ; then
+      join1 key=1 $tmp-tsuika_kikan_youbi $tmp-pattern |
+# 1:曜日             2:日付       3:食事（朝昼夜おやつ他） 4:食事ID     5:食事メニューID
+# 6:食事メニュー名称 7:食事種類ID 8:単価(税抜き)           9:数量       10:色ID
+# 11:予備項目1       12:予備項目2 13:予備項目3             14:予備項目4 15:予備項目5
+     delf 1 |
+     awk '{print "'${RIYOUSHAID}'","'${Shisetsu}'","'${Tateya}'","'${Kyoshitsu}'","1",$0,"9","'${cur_time}'","'${USERID}'"}' |
+     self 1/NF-6 NF-2/NF  > $tmp-riyousha_jisseki_input
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室           5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニューID 10:食事メニュー名称
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:色ID          15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5
+    else
+     : > $tmp-riyousha_jisseki_input
+    fi
+
+    if [ -s $tmp-riyousha_jisseki_input ] ; then
+     cat $tmp-riyousha_jisseki_input |
+     self 1/8 |
+     LANG=C sort |
+     join1 key=1/8 - ${pompa_dir}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+     awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' |
+     self 1/NF-6 NF-2/NF  > $tmp-shokuji_jisseki_seikyutaishou_input
+    else
+     : >$tmp-shokuji_jisseki_seikyutaishou_input
+    fi
+
+  # 変更日Toが変わらない場合
+  else
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${HenkoubiFrom}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-pattern_header_data_input
+   : > $tmp-riyousha_jisseki_input
+   : > $tmp-shokuji_jisseki_seikyutaishou_input
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+  shokuji_pattern_id=$(echo "${HenkoubiFrom}")
+  fi
+
+fi
+
+;;
+esac
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+
+#cp $tmp-* /home/hands/work/okuda
+
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER RIYOUSHA_SHOKUJI_PATTERN_HEADER
+FIN
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+[ -s $tmp-pattern_data_input ] && echo "${Shisetsu}/${Tateya}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+#[ -s $tmp-shokuji_jisseki_input ] && echo "${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI" >> $tmp-target-table
+#[ -s $tmp-shokuji_jisseki_seikyutaishou_input ] && echo "${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA" >> $tmp-target-table
+#20150910mod ロック単位変更
+[ -s $tmp-shokuji_jisseki_input ] && echo "${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI_${Shisetsu}_${thismonth}" >> $tmp-target-table
+[ -s $tmp-shokuji_jisseki_seikyutaishou_input ] && echo "${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA_${Shisetsu}_${thismonth}" >> $tmp-target-table
+
+
+if [ -s $tmp-jisseki_kikan ] ; then
+  for i in $(cat $tmp-jisseki_kikan) ; do
+#   [ -s $tmp-riyousha_jisseki${i}_input ] && echo "${Shisetsu}/${Tateya}/${i}/RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI" >> $tmp-target-table
+#   [ -s $tmp-shokuji_jisseki${i}_input ] && echo "${Shisetsu}/${Tateya}/${i}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA" >> $tmp-target-table
+#20150910mod ロック単位変更
+   [ -s $tmp-riyousha_jisseki${i}_input ] && echo "${Shisetsu}/${Tateya}/${i}/RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI_${Shisetsu}_${i}" >> $tmp-target-table
+   [ -s $tmp-shokuji_jisseki${i}_input ] && echo "${Shisetsu}/${Tateya}/${i}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA_${Shisetsu}_${i}" >> $tmp-target-table
+  done
+fi
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+pattern_header_data RIYOUSHA_SHOKUJI_PATTERN_HEADER 2 12 13 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN
+FIN
+
+[ -s $tmp-pattern_data_input ] && echo "pattern_data RIYOUSHA_SHOKUJI_PATTERN 5 18 19 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+[ -s $tmp-shokuji_jisseki_input ] && echo "shokuji_jisseki RIYOUSHA_SHOKUJI_JISSEKI 8 21 22 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+[ -s $tmp-shokuji_jisseki_seikyutaishou_input ] && echo "shokuji_jisseki_seikyutaishou RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 8 27 28 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+
+if [ -s $tmp-jisseki_kikan ] ; then
+  for i in $(cat $tmp-jisseki_kikan) ; do
+   [ -s $tmp-riyousha_jisseki${i}_input ] && echo "shokuji_jisseki${i} RIYOUSHA_SHOKUJI_JISSEKI 8 21 22 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+   [ -s $tmp-shokuji_jisseki${i}_input ] && echo "shokuji_jisseki_seikyutaishou${i}  RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 8 27 28 ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN ${input_dir}/RIYOUSHA_SHOKUJI_PATTERN" >> $tmp-target-table
+  done
+fi
+
+
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#    error_unlock "ロック処理失敗"
+# 20150910mod
+# ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+# ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+    error_exit "ロック処理失敗"
+
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/SHOKUJI_PATTERN_TOUROKU_HEADER/${Shisetsu}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+
+
+#20150915mod ロック解放後の位置から移動
+ cp -p ${pompa_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA ${seikyu_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+ cp -p ${pompa_dir}/RIYOUSHA_SHOKUJI_JISSEKI ${kanri_dir}/${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI
+
+
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $lock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+#20150915mod ロック範囲外のためロック解放前に移動（請求のみ、POMPAはもとからコメントのため対象外）　
+# cp -p ${pompa_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA ${seikyu_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+# cp -p ${pompa_dir}/RIYOUSHA_SHOKUJI_JISSEKI ${kanri_dir}/${Shisetsu}/${Tateya}/${thismonth}/RIYOUSHA_SHOKUJI_JISSEKI
+
+echo "result ok ${shokuji_pattern_id}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

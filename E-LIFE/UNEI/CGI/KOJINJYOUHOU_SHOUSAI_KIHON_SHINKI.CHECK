@@ -1,0 +1,221 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_SHINKI_CHECK.CGI : 個人情報重複チェックCGI
+# 
+# 
+#
+# Written by E.Okuda :2013/11/20
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_exit_choufuku {
+  message="$1"
+  echo "message ${message}"
+  echo "result check_ng"
+  cat $tmp-data
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+  [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名が未入力です"
+  [ -z "${Shimeikana}" -o "${Shimeikana}" = "_" ] && error_exit "氏名カナが未入力です"
+
+  Shimei="$(nameread "Shimei" ${namedata} | sed 's/_/　/g'| sed 's/　//g')"
+  Shimeikana="$(nameread "Shimeikana" ${namedata} | sed 's/_/　/g' |  sed 's/　//g' | zen -)"
+  Seibetsu="$(nameread "Seibetsu" $namedata)"
+  SeinengappiGengou="$(nameread "SeinengappiGengou" $namedata)"
+  SeinengappiYear="$(nameread "SeinengappiYear" $namedata | sed 's/^0//g')"
+  SeinengappiMonth="$(nameread "SeinengappiMonth" $namedata| sed 's/^0//g')"
+  SeinengappiDay="$(nameread "SeinengappiDay" $namedata | sed 's/^0//g')"
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+  ShimeiAlert="$(nameread "ShimeiAlert" $namedata)"
+  ShimeikanaAlert="$(nameread "ShimeikanaAlert" $namedata)"
+  SeinengappiAlert="$(nameread "SeinengappiAlert" $namedata)"
+
+#  [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名が未入力です"
+#  [ -z "${Shimeikana}" -o "${Shimeikana}" = "_" ] && error_exit "氏名カナが未入力です"
+  [ -z "${SeinengappiYear}" -o "${SeinengappiYear}" = "_" ] && error_exit "誕生年を入力してください"
+  [ -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" = "_" ] && error_exit "誕生月を入力してください"
+  [ -z "${SeinengappiDay}" -o "${SeinengappiDay}" = "_" ] && error_exit "誕生日を入力してください"
+
+[ ! -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" != "_" ] && SeinengappiMonth_Maezero="$(echo ${SeinengappiMonth} | maezero 1.2)"
+[ ! -z "${SeinengappiDay}" -o "${SeinengappiDay}" != "_" ] && SeinengappiDay_Maezero="$(echo ${SeinengappiDay} | maezero 1.2)"
+
+
+[ "${SeinengappiYear}" = "0" ] && error_exit "生年月日に0年は入力できません。"
+[ "${SeinengappiMonth}" = "0" ] && error_exit "生年月日に0月は入力できません。"
+[ "${SeinengappiDay}" = "0" ] && error_exit "生年月日に0日は入力できません。"
+
+  # 数字のみのチェック
+  echo "${SeinengappiGengou}" |
+  awk '$1!~/^[0-9]*$/{print $0}' > $tmp-seinengappi_error1
+  echo "${SeinengappiYear}" |
+  awk '$1!~/^[0-9]*$/{print $0}' > $tmp-seinengappi_error2
+
+  echo "${SeinengappiMonth_Maezero}" |
+  awk '$1!~/^[0-9]*$/{print $0}' > $tmp-seinengappi_error3
+  echo "${SeinengappiMonth_Maezero}" |
+  awk '$1>"12"{print $0}'                > $tmp-seinengappi_error4
+
+  echo "${SeinengappiDay_Maezero}" |
+  awk '$1!~/^[0-9]*$/{print $0}' > $tmp-seinengappi_error5
+  echo "${SeinengappiDay_Maezero}" |
+  awk '$1>"31"{print $0}'                > $tmp-seinengappi_error6
+
+  [ -s $tmp-seinengappi_error1 ] && error_exit "生年月日の元号選択が不正です。"
+  [ -s $tmp-seinengappi_error2 ] && error_exit "生年月日の年号の値が不正です。"
+  [ -s $tmp-seinengappi_error3 ] && error_exit "生年月日の月の値が不正です。"
+  [ -s $tmp-seinengappi_error4 ] && error_exit "生年月日の月の値が不正です。"
+  [ -s $tmp-seinengappi_error5 ] && error_exit "生年月日の日の値が不正です。"
+  [ -s $tmp-seinengappi_error6 ] && error_exit "生年月日の日の値が不正です。"
+
+  # 西暦の計算
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${SeinengappiGengou}'"{print substr($3,1,4)}' |
+  awk '{print $1+"'${SeinengappiYear}'"-1}' |
+# 1:西暦年号
+  awk '{print $1"'${SeinengappiMonth_Maezero}'""'${SeinengappiDay_Maezero}'"}' > $tmp-seinengappi
+
+  Seinengappi="$(head -1 $tmp-seinengappi | self 1)"
+
+  isdate "${Seinengappi}"
+  echo $?              > $tmp-seinegappi_check
+
+  [ -s $tmp-seinegappi_check -a $(cat $tmp-seinegappi_check) = "1" ] && error_exit "存在しない生年月日です。"
+
+
+if [ -z "${Shimei}" -o "${Shimei}" = "_" -o -z "${Shimeikana}" -o "${Shimeikana}" = "_" -o -z "${Seibetsu}" -o "${Seibetsu}" = "_" -o -z "${SeinengappiGengou}" -o "${SeinengappiGengou}" = "_" -o -z "${SeinengappiYear}" -o "${SeinengappiYear}" = "_" -o -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" = "_" -o -z "${SeinengappiDay}" -o "${SeinengappiDay}" = "_" ] ; then
+
+  error_exit "入力項目が不足しています。氏名・氏名カナ・性別・生年月日を入力してください。"
+
+else
+#-------------------------------------------------------------
+# ファイルの取得
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+
+# 利用者重複チェック除外
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+  if [ ! -z "${RIYOUSHAID}" -a "${RIYOUSHAID}" != "_" ] ; then
+  
+    : > $tmp-choufuku_nocheck
+  
+    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_CHOUFUKU_OK |
+    awk '$(NF-2)!="9"{print $1}'                   |
+    tee $tmp-chofuku                               |
+    awk '$1=="'${RIYOUSHAID}'"' >> $tmp-choufuku_nocheck
+#    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_CHOUFUKU_OK |
+#    awk '$2=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $1}' >> $tmp-choufuku_nocheck
+
+  else
+   :
+  fi
+
+    ShimeiNoSpace=$(echo "${Shimei}" | sed 's/_/　/g'| sed 's/　//g')
+    ShimeikanaNoSpace=$(echo "${Shimeikana}" | sed 's/_/　/g' | sed 's/　//g')
+  
+ # 重複除外があったら除外する
+ if [ -s $tmp-choufuku_nocheck ] ; then
+#   cat $tmp-choufuku_nocheck |
+#   LANG=C sort -u            |
+#   cjoin1 +ng key=1 - ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON > /dev/null 2>$tmp-riyousha_kihon
+#   cat $tmp-riyousha_kihon
+    echo "result check_ok"
+
+ else
+   
+#  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON  |
+  if [ -s $tmp-chofuku ] ; then 
+    cat $tmp-chofuku          |
+    LANG=C sort -u            |
+    cjoin1 +ng key=1 - ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON > /dev/null 2>$tmp-riyousha_kihon
+    cat $tmp-riyousha_kihon
+  else
+    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON
+  fi |
+  awk '{gsub("　","");print $0}' |
+  awk '$2=="'${ShimeiNoSpace}'"&&$3=="'${ShimeikanaNoSpace}'"&&$4=="'${Seibetsu}'"&&$5=="'${SeinengappiGengou}'"&&$6=="'${SeinengappiYear}'"&&$7=="'${SeinengappiMonth}'"&&$8=="'${SeinengappiDay}'"&&$(NF-2)!="9"{print "choufuku",$0}' > $tmp-data
+
+
+  # 登録かつ重複データがある場合
+  if [ -s "$tmp-data" -a "${MODE}" = "touroku" ] ; then
+
+    # 利用者IDがある(重複チェック2度目以降)
+#    if [ ! -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" != "_" ] ; then
+#      echo "result check_ok"
+
+     # 登録で重複あり利用者IDなし(重複チェック1回目)
+#    else
+      error_exit_choufuku "重複データが存在するため新規入力はできません。契約情報より新契約を入力してください。"
+#     fi
+
+  # チェックで重複データがある場合
+  elif  [ -s "$tmp-data" -a "${MODE}" = "check" ] ; then
+      error_exit_choufuku "重複データが存在するため新規入力はできません。契約情報より新契約を入力してください。"
+
+
+  # MODE編集でデータがあった時
+  elif [ -s "$tmp-data" -a "${MODE}" = "henshuu" ] ; then
+
+     cat $tmp-data |
+     awk '$2!="'${RIYOUSHAID}'"{print $0}' > $tmp-choufuku_data
+
+     if [ -s "$tmp-choufuku_data" ] ; then
+         error_exit_choufuku "重複データが存在します"
+     else
+         echo "result check_ok"
+     fi
+  # 重複データなし
+  else
+    echo "result check_ok"
+  fi
+
+fi 
+
+
+fi
+
+  # -------------------------
+
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

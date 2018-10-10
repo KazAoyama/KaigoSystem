@@ -1,0 +1,293 @@
+#!/bin/bash
+#
+# MONITORING_HOMEHELPER.TOUROKU : モニタリング登録
+#
+# Usage : MONITORING_HOMEHELPER.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--- 日付 ---
+sday=$(date +%Y%m%d)
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+##############################################################
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+# テスト
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 作成年月日
+[ -z "${hdSakuseiDate}" -o "${hdSakuseiDate}" = "_" ] && hdSakuseiDate=$(date +%Y%m%d | self 1)
+
+
+# 和暦変換
+# 元号マスタ
+awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU |
+self 1/4                                                    |
+awk '$3<="'$hdSakuseiDate'"&&"'$hdSakuseiDate'"<=$4' |
+awk '{print $2,"'$hdSakuseiDate'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-sakusei_date
+
+SakuseiDate=$(cat $tmp-sakusei_date)
+
+
+yukoflg="1"
+
+[ "$MODE" = "delete" ] && yukoflg="9"
+
+#--------------------------------------------------------------
+
+# データ作成
+# 基本情報
+# 1:利用者ID          2:作成年月日(西暦)    3:作成年月日(和暦) 4:利用者氏名         5:モニタリング日付
+# 6:初回前回フラグ    7:居宅介護支援事業所  8:介護支援専門員   9:サービス提供責任者 10:短期長期目標区分
+# 11:評価開始日       12:評価終了日         13:計画実施有無    14:計画実施内容      15:生活上問題点有無
+# 16:生活上問題点内容 17:心身変化有無       18:心身変化内容    19:要望利用者有無    20:利用者要望内容
+# 21:要望家族有無     22:家族要望内容       23:家族の変化有無  24:家族の変化内容    25:ADL変化有無
+# 26:ADL変化内容      27:計画修正の必要有無 28:今後の方針      29:有効フラグ        30:処理日
+# 31:ユーザID
+echo "$Riyoushaid" "$hdSakuseiDate" "$SakuseiDate" "$Riyousha" "$MonitoringDate" \
+"1" "$slKyotakuKaigoShienJigyousho" "$slKaigoShienSenmonin" \
+"$slServiceTeikyouSekininsha" "$slTankiChouki" "$HyokakikanFrom" "$HyokakikanTo" \
+"$KeikakuSelect" "$KeikakuText" "$SeikatsuSelect" "$SeikatsuText" "$ShinshinHenkaSelect" \
+"$ShinshinHenkaText" "$RiyoushaSelect" "$RiyoushaText" "$KazokuSelect" "$KazokuText" \
+"$KazokuHenkaSelect" "$KazokuHenkaText" "$ADLSelect" "$ADLText" "$KeikakuSyuseiHitsuyo" \
+"$KongoHoushin" "${yukoflg}" "${sdaytime}" "${USER_ID}" > ${tmp}-monitoring_input
+
+cp -p $tmp-monitoring_input $work_dir/monitoring_input
+
+[ "${hdHyokakikanFrom}" -gt "${hdHyokakikanTo}" ] && error_exit "日付入力を確認してください。"
+
+# 目標リスト作成
+
+seq $MOKUHYOUNUM |
+while read mokuhyounum ; do
+  cnum=$((mokuhyounum-1))
+  mokuhyoudataid=$(nameread DataID$cnum $namedata | head -1)
+  mokuhyousort=$(nameread MokuhyouSort$cnum $namedata | head -1)
+  hdmokuhyouname=$(nameread hdMokuhyouName$cnum $namedata | head -1)
+  servicenaiyou=$(nameread txtareaServiceNaiyou$cnum $namedata | head -1)
+  kakuninhouhou=$(nameread KakuninhouhouSelect$cnum $namedata | head -1)
+  riyoushamanzoku=$(nameread RiyoushaManzokuSelect$cnum $namedata | head -1)
+  kazokumanzoku=$(nameread KazokuManzokuSelect$cnum $namedata | head -1)
+  iken=$(nameread txtareaIken$cnum $namedata | head -1)
+  tasseido=$(nameread TasseidoSelect$cnum $namedata | head -1)
+  del=$(nameread del$cnum $namedata | head -1)
+  [ -z "$del" -o "$del" = "_" ] && del="1"
+  [ "$yukoflg" = "9" ] && del=$yukoflg
+
+  # 入力データチェック
+  input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $mokuhyousort 9)
+  [ "${input_res}" != "OK" ] && error_exit $input_res
+
+# 1:利用者ID     2:作成日(西暦) 3:レコードID   4:表示順     5:目標名
+# 6:サービス内容 7:確認方法     8:利用者満足度 9:家族満足度 10:意見
+# 11:達成度      12:有効フラグ  13:処理日      14:ユーザID
+
+  echo "$Riyoushaid" "$hdSakuseiDate" "$mokuhyoudataid" "$mokuhyousort" "$hdmokuhyouname" \
+"$servicenaiyou" "$kakuninhouhou" "$riyoushamanzoku" "$kazokumanzoku" "$iken" \
+"$tasseido" "$del" "${sdaytime}" "${USER_ID}" >> ${tmp}-mokuhyou_work1
+
+done
+
+
+cp -p $tmp-mokuhyou_work1 $work_dir/mokuhyou_work1
+
+###############################
+# 目標ID採番
+##############################
+cat ${tmp}-mokuhyou_work1 |
+awk '$3=="_"'                    > ${tmp}-mokuhyou_new
+
+cat ${tmp}-mokuhyou_work1 |
+awk '$3!="_"'                    > ${tmp}-mokuhyou_upd
+
+new_mokuhyou_num=$(gyo ${tmp}-mokuhyou_new)
+
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $new_mokuhyou_num -gt 0 ] ; then
+last_no="${new_mokuhyou_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}/MOKUHYOU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}/MOKUHYOU_ID ] || echo "00001" > ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}/MOKUHYOU_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}/MOKUHYOU_ID
+get_no ${last_no} ${kanri_dir}/MONITORING_HOMEHELPER/${Riyoushaid}/MOKUHYOU_ID > $tmp-id_mokuhyouall
+
+fi
+#---------------------------------------------------------------
+
+ycat $tmp-id_mokuhyouall ${tmp}-mokuhyou_new      |
+self 2 3 1 5/NF                                     > ${tmp}-mokuhyou_new2
+
+cat ${tmp}-mokuhyou_upd ${tmp}-mokuhyou_new2     |
+LANG=C sort -k1,3                                   > ${tmp}-mokuhyou_input
+
+
+cp ${tmp}-mokuhyou_input $work_dir/mokuhyou_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+HOUMONKAIGO/${Riyoushaid}/MONITORING_HOMEHELPER   MONITORING_HOMEHELPER
+HOUMONKAIGO/${Riyoushaid}/MONITORING_MOKUHYOU    MONITORING_MOKUHYOU
+FIN
+
+input_detail_dir=MONITORING/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+monitoring MONITORING_HOMEHELPER 2 30 31 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+mokuhyou MONITORING_MOKUHYOU 3 13 14 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+    [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+    [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+    [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+    mkdir -p ${pompa_dir_name}
+    mkdir -p ${input_dir_name}
+    mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+    mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+    mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

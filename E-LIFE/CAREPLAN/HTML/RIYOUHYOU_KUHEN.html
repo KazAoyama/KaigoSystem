@@ -1,0 +1,2321 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>サービス利用票</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap.css">
+    
+    <link rel="stylesheet" type="text/css" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/font.css">
+    <script src="/js/jquery-1.7.2.min.js" type="text/javascript"></script>
+	<script src="/js/validateUtils.js"></script>
+	<script src="/js/messageMaster.js"></script>
+	<script>
+
+// 作成済み表示＆実績あれば含み（対象月と利用者IDで検索）
+//  事業者タイプ、サービス区分、実績確定区分、予定データ値、実績データ値、サービス開始時間、サービス終了時間、供給者ID、保険区分、付随費用
+	sakuseid=[
+//                ###RIYOUHYOUDATA###
+	   		{ "jigyoushatype":"%2","id":"%3","jissekikakutei":"%4","yoteidate":"%5","jissekidate":"%6","start":"%7","end":"%8","kyoukyusha":"%9","hoken":"%10","plusfee":"%11","firsttani":"%12" },
+//                ###RIYOUHYOUDATA###
+		];
+
+
+	// データセット部
+	// サービス区分（サービスコード種類、サービスコード区分、サービス名、最小時間、最大時間、対象介護度、対象事業規模、対象事業者種類、サ責、同一建物、朝夜、深夜、単位）
+	kaigoservice=[
+//                     ###SERVICECODE###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","fee":"%13","ketsuin":"%14","facilityunit":"%15","nightcare":"%16","calcunit":"%17"},
+//                     ###SERVICECODE###
+//                     ###SERVICECODE2###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","fee":"%13","ketsuin":"%14","facilityunit":"%15","nightcare":"%16","calcunit":"%17"},
+//                     ###SERVICECODE2###
+//                     ###SERVICECODEYOBO###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","fee":"%13","ketsuin":"%14","facilityunit":"%15","nightcare":"%16","calcunit":"%17"},
+//                     ###SERVICECODEYOBO###
+		];
+
+
+	// 供給者データ（供給者ID、供給者名、提供サービスコード種類、事業規模、事業種類、特定事業所加算倍率、サービス提供責任者２級フラグ）
+	kyoukyusha=[
+//                     ###KYOUKYUSHA###
+                 {"id":"%1","value":"%2","jigyoushatype":"%3","scale":"%4","facilitytype":"%5","areatanka":"%6","servicemanager":"%7","douitsu":"%8","ketsuin":"%9","facilityunit":"%10","nightcare":"%11"},
+//                     ###KYOUKYUSHA###
+		];
+
+        // サービス種類データ（サービス種類ID、サービス種類名）
+        serviceshurui=[
+//                     ###SERVICETYPE###
+                 {"id":"%1","value":"%2"},
+//                     ###SERVICETYPE###
+                ];
+
+        // 訪問介護エキストラ
+        houmonkaigoextra=[
+//                     ###HOUMONKAIGOEXTRA###
+                 {"jigyoushatype":"%1","id":"%2","basic":"%3","a":"%4","b":"%5","c":"%6","d":"%7","e":"%8","f":"%9","g":"%10"},
+//                     ###HOUMONKAIGOEXTRA###
+                ];
+
+        caremanagerd=[
+//                     ###CAREMANAGERLIST###
+                        {"id":"%1","value":"%2","status":"%3"},
+//                     ###CAREMANAGERLIST###
+                ];
+
+    // preafterkbn 0:同じ 1:前 2:後
+	youkaigodod=[
+//                       ###KAIGODOJOUHOU###
+			{"youkaigo":"%1","riyougendo":"%2","kaigodo":"%3","preafterkbn":"%4","kirikaebi":"%5","lightkaigodo":"%6"},
+//                       ###KAIGODOJOUHOU###
+		];
+
+	var YoubiDay= new Array("日","月","火","水","木","金","土");
+
+        var warekid=[
+//                     ###TAISHOUWAREKI###
+                        {"id":"%1","value":"%2","year":"%3"},
+//                     ###TAISHOUWAREKI###
+                ];
+
+	var dataArrEventRiyoushaId = new Array();
+
+
+
+//  テーブルレコード数
+    var numRecord=0;
+
+
+
+//  予定データ（テーブル、日）
+    var dataArrayYotei= new Array();
+
+//  実績データ（テーブル、日）
+    var dataArrayJisseki= new Array();
+
+//  エラーメッセージ
+    var error_msg="";
+
+    function checkone(obj) {
+        if (!obj.value) {
+          obj.value="1";
+        } else {
+          obj.value="";
+        }
+    }
+
+	jQuery(function(){
+		//施設リストプルダウンの「本社」を非表示
+		var shisetsuList = $(".shisetsulist a").get();
+		var shisetsuListLength = shisetsuList.length;
+		for (var i=0; i<shisetsuList.length; i++) {
+			var shisetsuListObj = $(shisetsuList).get(i);
+			if ($(shisetsuListObj).text() == "本社") {
+				$(shisetsuListObj).parent().css("display", "none");
+				shisetsuListLength -= 1; 
+			}
+		}
+		//施設リストプルダウンの中身が0個の場合、吹き出しを非表示
+		if (shisetsuListLength == 0) {
+			$("#shisetsuList_ul").css("display", "none");
+		}
+        // メニュー上のボタン制御
+        $("#home").click(function(){
+            $('*[name="hdTaishouMonth"]').val($('#taishoumonth').val());
+            document.frmBack.submit();
+        });
+
+        var realdate = new Date();
+        var realseirekiyear = realdate.getFullYear();
+        var firstseirekiyear = "2011"; 
+        var curdate = new Date(###TAISHOUMONTH###);
+        var seirekiyear = curdate.getFullYear();
+        var nextmonth = curdate.getMonth()+parseInt(1);
+        if(nextmonth>12){
+            nextmonth=1;
+        }
+        for(var m=1; m<13; m++) {
+            if(m==nextmonth) {
+                valueM=('00'+m).slice(-2);
+	        $("#taishoumonth").append('<option value="'+valueM+'" selected>'+m+'</option>');
+            } else {
+                valueM=('00'+m).slice(-2);
+	        $("#taishoumonth").append('<option value="'+valueM+'">'+m+'</option>');
+            }
+        }
+
+        for(var w in warekid) {
+            $("#taishouwareki").append('<option value="'+warekid[w].id+'">'+warekid[w].value+'</option>');
+        }
+
+        var minusyear=0;
+        $('#taishouwareki').val('05');
+        for(var w in warekid) {
+            if(warekid[w].id==$('#taishouwareki').val()) {
+                minusyear=warekid[w].year;
+                break;
+            }
+        }
+       
+        var plusyear=0; 
+        var curyear=seirekiyear-minusyear;
+        var realyear=realseirekiyear-minusyear;
+        var firstyear=firstseirekiyear-minusyear;
+        var nextyear = realyear+parseInt(1);
+        for (var y=firstyear;y<=realyear;y++) {
+           $("#taishouyear").append('<option value="'+y+'">'+y+'</option>');
+        };
+        $("#taishouyear").append('<option value="'+nextyear+'">'+nextyear+'</option>');
+        $("#taishouyear").val(curyear);
+
+        function setSeirekiYear() {
+            for(var w in warekid) {
+                if(warekid[w].id==$('#taishouwareki').val()) {
+                   plusyear=warekid[w].year;
+                   break;
+                }
+            }
+            var setYear=parseInt($('#taishouyear').val())+parseInt(plusyear);
+            $('*[name="hdTaishouYear"]').val(setYear);
+        }
+
+        $('#taishouyear').change(function(){
+           setSeirekiYear();
+        });
+
+        $('#taishouwareki').change(function(){
+           setSeirekiYear();
+        });
+        setSeirekiYear();
+
+        if(caremanagerd.length>0) {
+               for(var c in caremanagerd) {
+                   $('#CareManager').append('<option value="'+caremanagerd[c].id+'" '+caremanagerd[c].status+' >'+caremanagerd[c].value+'</option>');
+               }
+        }
+
+
+        if(youkaigodod.length>0) {
+	        if(youkaigodod[0].preafterkbn=="0") {
+	            $('#DispKirikae').hide();
+	        } else if (youkaigodod[0].preafterkbn=="1") {
+	            var strkirikae="＊"+youkaigodod[0].kirikaebi+"日より前は"+youkaigodod[0].lightkaigodo;
+	            $('#DispKirikae').show();
+	            $('#DispKirikae').text(strkirikae);
+	        } else {
+	            var strkirikae="＊"+youkaigodod[0].kirikaebi+"日より後は"+youkaigodod[0].lightkaigodo;
+	            $('#DispKirikae').show();
+	            $('#DispKirikae').text(strkirikae);            
+	        }
+
+	        $('#Youkaigodo').val(youkaigodod[0].youkaigo);
+	        $('#RiyouGendo').val(youkaigodod[0].riyougendo);
+	}
+
+		var date = new Date($("#hdTaishouYear").val(),$("#taishoumonth").val(),0);
+		var d = date.getDate();
+		var m = date.getMonth();
+		var y = date.getFullYear();
+
+//　ヘッダー作成
+		var htmlhd="<thead><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;width:80px\" rowspan=\"2\">提供時間帯</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:100px\" rowspan=\"2\">サービス種類</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:120px\" rowspan=\"2\">サービス事業所名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス内容</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:3%;\" rowspan=\"2\">保険対象</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:3%;\" rowspan=\"2\">実績確定</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >日付</th>";
+
+		var tm = m+1;
+		var NumOfDays= new Date(y,tm,0).getDate();
+		var yd=1;
+		var wn=1;
+		var yoteigoukei=0;
+                var yoteifuzui=0;
+		var yoteinokori=0;
+        var jissekigoukei=0;
+        var jissekifuzui=0;
+
+//　ヘッダーの日付
+    	for (yd; yd<=NumOfDays; yd=yd+1) {
+			htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+yd+"</th>";
+		}
+		htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">合計回数</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:5%\" colspan=\"2\">単位数</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">日割</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" colspan=\"2\">付随費用</th>";
+		htmlhd=htmlhd+"</tr><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >曜日</th>";
+
+//　ヘッダーの曜日
+    	for (yd=1; yd<=NumOfDays; yd=yd+1) {
+			var YoubiDate = new Date(y,m,yd);
+			var Youbi=YoubiDate.getDay();
+			if(Youbi=="0") {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" ><font color=\"red\">"+YoubiDay[Youbi]+"</font></th>";
+			} else {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+YoubiDay[Youbi]+"</th>";
+			}
+		}
+
+//　ヘッダーの集計
+		htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\">1回</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\">月合計</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\">1回</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\">月合計</th>";
+		htmlhd=htmlhd+"</tr></thead>";
+		$('#RiyouhyouIchiran').append(htmlhd);
+
+
+		date = new Date($("#hdTaishouYear").val(),$("#taishoumonth").val(),0);
+		d = date.getDate();
+		m = date.getMonth();
+		y = date.getFullYear();
+
+//　ヘッダー作成
+		htmlhd="<thead><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;width:80px\" rowspan=\"2\">提供時間帯</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:100px\" rowspan=\"2\">サービス種類</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:150px\" rowspan=\"2\">サービス事業所名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス内容</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:3%;\" rowspan=\"2\">保険対象</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:3%;\" rowspan=\"2\">実績確定</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >日付</th>";
+
+		tm = m+1;
+		NumOfDays= new Date(y,tm,0).getDate();
+		yd=1;
+		wn=1;
+
+//　ヘッダーの日付
+    	for (yd; yd<=NumOfDays; yd=yd+1) {
+			htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+yd+"</th>";
+		}
+		htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">合計回数</th><th style=\"text-align:center; border:#bbbbbb solid 1px;width:5%\" colspan=\"2\">単位数</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">日割</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" colspan=\"2\">付随費用</th>";
+		htmlhd=htmlhd+"</tr><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >曜日</th>";
+
+//　ヘッダーの曜日
+    	for (yd=1; yd<=NumOfDays; yd=yd+1) {
+			var YoubiDate = new Date(y,m,yd);
+			var Youbi=YoubiDate.getDay();
+			if(Youbi=="0") {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" ><font color=\"red\">"+YoubiDay[Youbi]+"</font></th>";
+			} else {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+YoubiDay[Youbi]+"</th>";
+			}
+		}
+
+//　ヘッダーの集計
+		htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\">1回</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\">月合計</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\">1回</th><th style=\"text-align:center; border:#bbbbbb solid 1px;display:none\">月合計</th>";
+		htmlhd=htmlhd+"</tr></thead>";
+
+
+
+		$("#RiyouhyouIchiran").children().remove();
+		$('#RiyouhyouIchiran').append(htmlhd);
+
+		var htmlval="";
+
+		if(youkaigodod.length>0) {
+		if(youkaigodod[0].riyougendo<yoteigoukei) {
+			$('#YoteiGoukeiGendo').val(youkaigodod[0].riyougendo);
+			yoteinokori=0;
+		} else {
+			$('#YoteiGoukeiGendo').val(yoteigoukei);
+			yoteinokori=parseInt(youkaigodod[0].riyougendo)-parseInt(yoteigoukei);
+		}
+		}
+
+//　作成済みの設定↓ここから↓
+        if(sakuseid.length>0) {
+		for (var s in sakuseid ) {
+			var tmpTimeStart=sakuseid[s].start.split(":");
+			var tmpTimeEnd=sakuseid[s].end.split(":");
+			var tmpMinuteStart=parseInt(tmpTimeStart[0]*60)+parseInt(tmpTimeStart[1]);
+			var tmpMinuteEnd=parseInt(tmpTimeEnd[0]*60)+parseInt(tmpTimeEnd[1]);
+			var serviceTime=tmpMinuteEnd-tmpMinuteStart;
+			var servicefee=0;
+                        var serviceshukei="d";
+			htmlval=htmlval+"<tr class=\"tryotei\">";
+
+//　提供時間帯設定
+    		htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"time\" id=\"start"+numRecord+"\" name=\"start"+numRecord+"\" value=\""+sakuseid[s].start+"\" style=\"width:80px;\" class=\"teikyoujikanstart\" ><br />～<br /><input type=\"time\" id=\"end"+numRecord+"\" name=\"end"+numRecord+"\" value=\""+sakuseid[s].end+"\" style=\"width:80px;\" class=\"teikyoujikanend\" ></td>";
+
+//　サービス種類選択設定
+    		htmlval=htmlval+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><select style=\"width:110px\" id=\"ServiceShurui"+numRecord+"\" name=\"ServiceShurui"+numRecord+"\" class=\"ServiceShurui\" ><option value=\"\"</option>";
+    		for (var x in serviceshurui) {
+                   htmlval=htmlval+"<option value=\""+serviceshurui[x].id+"\">"+serviceshurui[x].value+"</option>";
+                }
+    		htmlval=htmlval+"</select></td>";
+//　供給者選択設定
+    		htmlval=htmlval+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><select style=\"width:160px\" id=\"Kyokyusha"+numRecord+"\" name=\"Kyokyusha"+numRecord+"\" class=\"Kyokyusha\" ><option value=\"\"</option>";
+                var stype="";
+    		for (var k in kyoukyusha) {
+				if(kyoukyusha[k].id==sakuseid[s].kyoukyusha){
+					htmlval=htmlval+"<option value=\""+kyoukyusha[k].id+"\" selected>"+kyoukyusha[k].value+"</option>";
+                                        stype=kyoukyusha[k].jigyoushatype;
+				} else {
+					htmlval=htmlval+"<option value=\""+kyoukyusha[k].id+"\">"+kyoukyusha[k].value+"</option>";
+				}
+			}
+    		htmlval=htmlval+"</select></td>";
+
+//　サービス内容設定
+    		htmlval=htmlval+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"hidden\" id=\"ServiceType"+numRecord+"\" name=\"ServiceType"+numRecord+"\" value=\""+stype+"\"class=\"ServiceType\"><select id=\"ServiceNaiyou"+numRecord+"\" name=\"ServiceNaiyou"+numRecord+"\" style=\"width:140px\" class=\"ServiceNaiyou\" >";
+//　selectedがたったものは変数servicefeeにその単位をセットする（→集計単位をだすため）
+    		for (var g in kaigoservice) {
+				var serviceid="";
+				var servicename="";
+				var serviceminuteStart="";
+				var serviceminuteEnd="";
+				for (var k in kyoukyusha) {
+					if(kyoukyusha[k].id==sakuseid[s].kyoukyusha){
+						if(kyoukyusha[k].jigyoushatype==kaigoservice[g].jigyoushatype) {
+		//  通所介護
+							if(kaigoservice[g].jigyoushatype==15) {
+							    if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].facilitytype==kyoukyusha[k].facilitytype) {
+									if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+		//  予防通所介護
+							} else if(kaigoservice[g].jigyoushatype==65) {
+							    if(kaigoservice[g].facilitytype==kyoukyusha[k].facilitytype) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+		//  通所リハビリ
+							} else if(kaigoservice[g].jigyoushatype==16 || kaigoservice[g].jigyoushatype==66) {
+							    if(kaigoservice[g].facilitytype=="1"&&(kyoukyusha[k].facilitytype=="4"||kyoukyusha[k].facilitytype=="7")) {
+									if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+							    } else if(kaigoservice[g].facilitytype=="2"&&(kyoukyusha[k].facilitytype=="5"||kyoukyusha[k].facilitytype=="8")) {
+									if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+							    } else if(kaigoservice[g].facilitytype=="3"&&(kyoukyusha[k].facilitytype=="6"||kyoukyusha[k].facilitytype=="9")) {
+									if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+		//  予防通所リハビリ
+							} else if(kaigoservice[g].jigyoushatype==66) {
+							    if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].facilitytype==kyoukyusha[k].facilitytype) {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+							} else if(kaigoservice[g].jigyoushatype==11) {
+		//  訪問介護
+                                                           //  if(kaigoservice[g].scale==kyoukyusha[k].scale&&kaigoservice[g].servicemanager==kyoukyusha[k].servicemanager&&kaigoservice[g].douitsu==kyoukyusha[k].douitsu) {
+                                                             if(kaigoservice[g].scale==kyoukyusha[k].scale&&kaigoservice[g].servicemanager==kyoukyusha[k].servicemanager) {
+								if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+                                                                    if((tmpTimeStart[0]<22&&tmpTimeStart[0]>17)||(tmpTimeStart[0]>5&&tmpTimeStart[0]<8)) {
+                                                                      if(kaigoservice[g].asayoru=='2') {
+									if(kaigoservice[g].id==sakuseid[s].id){
+                                                                          if(kaigoservice[g].fee=="_"){
+                                                                            var KM=serviceTime;
+                                                                            var calcKM=KM/30;
+                                                                            var taniKM=Math.floor(calcKM);
+                                                                            for(var e in houmonkaigoextra) {
+                                                                              if(kaigoservice[g].id==houmonkaigoextra[e].id) {
+                                                                                 servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                                                                                 break;
+                                                                              }
+                                                                            }
+                                                                          } else {
+                                                                            servicefee=kaigoservice[g].fee;
+                                                                          }
+                                                                          serviceshukei=kaigoservice[g].calcunit;
+                                                                          htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+									} else {
+										htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+									}
+                                                                      }
+                                                                    } else if(tmpTimeStart[0]>21||tmpTimeStart[0]<6) {
+                                                                      if(kaigoservice[g].shinya=='2') {
+									if(kaigoservice[g].id==sakuseid[s].id){
+                                                                          if(kaigoservice[g].fee=="_"){
+                                                                            var KM=serviceTime;
+                                                                            var calcKM=KM/30;
+                                                                            var taniKM=Math.floor(calcKM);
+                                                                            for(var e in houmonkaigoextra) {
+                                                                              if(kaigoservice[g].id==houmonkaigoextra[e].id) {
+                                                                                 servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                                                                                 break;
+                                                                              }
+                                                                            }
+                                                                          } else {
+                                                                            servicefee=kaigoservice[g].fee;
+                                                                          }
+                                                                          serviceshukei=kaigoservice[g].calcunit;
+                                                                          htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+									} else {
+										htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+									}
+                                                                      }
+                                                                    } else {
+                                                                      if(kaigoservice[g].asayoru=='1'&&kaigoservice[g].shinya=='1') {
+									if(kaigoservice[g].id==sakuseid[s].id){
+                                                                          if(kaigoservice[g].fee=="_"){
+                                                                            var KM=serviceTime;
+                                                                            var calcKM=KM/30;
+                                                                            var taniKM=Math.floor(calcKM);
+                                                                            for(var e in houmonkaigoextra) {
+                                                                              if(kaigoservice[g].id==houmonkaigoextra[e].id) {
+                                                                                 servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                                                                                 break;
+                                                                              }
+                                                                            }
+                                                                          } else {
+                                                                            servicefee=kaigoservice[g].fee;
+                                                                          }
+                                                                          serviceshukei=kaigoservice[g].calcunit;
+                                                                          htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+									} else {
+										htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+									}
+                                                                      }
+                                                                    }
+								} else {
+		//　時間に関係ない項目（通院介助など）
+									if(kaigoservice[g].min==="_"&&kaigoservice[g].max==="_") {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+								}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+							} else if(kaigoservice[g].jigyoushatype==61) {
+                                                  //           if(kaigoservice[g].servicemanager==kyoukyusha[k].servicemanager&&kaigoservice[g].douitsu==kyoukyusha[k].douitsu) {
+                                                             if(kaigoservice[g].servicemanager==kyoukyusha[k].servicemanager) {
+                //  予防訪問介護
+                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                } else {
+                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                }
+                                                             } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                }
+                                                             }
+							} else if(kaigoservice[g].jigyoushatype==12) {
+                //  訪問入浴
+								if(kaigoservice[g].id==sakuseid[s].id){
+									servicefee=parseInt(kaigoservice[g].fee);
+                                                                        serviceshukei=kaigoservice[g].calcunit;
+									htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+								} else {
+									htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+								}
+                                                        } else if(kaigoservice[g].jigyoushatype==62) {
+                                                             if(kaigoservice[g].douitsu==kyoukyusha[k].douitsu) {
+                //  予防訪問入浴
+                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                } else {
+                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                }
+                                                             } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                }
+                                                             }
+							} else if(kaigoservice[g].jigyoushatype==13) {
+                //  訪問看護
+                                                             if(kaigoservice[g].scale==kyoukyusha[k].scale&&kaigoservice[g].facilitytype==kyoukyusha[k].facilitytype) {
+								if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+									if(kaigoservice[g].id==sakuseid[s].id){
+										servicefee=parseInt(kaigoservice[g].fee);
+                                                                                serviceshukei=kaigoservice[g].calcunit;
+										htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+									} else {
+										htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+									}
+								} else {
+		//　時間に関係ない項目（通院介助など）
+									if(kaigoservice[g].min==="_"&&kaigoservice[g].max==="_") {
+										if(kaigoservice[g].id==sakuseid[s].id){
+											servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+										} else {
+											htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+										}
+									}
+								}
+                                                              } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].calcunit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                       }
+                                                              }
+                                                        } else if(kaigoservice[g].jigyoushatype==63) {
+                //  予防訪問看護
+                                                             if(kaigoservice[g].scale==kyoukyusha[k].scale&&kaigoservice[g].douitsu==kyoukyusha[k].douitsu) {
+                                                                if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max) {
+                                                                    if((tmpTimeStart[0]<22&&tmpTimeStart[0]>17)||(tmpTimeStart[0]>5&&tmpTimeStart[0]<8)) {
+                                                                      if(kaigoservice[g].asayoru=='2') {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                                serviceshukei=kaigoservice[g].unit;
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                      }
+                                                                    } else if(tmpTimeStart[0]>21||tmpTimeStart[0]<6) {
+                                                                      if(kaigoservice[g].shinya=='2') {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                                serviceshukei=kaigoservice[g].unit;
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                      }
+                                                                    } else {
+                                                                      if(kaigoservice[g].asayoru=='1'&&kaigoservice[g].shinya=='1') {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                                serviceshukei=kaigoservice[g].unit;
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                } else {
+                //　時間に関係ない項目（通院介助など）
+                                                                        if(kaigoservice[g].min==="_"&&kaigoservice[g].max==="_") {
+                                                                                if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                                } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                                }
+                                                                        }
+                                                                }
+                                                             } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                        if(kaigoservice[g].id==sakuseid[s].id){
+                                                                                        servicefee=parseInt(kaigoservice[g].fee);
+                                                                                        serviceshukei=kaigoservice[g].unit;
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                        } else {
+                                                                                        htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                        }
+                                                                }
+                                                             }
+                                                        } else if(kaigoservice[g].jigyoushatype==21 || kaigoservice[g].jigyoushatype==24) {
+                //  短期入所生活　予防短期入所生活
+                                                         if((kyoukyusha[k].facilitytype=="1" || kyoukyusha[k].facilitytype=="5" || kyoukyusha[k].facilitytype=="7")&&kaigoservice[g].facilitytype=="1") {
+                                                          if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo) {
+                                                           if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           } else if ((kaigoservice[g].ketsuin=="2" || kaigoservice[g].ketsuin=="3")&&kyoukyusha[k].ketsuin=="2") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           }
+                                                          }
+                                                         } else if ((kyoukyusha[k].facilitytype=="2" || kyoukyusha[k].facilitytype=="6" || kyoukyusha[k].facilitytype=="8")&&kaigoservice[g].facilitytype=="2") {
+                                                          if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo) {
+                                                           if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           } else if ((kaigoservice[g].ketsuin=="2" || kaigoservice[g].ketsuin=="3")&&kyoukyusha[k].ketsuin=="2") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           }
+                                                          }
+                                                         } else if ((kyoukyusha[k].facilitytype=="3" || kyoukyusha[k].facilitytype=="5" || kyoukyusha[k].facilitytype=="6")&&kaigoservice[g].facilitytype=="3") {
+                                                          if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo) {
+                                                           if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           } else if ((kaigoservice[g].ketsuin=="2" || kaigoservice[g].ketsuin=="3")&&kyoukyusha[k].ketsuin=="2") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           }
+                                                          }
+                                                         } else if ((kyoukyusha[k].facilitytype=="4" || kyoukyusha[k].facilitytype=="7" || kyoukyusha[k].facilitytype=="8")&&kaigoservice[g].facilitytype=="4") {
+                                                          if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo) {
+                                                           if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           } else if ((kaigoservice[g].ketsuin=="2" || kaigoservice[g].ketsuin=="3")&&kyoukyusha[k].ketsuin=="2") {
+                                                            if(kaigoservice[g].facilityunit==kyoukyusha[k].facilityunit&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            }
+                                                           }
+                                                          }
+                                                         } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                            if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                            } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                            }
+                                                          }
+                                                         }
+//  短期入所療養老短　予防短期入所療養老短
+                                                       } else if(kaigoservice[g].jigyoushatype==22 || kaigoservice[g].jigyoushatype==25) {
+                                                         // 日割りのものをまず抽出（時間が設定されているもの）
+                                                         if(kaigoservice[g].min=="_"&&kaigoservice[g].max=="_") {
+                                                           // 施設区分によって制御
+                                                           if(kyoukyusha[k].facilitytype==kaigoservice[g].facilitytype) {
+                                                              // 介護度、ユニットケア体制、夜勤体制
+                                                              if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].facilityunit==kyoukyusha[k].facilitytype&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                                if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                                } else if (kaigoservice[g].ketsuin!="1"&&kyoukyusha[k].ketsuin!="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                                            if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                              if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                              } else if (kaigoservice[g].ketsuin!="1"&&kyoukyusha[k].ketsuin!="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                              }
+                                                            }
+                                                          }
+//  短期入所療養療養型
+                                                       } else if(kaigoservice[g].jigyoushatype==23 || kaigoservice[g].jigyoushatype==26) {
+                                                         // 日割りのものをまず抽出（時間が設定されているもの）
+                                                         if(kaigoservice[g].min=="_"&&kaigoservice[g].max=="_") {
+                                                           // 施設区分によって制御
+                                                           if(kyoukyusha[k].facilitytype==kaigoservice[g].facilitytype) {
+                                                              // 介護度、ユニットケア体制、夜勤体制
+                                                              if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].facilityunit==kyoukyusha[k].facilitytype&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                                if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                                } else if (kaigoservice[g].ketsuin!="1"&&kyoukyusha[k].ketsuin!="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                                            if(kaigoservice[g].min<=serviceTime&&serviceTime<kaigoservice[g].max&&kaigoservice[g].nightcare==kyoukyusha[k].nightcare) {
+                                                              // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                              if(kaigoservice[g].ketsuin=="1"&&kyoukyusha[k].ketsuin=="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                              } else if (kaigoservice[g].ketsuin!="1"&&kyoukyusha[k].ketsuin!="1") {
+                                                                  if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    serviceshukei=kaigoservice[g].calcunit;
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                  } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                  }
+                                                              }
+                                                            }
+                                                          }
+							} else if(kaigoservice[g].jigyoushatype==14 || kaigoservice[g].jigyoushatype==64) {
+		//  訪問リハビリ　予防訪問リハビリ
+                                                           if(kaigoservice[g].facilitytype==kyoukyusha[k].facilitytype&&kaigoservice[g].douitsu==kyoukyusha[k].douitsu) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　   if(kaigoservice[g].servicemanager=="ADD") {
+                                                               if(kaigoservice[g].id==sakuseid[s].id){
+                                                                   servicefee=parseInt(kaigoservice[g].fee);
+                                                                   serviceshukei=kaigoservice[g].calcunit;
+                                                                   htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                               } else {
+                                                                   htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                               }
+                                                             }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==31 || kaigoservice[g].jigyoushatype==34) {
+		//  居宅療養管理　予防居宅療養管理
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+							} else if(kaigoservice[g].jigyoushatype==76) {
+		//  定期巡回・随時対応
+                                                           if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==71) {
+		//  夜間訪問介護
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+							} else if(kaigoservice[g].jigyoushatype==72 || kaigoservice[g].jigyoushatype==74) {
+		//  認知通所介護　予防認知通所介護
+                                                           if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].ketsuin==kyoukyusha[k].ketsuin) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                            } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　if(kaigoservice[g].servicemanager=="ADD") {
+                                                                 if(kaigoservice[g].id==sakuseid[s].id){
+                                                                    servicefee=parseInt(kaigoservice[g].fee);
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                                 } else {
+                                                                    htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                                 }
+                                                              }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==73 || kaigoservice[g].jigyoushatype==75) {
+		//  小規模多機能　予防小規模多機能
+                                                           if(kaigoservice[g].douitsu==kyoukyusha[k].douitsu&&kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].ketsuin==kyoukyusha[k].ketsuin) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==32 || kaigoservice[g].jigyoushatype==37) {
+		//  認知症対応型（短期利用以外）　予防認知症対応型（短期利用以外）
+                                                           if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].ketsuin==kyoukyusha[k].ketsuin) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==38 || kaigoservice[g].jigyoushatype==39) {
+		//  認知症対応型（短期利用）　予防認知症対応型（短期利用）
+                                                           if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].ketsuin==kyoukyusha[k].ketsuin) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           }
+							} else if(kaigoservice[g].jigyoushatype==77) {
+		//  複合型
+                                                           if(kaigoservice[g].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[g].ketsuin==kyoukyusha[k].ketsuin) {
+                                                              if(kaigoservice[g].id==sakuseid[s].id){
+                                                                servicefee=parseInt(kaigoservice[g].fee);
+                                                                serviceshukei=kaigoservice[g].calcunit;
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                              } else {
+                                                                htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                              }
+                                                           }
+                                                        } else {
+                //  訪問介護、訪問看護、通所介護、通所リハビリ以外
+                                                            if(kaigoservice[g].id==sakuseid[s].id){
+                                                                  servicefee=parseInt(kaigoservice[g].fee);
+                                                                  serviceshukei=kaigoservice[g].calcunit;
+                                                                  htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+                                                            } else {
+                                                                  htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+                                                            }
+                                                        }
+						} else {
+		//　時間や規模などに関係ない項目
+						    if(kaigoservice[g].jigyoushatype==kyoukyusha[k].jigyoushatype&&kaigoservice[g].scale=="_"&&kaigoservice[g].facilitytype=="_"&&kaigoservice[g].servicemanager=="_") {
+								if(kaigoservice[g].id==sakuseid[s].id){
+									servicefee=parseInt(kaigoservice[g].fee);
+                                                                        serviceshukei=kaigoservice[g].calcunit;
+									htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\" selected>"+kaigoservice[g].value+"</option>";
+								} else {
+									htmlval=htmlval+"<option value=\""+kaigoservice[g].id+"\">"+kaigoservice[g].value+"</option>";
+								}
+							}
+						}
+					}
+				}
+			}
+    		htmlval=htmlval+"</select></td>";
+
+
+//　保険者選択設定
+			if(sakuseid[s].hoken=="1") {
+    			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input id=\"hoken"+numRecord+"\" name=\"hoken"+numRecord+"\" class=\"hoken\" type=\"checkbox\" value=\"1\" checked style=\"width:20px\"></td>";
+			} else {
+    			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input id=\"hoken"+numRecord+"\" name=\"hoken"+numRecord+"\" class=\"hoken\" type=\"checkbox\" value=\"1\" style=\"width:20px\" ></td>";
+			}
+//　実績入力
+            if(sakuseid[s].jissekikakutei=="1") {
+                htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"checkbox\" id=\"jissekikakuteicheck"+numRecord+"\" name=\"jissekikakuteicheck"+numRecord+"\" value=\"1\" class=\"jissekikakuteicheck\" checked></td>";                
+            } else {
+                htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"checkbox\" id=\"jissekikakuteicheck"+numRecord+"\" name=\"jissekikakuteicheck"+numRecord+"\" value=\"1\" class=\"jissekikakuteicheck\"></td>";
+            }
+
+
+//　各日付ごとにサービス実施の設定を行う↓ここから↓
+//　その月の全日数から１日ごとに曜日と週を確認して、inputデータの内容と合えば、1をセットし、flgをたてて、kaisuを1増やす（→集計のため）
+
+			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\">予定</td>";
+			var kaisu=0;
+            var yoteidayval = new Array();
+            var countday=0;
+            yoteidayval = sakuseid[s].yoteidate.split(",");
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        var ValueYoubiDate = new Date(y,m,yd);
+                        var ValueYoubi=ValueYoubiDate.getDay();
+                        YoubiColor="#ffffff";
+                        if(ValueYoubi=="0") {
+                            YoubiColor="#ffc0a0";
+                        }
+				if(yoteidayval[countday]!="_"){
+					htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" value=\""+yoteidayval[countday]+"\" id=\"riyou"+sakuseid[s].id+yd+"\" name=\"RiyouYotei\" class=\"Riyou"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+    				kaisu=parseInt(yoteidayval[countday])+parseInt(kaisu);
+				} else {
+    				htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" value=\"\" id=\"riyou"+sakuseid[s].id+yd+"\" name=\"RiyouYotei\" class=\"Riyou"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+				}
+                countday=yd;
+			}
+
+//　集計（サービス単位×回数）
+                        var goukeikingaku=0;
+//  単位が保存されている場合はそちらを優先（4/10）
+                        if(sakuseid[s].firsttani!=""&&sakuseid[s].firsttani!="_") {
+                           servicefee=sakuseid[s].firsttani;
+                        }
+                        if(serviceshukei=="m") {
+                           if(kaisu>0) {
+                              goukeikingaku=servicefee;
+                           }
+                        } else {
+                           goukeikingaku=servicefee*kaisu;
+                        }
+			var pluskingaku=sakuseid[s].plusfee*kaisu;
+			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"YoteiGoukei\">"+kaisu+"</td><td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"hidden\"id=\"hdYoteiGoukei"+numRecord+"\" name=\"hdYoteiGoukei"+numRecord+"\" class=\"hdYoteiGoukei\" value=\""+kaisu+"\"><input type=\"hidden\" id=\"calcUnit"+numRecord+"\" name=\"calcUnit"+numRecord+"\" class=\"calcUnit\" value=\""+serviceshukei+"\"><input type=\"text\" id=\"ServiceTani"+numRecord+"\" name=\"ServiceTani"+numRecord+"\" style=\"width:40px\" class=\"ClServiceTani\" value=\""+servicefee+"\" ></td><td style=\"text-align:center; border:#bbbbbb solid 1px;white-space:nowrap;\" class=\"YoteiTaniGoukei\">"+goukeikingaku+"</td><td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\" ><input type=\"text\" name=\"HiwariStart"+numRecord+"\" style=\"width:30px\">～<input type=\"text\" name=\"HiwariEnd"+numRecord+"\" style=\"width:30px\"></td><td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" rowspan=\"2\"><input type=\"text\" id=\"FuzuiHiyou"+numRecord+"\" name=\"FuzuiHiyou"+numRecord+"\" style=\"width:40px\" class=\"ClFuzuiHiyou\" value=\""+sakuseid[s].plusfee+"\" ></td><td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" class=\"YoteiFuzuiGoukei\">"+pluskingaku+"</td><input type=\"hidden\" id=\"RiyouYoteiVal"+numRecord+"\" name=\"RiyouYoteiVal"+numRecord+"\">";
+			htmlval=htmlval+"</tr><tr class=\"trjisseki\">";
+
+//			yoteigoukei=parseInt(yoteigoukei)+parseInt(goukeikingaku)+parseInt(pluskingaku);
+                        yoteigoukei=parseInt(yoteigoukei)+parseInt(goukeikingaku);
+                        yoteifuzui=parseInt(yoteifuzui)+parseInt(pluskingaku);
+
+			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\">実績</td>";
+            var jissekidayval = new Array();
+            jissekidayval = sakuseid[s].jissekidate.split(",");
+            countday=0;
+            kaisu=0;
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        var ValueYoubiDate = new Date(y,m,yd);
+                        var ValueYoubi=ValueYoubiDate.getDay();
+                        YoubiColor="#ffffff";
+                        if(ValueYoubi=="0") {
+                            YoubiColor="#ffc0a0";
+                        }
+				if(jissekidayval[countday]!="_"){
+				    htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" value=\""+jissekidayval[countday]+"\" name=\"RiyouJisseki\" class=\"Jisseki"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+				    kaisu=parseInt(jissekidayval[countday])+parseInt(kaisu);
+                } else {
+				    htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" value=\"\" name=\"RiyouJisseki\" class=\"Jisseki"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+                }
+                countday=yd;
+			}
+                        var goukeikingaku=0;
+                        if(serviceshukei=="m") {
+                           if(kaisu>0) {
+                              goukeikingaku=servicefee;
+                           }
+                        } else {
+                           goukeikingaku=servicefee*kaisu;
+                        }
+			pluskingaku=sakuseid[s].plusfee*kaisu;
+			htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"JissekiGoukei\">"+kaisu+"</td><input type=\"hidden\"id=\"hdJissekiGoukei"+numRecord+"\" name=\"hdJissekiGoukei"+numRecord+"\" class=\"hdJissekiGoukei\" ><td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"JissekiTaniGoukei\">"+goukeikingaku+"</td><td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" class=\"JissekiFuzuiGoukei\">"+pluskingaku+"</td><input type=\"hidden\" id=\"RiyouJissekiVal"+numRecord+"\" name=\"RiyouJissekiVal"+numRecord+"\">";
+			htmlval=htmlval+"</tr>";
+//            jissekigoukei=parseInt(jissekigoukei)+parseInt(goukeikingaku)+parseInt(pluskingaku);
+            jissekigoukei=parseInt(jissekigoukei)+parseInt(goukeikingaku);
+            jissekifuzui=parseInt(jissekifuzui)+parseInt(pluskingaku);
+
+            numRecord++;
+		}
+		
+
+		$('#RiyouhyouIchiran').append(htmlval);
+
+                $('.teikyoujikanstart').live('keyup',function() {
+                   var teikyostartidx=$('.teikyoujikanstart').index(this);
+                   setKaigoServicePulldown(teikyostartidx);
+                });
+
+                $('.teikyoujikanend').live('keyup',function() {
+                   var teikyoendidx=$('.teikyoujikanend').index(this);
+                   setKaigoServicePulldown(teikyoendidx);
+                });
+
+                $('.ServiceShurui').live('change',function() {
+                   var shuruiidx=$('.ServiceShurui').index(this);
+                   $(".Kyokyusha").eq(shuruiidx).children().remove();
+                   for(kx in kyoukyusha) {
+                       if(kyoukyusha[kx].jigyoushatype==$('.ServiceShurui').eq(shuruiidx).val()) {
+                          $(".Kyokyusha").eq(shuruiidx).append('<option value="'+kyoukyusha[kx].id+'">'+kyoukyusha[kx].value+'</option>');
+                       }
+                   }
+                   setKaigoServicePulldown(shuruiidx);
+                });
+
+                $('.Kyokyusha').live('change',function() {
+                   var kyokyushaidx=$('.Kyokyusha').index(this);
+                   for(ky in kyoukyusha) {
+                       if(kyoukyusha[ky].id==$('.Kyokyusha').eq(kyokyushaidx).val()) {
+                           $('.ServiceType').eq(kyokyushaidx).val(kyoukyusha[ky].jigyoushatype);
+                           break;
+                       }
+                   }
+                   setKaigoServicePulldown(kyokyushaidx);
+                });
+
+                $('.ServiceNaiyou').live('change',function() {
+                   var snidx=$('.ServiceNaiyou').index(this);
+                   var snid=$('.ServiceNaiyou').eq(snidx).val();
+                   var servicetype=$('.ServiceType').eq(snidx).val();
+                   for(k in kaigoservice) {
+                      if(kaigoservice[k].id==snid&&kaigoservice[k].jigyoushatype==servicetype) {
+                        if(kaigoservice[k].jigyoushatype=="11"&&kaigoservice[k].fee=="_"){
+                           var ST=$(".teikyoujikanstart").eq(snidx).val().split(":");
+                           var ET=$(".teikyoujikanend").eq(snidx).val().split(":");
+                           var SM=ST[0]*60+parseInt(ST[1]);
+                           var EM=ET[0]*60+parseInt(ET[1]);                           
+                           var KM=parseInt(EM)-parseInt(SM);
+                           var calcKM=KM/30;
+                           var taniKM=Math.floor(calcKM);
+                           for(var e in houmonkaigoextra) {
+                             if(kaigoservice[k].id==houmonkaigoextra[e].id) {
+                               servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                               break;
+                             }
+                          }
+                        } else {
+                          servicefee=kaigoservice[k].fee;
+                        }
+                        $('.ClServiceTani').eq(snidx).val(servicefee);
+                        $('.calcUnit').eq(snidx).val(kaigoservice[k].calcunit);
+                        break;
+                     }
+                   }
+                });
+                $('.ClServiceTani').live('keyup',function() {
+                   var lineidx=$('.ClServiceTani').index(this);
+                  var modtani1=$(this).val().replace(/[０-９]+/g,function(s){
+                               return String.fromCharCode(s.charCodeAt(0)-0xFEE0);
+                               });
+                  var modtani2=modtani1.replace(/[^0-9]+/,'');
+                  $(this).val(modtani2);
+                   var linegoukei=$('.YoteiGoukei').eq(lineidx).html()*$(this).val();
+                   $('.YoteiTaniGoukei').eq(lineidx).html(linegoukei);
+                   var linejissekigoukei=$('.JissekiGoukei').eq(lineidx).html()*$(this).val();
+                   $('.JissekiTaniGoukei').eq(lineidx).html(linejissekigoukei);
+                });
+
+
+		}
+
+                var jissekinokori=0;
+		
+		if(youkaigodod.length>0) {
+
+            // 予定
+			if(youkaigodod[0].riyougendo<yoteigoukei) {
+				$('#YoteiGoukeiGendo').val(youkaigodod[0].riyougendo);
+				yoteinokori=0;
+			} else {
+				$('#YoteiGoukeiGendo').val(yoteigoukei);
+				yoteinokori=parseInt(youkaigodod[0].riyougendo)-parseInt(yoteigoukei);
+			}
+            // 実績
+			$('#JissekiGoukeiTotal').val(jissekigoukei);
+			jissekinokori=parseInt(youkaigodod[0].riyougendo)-parseInt(jissekigoukei);
+		} else {
+                   alert("介護認定データがありません。");
+                }
+
+
+		$('#YoteiNokori').html(yoteinokori);
+		$('#YoteiGoukeiFull').val(yoteigoukei);
+		$('#JissekiNokori').html(jissekinokori);
+		$('#JissekiGoukeiFull').val(jissekigoukei);
+                $('#YoteiFuzui').val(yoteifuzui);
+                $('#JissekiFuzui').val(jissekifuzui);
+
+
+        //  介護サービス自動選択制御関数
+        function setKaigoServicePulldown(idx) {
+			$('.ServiceNaiyou').eq(idx).children().remove();
+    		var StartTime=$(".teikyoujikanstart").eq(idx).val().split(":");
+    		var EndTime=$(".teikyoujikanend").eq(idx).val().split(":");
+    		var StartMinutes=StartTime[0]*60+parseInt(StartTime[1]);
+    		var EndMinutes=EndTime[0]*60+parseInt(EndTime[1]);
+    		var KikanMinutes=parseInt(EndMinutes)-parseInt(StartMinutes);
+			var JigyoushaType;
+			var JigyoushaScale;
+			var JigyoushaFacilityType;
+
+			for (var kk in kyoukyusha) {
+				if(kyoukyusha[kk].id==$(".Kyokyusha").eq(idx).val()) {
+				    JigyoushaType=kyoukyusha[kk].jigyoushatype;
+				    JigyoushaScale=kyoukyusha[kk].scale;
+				    JigyoushaFacilityType=kyoukyusha[kk].facilitytype;
+				    areatanka=kyoukyusha[kk].areatanka;
+				    servicemanager=kyoukyusha[kk].servicemanager;
+                                    douitsu=kyoukyusha[kk].douitsu;
+                                    ketsuin=kyoukyusha[kk].ketsuin;
+                                    facilityunit=kyoukyusha[kk].facilityunit;
+                                    nightcare=kyoukyusha[kk].nightcare;
+    				break;
+				}
+			}
+
+			for (var ks in kaigoservice) {
+				if(kaigoservice[ks].jigyoushatype==JigyoushaType) {
+//  通所介護
+					if(kaigoservice[ks].jigyoushatype==15) {
+					    if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+                                            } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+//  予防通所介護　予防通所リハビリ
+					} else if(kaigoservice[ks].jigyoushatype==65 || kaigoservice[ks].jigyoushatype==66) {
+                                          if(kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+					     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                          } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                          }
+//  通所リハビリ
+					} else if(kaigoservice[ks].jigyoushatype==16) {
+					    if(kaigoservice[ks].facilitytype=="1"&&(JigyoushaFacilityType=="4"||JigyoushaFacilityType=="7")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+					    } else if(kaigoservice[ks].facilitytype=="2"&&(JigyoushaFacilityType=="5"||JigyoushaFacilityType=="8")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+					    } else if(kaigoservice[ks].facilitytype=="3"&&(JigyoushaFacilityType=="6"||JigyoushaFacilityType=="9")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+                                            } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+					} else if(kaigoservice[ks].jigyoushatype==11) {
+//                                            if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].facilitytype==JigyoushaFacilityType&&kaigoservice[ks].servicemanager==servicemanager&&kaigoservice[ks].douitsu==douitsu) {
+                            //                if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].servicemanager==servicemanager&&kaigoservice[ks].douitsu==douitsu) {
+                                            if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].servicemanager==servicemanager) {
+//  訪問介護
+						if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+                                                    if((StartTime[0]>17&&StartTime[0]<22)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                                        if(kaigoservice[ks].asayoru=="2") {
+						           $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                                    } else if(StartTime[0]>21||StartTime[0]<6) {
+                                                        if(kaigoservice[ks].shinya=="2") {
+						           $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                                    } else {
+                                                        if(kaigoservice[ks].shinya=="1"&&kaigoservice[ks].asayoru=="1") {
+						           $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                                    }
+						} else {
+//　時間に関係ない項目（通院介助など）
+							if(kaigoservice[ks].min==="_"&&kaigoservice[ks].max==="_") {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+						}
+                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                          }
+					} else if(kaigoservice[ks].jigyoushatype==61) {
+                                   //         if(kaigoservice[ks].servicemanager==servicemanager&&kaigoservice[ks].douitsu==douitsu) {
+                                            if(kaigoservice[ks].servicemanager==servicemanager) {
+//  予防訪問介護
+						   $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            } else if(kaigoservice[ks].servicemanager=="_"&&kaigoservice[ks].douitsu=="_") {
+						   $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+
+                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                          }
+					} else if(kaigoservice[ks].jigyoushatype==12) {
+//  訪問入浴
+					    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");						
+					} else if(kaigoservice[ks].jigyoushatype==62) {
+//  予防訪問入浴
+                                            if(kaigoservice[ks].douitsu==douitsu) {
+					        $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");						
+                                            } else {
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+                                                        $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+					} else if(kaigoservice[ks].jigyoushatype==13) {
+                                            if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+//  訪問看護
+						if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+						    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");						
+						} else {
+//　時間に関係ない項目（通院介助など）
+							if(kaigoservice[ks].min==="_"&&kaigoservice[ks].max==="_") {
+							    $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+						}
+                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+                                        } else if(kaigoservice[ks].jigyoushatype==63) {
+//  予防訪問看護
+                                                if(kaigoservice[ks].facilitytype==JigyoushaFacilityType&&kaigoservice[ks].douitsu==douitsu) {
+                                                 if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+                                                   if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                                     if(kaigoservice[ks].asayoru=='2') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   } else if(StartTime[0]>21||StartTime[0]<6) {
+                                                     if(kaigoservice[ks].shinya=='2') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   } else {
+                                                     if(kaigoservice[ks].asayoru=='1'&&kaigoservice[ks].shinya=='1') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   }
+                                                 } else {
+//　時間に関係ない項目（通院介助など）
+                                                   if(kaigoservice[ks].min==="_"&&kaigoservice[ks].max==="_") {
+                                                    if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                                     if(kaigoservice[ks].asayoru=='2') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                    } else if(StartTime[0]>21||StartTime[0]<6) {
+                                                     if(kaigoservice[ks].shinya=='2') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                    } else {
+                                                     if(kaigoservice[ks].asayoru=='1'&&kaigoservice[ks].shinya=='1') {
+                                                       $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                    }
+                                                   }
+                                                 }
+                                                } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　      if(kaigoservice[ks].servicemanager=="ADD") {
+                                                        $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                    }
+                                                }
+//  短期入所生活　予防短期入所生活
+                                        } else if(kaigoservice[ks].jigyoushatype==21 || kaigoservice[ks].jigyoushatype==24) {
+                                           if((JigyoushaFacilityType=="1" || JigyoushaFacilityType=="5" || JigyoushaFacilityType=="7")&&kaigoservice[ks].facilitytype=="1") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType=="2" || JigyoushaFacilityType=="6" || JigyoushaFacilityType=="8")&&kaigoservice[ks].facilitytype=="2") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType == "3" || JigyoushaFacilityType == "5" || JigyoushaFacilityType == "6")&&kaigoservice[ks].facilitytype=="3") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType == "4" || JigyoushaFacilityType == "7" || JigyoushaFacilityType == "8")&&kaigoservice[ks].facilitytype=="4") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                           }
+//  短期入所療養老短
+                                        } else if(kaigoservice[ks].jigyoushatype==22 || kaigoservice[ks].jigyoushatype==25) {
+                                           // 日割りのものをまず抽出（時間が設定されているもの）
+                                           if(kaigoservice[ks].min=="_"&&kaigoservice[ks].max=="_") {
+                                             // 施設区分によって制御
+                                             if(JigyoushaFacilityType==kaigoservice[ks].facilitytype) {
+                                               // 介護度、ユニットケア体制、夜勤体制
+                                               if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                   // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                   if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                               }
+                                            }
+                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                            if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max&&kaigoservice[ks].nightcare==nightcare) {
+                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                  $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                  $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+                                          }
+//  短期入所療養老短
+                                        } else if(kaigoservice[ks].jigyoushatype==23 || kaigoservice[ks].jigyoushatype==26) {
+                                           // 日割りのものをまず抽出（時間が設定されているもの）
+                                           if(kaigoservice[ks].min=="_"&&kaigoservice[ks].max=="_") {
+                                             // 施設区分によって制御
+                                             if(JigyoushaFacilityType==kaigoservice[ks].facilitytype) {
+                                               // 介護度、ユニットケア体制、夜勤体制
+                                               if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                   // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                   if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                     $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                               }
+                                            }
+                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                            if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max&&kaigoservice[ks].nightcare==nightcare) {
+                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                  $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                  $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+                                          }
+//  訪問リハビリ　予防訪問リハビリ
+                                        } else if(kaigoservice[ks].jigyoushatype==14 || kaigoservice[ks].jigyoushatype==64) {
+                                           if(kaigoservice[ks].douitsu==douitsu&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                           } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                           }
+//  居宅療養管理　予防居宅療養管理
+                                        } else if(kaigoservice[ks].jigyoushatype==31 || kaigoservice[ks].jigyoushatype==34) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+//  定期巡回・随時対応
+                                        } else if(kaigoservice[ks].jigyoushatype==76) {
+                                            if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            }
+//  夜間訪問介護
+                                        } else if(kaigoservice[ks].jigyoushatype==71) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+//  認知通所介護　予防認知通所介護
+                                        } else if(kaigoservice[ks].jigyoushatype==72 || kaigoservice[ks].jigyoushatype==74) {
+                                            if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            } else {
+                //  加算
+　　　　　　　　　　　　　　　　　　　　　　　  if(kaigoservice[ks].servicemanager=="ADD") {
+							$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+//  小規模多機能　予防小規模多機能
+                                        } else if(kaigoservice[ks].jigyoushatype==73 || kaigoservice[ks].jigyoushatype==75) {
+                                            if(kaigoservice[ks].douitsu==douitsu&&kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            }
+//  認知症対応型（短期利用以外）　予防認知症対応型（短期利用以外）
+                                        } else if(kaigoservice[ks].jigyoushatype==32 || kaigoservice[ks].jigyoushatype==37) {
+                                            if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            }
+//  認知症対応型（短期利用）　予防認知症対応型（短期利用）
+                                        } else if(kaigoservice[ks].jigyoushatype==38 || kaigoservice[ks].jigyoushatype==39) {
+                                            if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            }
+//  複合型
+                                        } else if(kaigoservice[ks].jigyoushatype==77) {
+                                            if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                                $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                            }
+                                        } else {
+//  訪問介護、訪問看護、通所介護、通所リハビリ以外
+                                             $('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                        }
+				} else {
+//　時間や規模などに関係ない項目
+				    if(kaigoservice[ks].jigyoushatype==JigyoushaType&&kaigoservice[ks].scale=="_"&&kaigoservice[ks].facilitytype=="_"&&kaigoservice[ks].servicemanager=="_") {
+				    	$('.ServiceNaiyou').eq(idx).append("<option value=\""+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					}
+				}
+			}
+
+			for (var kn in kaigoservice) {
+                 if($('.ServiceNaiyou').eq(idx).children(':selected').val()==kaigoservice[kn].id&&JigyoushaType==kaigoservice[kn].jigyoushatype) {
+                     $('.ClServiceTani').eq(idx).val(kaigoservice[kn].fee);
+                     $('.calcUnit').eq(idx).val(kaigoservice[kn].calcunit);
+                     break;
+                 }
+            }
+        }
+
+        $('.teikyoujikanstart').live('keyup',function() {
+            var teikyostartidx=$('.teikyoujikanstart').index(this);
+            setKaigoServicePulldown(teikyostartidx);
+        });
+
+        $('.teikyoujikanend').live('keyup',function() {
+            var teikyoendidx=$('.teikyoujikanend').index(this);
+            setKaigoServicePulldown(teikyoendidx);
+        });
+
+        $('.ServiceShurui').live('change',function() {
+            var shuruiidx=$('.ServiceShurui').index(this);
+            $(".Kyokyusha").eq(shuruiidx).children().remove();
+            for(kx in kyoukyusha) {
+              if(kyoukyusha[kx].jigyoushatype==$('.ServiceShurui').eq(shuruiidx).val()) {
+                 $(".Kyokyusha").eq(shuruiidx).append('<option value="'+kyoukyusha[kx].id+'">'+kyoukyusha[kx].value+'</option>');
+              }
+            }
+            $('.ServiceType').eq(shuruiidx).val($('.ServiceShurui').eq(shuruiidx).val());
+            setKaigoServicePulldown(shuruiidx);
+        });
+
+        $('.Kyokyusha').live('change',function() {
+            var kyokyushaidx=$('.Kyokyusha').index(this);
+            for(ky in kyoukyusha) {
+                  if(kyoukyusha[ky].id==$('.Kyokyusha').eq(kyokyushaidx).val()) {
+                     $(".ServiceType").eq(kyokyushaidx).val(kyoukyusha[ky].jigyoushatype);
+                     break;
+                  }
+            }
+            setKaigoServicePulldown(kyokyushaidx);
+        });
+
+        $('.ServiceNaiyou').live('change',function() {
+            var snidx=$('.ServiceNaiyou').index(this);
+            var snid=$('.ServiceNaiyou').eq(snidx).val();
+            var servicetype=$('.ServiceType').eq(snidx).val();
+            for(k in kaigoservice) {
+                if(kaigoservice[k].id==snid&&kaigoservice[k].jigyoushatype==servicetype) {
+                        if(kaigoservice[k].jigyoushatype=="11"&&kaigoservice[k].fee=="_"){
+                           var ST=$(".teikyoujikanstart").eq(snidx).val().split(":");
+                           var ET=$(".teikyoujikanend").eq(snidx).val().split(":");
+                           var SM=ST[0]*60+parseInt(ST[1]);
+                           var EM=ET[0]*60+parseInt(ET[1]);                           
+                           var KM=parseInt(EM)-parseInt(SM);
+                           var calcKM=KM/30;
+                           var taniKM=Math.floor(calcKM);
+                           for(var e in houmonkaigoextra) {
+                             if(kaigoservice[k].id==houmonkaigoextra[e].id) {
+                               servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                               break;
+                             }
+                          }
+                        } else {
+                          servicefee=kaigoservice[k].fee;
+                        }
+                    $('.ClServiceTani').eq(snidx).val(servicefee);
+                    $('.calcUnit').eq(snidx).val(kaigoservice[k].calcunit);
+                    break;
+                }
+            }
+            var checkykaisu=$('.hdYoteiGoukei').eq(snidx).val();
+            var checkjkaisu=$('.JissekiGoukei').eq(snidx).text();
+            if ($('.calcUnit').eq(snidx).val() == "m") {
+               if(checkykaisu>0) {
+                 checkykaisu=1;
+               }
+               if(checkjkaisu>0) {
+                 checkjkaisu=1;
+               }               
+            }
+            var checkygoukei=checkykaisu*servicefee;
+            var checkjgoukei=checkjkaisu*servicefee;
+            $('.YoteiTaniGoukei').eq(snidx).html(checkygoukei);
+            $('.JissekiTaniGoukei').eq(snidx).html(checkjgoukei);
+        }); 
+
+        $('.ClServiceTani').live('keyup',function() {
+           var lineidx=$('.ClServiceTani').index(this);
+           var linegoukei=0;
+           var linejissekigoukei=0;
+                  var modtani1=$(this).val().replace(/[０-９]+/g,function(s){
+                               return String.fromCharCode(s.charCodeAt(0)-0xFEE0);
+                               });
+                  var modtani2=modtani1.replace(/[^0-9]+/,'');
+                  $(this).val(modtani2);
+           //////////////////////////////////
+           // 集計単位　月か日かでかわる。
+           //////////////////////////////////
+           if ($('.calcUnit').eq(lineidx).val() == "m") {
+              linegoukei=$(this).val();
+              linejissekigoukei=$(this).val();
+           } else {
+              linegoukei=$('.YoteiGoukei').eq(lineidx).html()*$(this).val();
+              linejissekigoukei=$('.JissekiGoukei').eq(lineidx).html()*$(this).val();
+           }
+           $('.YoteiTaniGoukei').eq(lineidx).html(linegoukei);
+           $('.JissekiTaniGoukei').eq(lineidx).html(linejissekigoukei);
+        });
+
+        function getYoteiValueCount(obj) {
+           var tblParent=$(obj).parent().parent();
+           var tblidx=$('.tryotei').index(tblParent);
+           var count=0;
+           $('.tryotei').eq(tblidx).children().children('*[name=RiyouYotei]').each(function(){
+               var yoteinum=0;
+               if(!$(this).val()) {
+                   yoteinum=0;
+               } else {
+                   yoteinum=$(this).val();
+               }
+               count=count+parseInt(yoteinum);
+           });
+           $('.YoteiGoukei').eq(tblidx).text(count);
+           $('.hdYoteiGoukei').eq(tblidx).val(count);
+           var servicefee=0;
+           ////////////////////////////////////////
+           // 集計単位によって集計方法が変更となる
+           ////////////////////////////////////////
+           var shukeitani=$('.calcUnit').eq(tblidx).val();
+           var taniyoteigoukei=0;
+           if (shukeitani == "m") {
+               if(count>0) {
+                  taniyoteigoukei=$('.ClServiceTani').eq(tblidx).val();
+               }
+           } else {
+               taniyoteigoukei=$('.ClServiceTani').eq(tblidx).val()*count;
+           }
+           var fuzuikingaku=$('.ClFuzuiHiyou').eq(tblidx).val()*count;
+
+           $('.YoteiTaniGoukei').eq(tblidx).text(taniyoteigoukei);
+           $('.YoteiFuzuiGoukei').eq(tblidx).text(fuzuikingaku);
+        }
+
+        $('*[name=RiyouYotei]').live('focus',function() {
+//                  var modtani1=$(this).val().replace(/[０-９]+/g,function(s){
+//                               return String.fromCharCode(s.charCodeAt(0)-0xFEE0);
+//                               });
+//                  var modtani2=modtani1.replace(/[^0-9]+/,'');
+//                  $(this).val(modtani2);
+             checkone(this);
+             getYoteiValueCount(this);
+        });
+
+        $('*[name=RiyouYotei]').live('focus',function() {
+             getYoteiValueCount(this);
+        });
+
+        function getJissekiValueCount(obj) {
+           var tblParent=$(obj).parent().parent();
+           var tblidx=$('.trjisseki').index(tblParent);
+           var count=0;
+           $('.trjisseki').eq(tblidx).children().children('*[name=RiyouJisseki]').each(function(){
+               var jissekinum=0;
+               if(!$(this).val()) {
+                   jissekinum=0;
+               } else {
+                   jissekinum=$(this).val();
+               }
+               count=count+parseInt(jissekinum);
+           });
+           $('.JissekiGoukei').eq(tblidx).text(count);
+           $('.hdJissekiGoukei').eq(tblidx).val(count);
+           var servicefee=0;
+           ////////////////////////////////////////
+           // 集計単位によって集計方法が変更となる
+           ////////////////////////////////////////
+           var shukeitani=$('.calcUnit').eq(tblidx).val();
+           var tanijissekigoukei=0;
+           if (shukeitani == "m") {
+              if(count>0) {
+                 tanijissekigoukei=$('.ClServiceTani').eq(tblidx).val();
+              }
+           } else {
+              tanijissekigoukei=$('.ClServiceTani').eq(tblidx).val()*count;
+           }
+           var fuzuikingaku=$('.ClFuzuiHiyou').eq(tblidx).val()*count;
+
+           $('.JissekiTaniGoukei').eq(tblidx).text(tanijissekigoukei);
+           $('.JissekiFuzuiGoukei').eq(tblidx).text(fuzuikingaku);
+        }
+
+        $('*[name=RiyouJisseki]').live('focus',function() {
+             checkone(this);
+             getJissekiValueCount(this);
+        });
+
+        $('*[name=RiyouJisseki]').live('keyup',function() {
+             getJissekiValueCount(this);
+        });
+        //  計算を押したとき
+        $('#calc').live('click',function() {
+           var calcYoteiGendoTani=0;
+           var calcJissekiGendoTani=0;
+           var calcYoteiNokoriTani=0;
+           var calcJissekiNokoriTani=0;
+           var calcYoteiSouTani=0;
+           var calcJissekiSouTani=0;
+           var calcYoteiFuzuiHiyou=0;
+           var calcJissekiFuzuiHiyou=0;
+           $('.YoteiTaniGoukei').each(function(i) {
+               if($('.hoken').eq(i).attr('checked')) {
+                   calcYoteiGendoTani=calcYoteiGendoTani+parseInt($('.YoteiTaniGoukei').eq(i).text());
+               }
+               calcYoteiSouTani=calcYoteiSouTani+parseInt($('.YoteiTaniGoukei').eq(i).text());
+           });
+           calcYoteiNokoriTani=$('#RiyouGendo').val()-calcYoteiGendoTani;
+
+           $('.JissekiTaniGoukei').each(function(i) {
+               if($('.hoken').eq(i).attr('checked')) {
+                   calcJissekiGendoTani=calcJissekiGendoTani+parseInt($('.JissekiTaniGoukei').eq(i).text());
+               }
+               calcJissekiSouTani=calcJissekiSouTani+parseInt($('.JissekiTaniGoukei').eq(i).text());
+           });
+           calcJissekiNokoriTani=$('#RiyouGendo').val()-calcJissekiGendoTani;
+
+           $('.YoteiFuzuiGoukei').each(function(i) {
+               calcYoteiFuzuiHiyou=calcYoteiFuzuiHiyou+parseInt($('.YoteiFuzuiGoukei').eq(i).text());
+           });
+
+           $('.JissekiFuzuiGoukei').each(function(i) {
+               calcJissekiFuzuiHiyou=calcJissekiFuzuiHiyou+parseInt($('.JissekiFuzuiGoukei').eq(i).text());
+           });
+
+
+           $('#YoteiGoukeiGendo').val(calcYoteiGendoTani);
+           $('#YoteiNokori').text(calcYoteiNokoriTani);
+           $('#YoteiGoukeiFull').val(calcYoteiSouTani);
+           $('#YoteiFuzui').val(calcYoteiFuzuiHiyou);
+           $('#JissekiGoukeiTotal').val(calcJissekiGendoTani);
+           $('#JissekiNokori').text(calcJissekiNokoriTani);
+           $('#JissekiGoukeiFull').val(calcJissekiSouTani);
+           $('#JissekiFuzui').val(calcJissekiFuzuiHiyou);
+
+
+        });
+
+//  追加ボタンがクリックされた場合、行を１行増やす
+        $('#add').click(function() {
+            addRiyouhyouRecord();
+        });
+
+        function addRiyouhyouRecord() {
+            var date = new Date($("#hdTaishouYear").val(),$("#taishoumonth").val(),0);
+            var d = date.getDate();
+            var m = date.getMonth();
+            var y = date.getFullYear();
+            var addHtml = "";
+            var addHtmlHd1="<tr class=\"tryotei\">";
+            var addHtmlHd1field1="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"time\" id=\"start"+numRecord+"\" name=\"start"+numRecord+"\" class=\"teikyoujikanstart\" value=\"\" style=\"width:80px;\"><br />～<br /><input type=\"time\" id=\"end"+numRecord+"\" name=\"end"+numRecord+"\" class=\"teikyoujikanend\" value=\"\" style=\"width:80px;\"></td>";
+    		var addHtmlHd1field2="<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><select style=\"width:110px\" id=\"ServiceShurui"+numRecord+"\" name=\"ServiceShurui"+numRecord+"\" class=\"ServiceShurui\"><option value=\"\"></option>";
+    		for (var x in serviceshurui) {
+				addHtmlHd1field2=addHtmlHd1field2+"<option value=\""+serviceshurui[x].id+"\">"+serviceshurui[x].value+"</option>";
+			}
+    		addHtmlHd1field2=addHtmlHd1field2+"</select></td>";
+    		addHtmlHd1field2=addHtmlHd1field2+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><select style=\"width:160px\" id=\"Kyokyusha"+numRecord+"\" name=\"Kyokyusha"+numRecord+"\" class=\"Kyokyusha\"><option value=\"\"></option>";
+    		for (var k in kyoukyusha) {
+				addHtmlHd1field2=addHtmlHd1field2+"<option value=\""+kyoukyusha[k].id+"\">"+kyoukyusha[k].value+"</option>";
+			}
+    		addHtmlHd1field2=addHtmlHd1field2+"</select></td>";
+            var addHtmlHd1field3="<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"hidden\" id=\"ServiceType"+numRecord+"\" name=\"ServiceType"+numRecord+"\" class=\"ServiceType\"><select id=\"ServiceNaiyou"+numRecord+"\" name=\"ServiceNaiyou"+numRecord+"\" style=\"width:140px\" class=\"ServiceNaiyou\"></select>";
+
+//　保険者選択設定
+   			var addHtmlHd1field4="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input id=\"hoken"+numRecord+"\" name=\"hoken"+numRecord+"\" class=\"hoken\" type=\"checkbox\" value=\"1\" checked>";
+            var addHtmlHd1Jisseki="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"checkbox\" id=\"jissekikakuteicheck"+numRecord+"\" name=\"jissekikakuteicheck"+numRecord+"\" class=\"jissekikakuteicheck\" value=\"1\"></td>";
+            var addHtmlHd1fieldDay="<td style=\"text-align:center; border:#bbbbbb solid 1px;\">予定</td>";
+//  日データ
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        var ValueYoubiDate = new Date(y,m,yd);
+                        var ValueYoubi=ValueYoubiDate.getDay();
+                        YoubiColor="#ffffff";
+                        if(ValueYoubi=="0") {
+                            YoubiColor="#ffc0a0";
+                        }
+   				addHtmlHd1fieldDay=addHtmlHd1fieldDay+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" value=\"\" name=\"RiyouYotei\" class=\"Riyou"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+			}
+			var addHtmlHd1field5="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"YoteiGoukei\">0</td>";
+            var addHtmlHd1field6="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><input type=\"hidden\" id=\"hdYoteiGoukei"+numRecord+"\" name=\"hdYoteiGoukei"+numRecord+"\" class=\"hdYoteiGoukei\"/><input type=\"hidden\" id=\"calcUnit"+numRecord+"\" name=\"calcUnit"+numRecord+"\" class=\"calcUnit\"><input type=\"text\" id=\"ServiceTani"+numRecord+"\" name=\"ServiceTani"+numRecord+"\" style=\"width:40px\" class=\"ClServiceTani\" value=\"0\"></td>";
+            var addHtmlHd1field7="<td style=\"text-align:center; border:#bbbbbb solid 1px;white-space:nowrap;\" class=\"YoteiTaniGoukei\">0</td>";
+            var addHtmlHd1field8="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\" ><input type=\"text\" name=\"HiwariStart"+numRecord+"\" class=\"HiwariStart\" style=\"width:30px\">～<input type=\"text\" name=\"HiwariEnd"+numRecord+"\" class=\"HiwariEnd\" style=\"width:30px\"></td>";
+            var addHtmlHd1field9="<td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" rowspan=\"2\"><input type=\"text\" id=\"FuzuiHiyou"+numRecord+"\" name=\"FuzuiHiyou"+numRecord+"\" style=\"width:40px\" class=\"ClFuzuiHiyou\" value=\"0\"></td>";
+            var addHtmlHd1field10="<td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" class=\"YoteiFuzuiGoukei\">0</td><input type=\"hidden\" id=\"RiyouYoteiVal"+numRecord+"\" name=\"RiyouYoteiVal"+numRecord+"\">";
+			var addHtmlHr1="</tr><tr class=\"trjisseki\">";
+			var addHtmlHd2field1="<td style=\"text-align:center; border:#bbbbbb solid 1px;\">実績</td>";
+            var addHtmlHd2fieldDay="";
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        var ValueYoubiDate = new Date(y,m,yd);
+                        var ValueYoubi=ValueYoubiDate.getDay();
+                        YoubiColor="#ffffff";
+                        if(ValueYoubi=="0") {
+                            YoubiColor="#ffc0a0";
+                        }
+				addHtmlHd2fieldDay=addHtmlHd2fieldDay+"<td style=\"text-align:center; border:#bbbbbb solid 1px;background-color:"+YoubiColor+"\"><input type=\"text\" name=\"RiyouJisseki\" class=\"Jisseki"+yd+"\" style=\"width:100%;background-color:"+YoubiColor+"\"></td>";
+			}
+			var addHtmlHd2field2="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"JissekiGoukei\">0</td><input type=\"hidden\"id=\"hdJissekiGoukei"+numRecord+"\" name=\"hdJissekiGoukei"+numRecord+"\" class=\"hdJissekiGoukei\" >";
+            var addHtmlHd2field3="<td style=\"text-align:center; border:#bbbbbb solid 1px;\" class=\"JissekiTaniGoukei\">0</td>";
+            var addHtmlHd2field4="<td style=\"text-align:center; border:#bbbbbb solid 1px;display:none\" class=\"JissekiFuzuiGoukei\">0</td><input type=\"hidden\" id=\"RiyouJissekiVal"+numRecord+"\" name=\"RiyouJissekiVal"+numRecord+"\">";
+			var addHtmlHr2="</tr>";
+            addHtml=addHtmlHd1+addHtmlHd1field1+addHtmlHd1field2+addHtmlHd1field3+addHtmlHd1field4+addHtmlHd1Jisseki+addHtmlHd1fieldDay+addHtmlHd1field5+addHtmlHd1field6+addHtmlHd1field7+addHtmlHd1field8+addHtmlHd1field9+addHtmlHd1field10+addHtmlHr1+addHtmlHd2field1+addHtmlHd2fieldDay+addHtmlHd2field2+addHtmlHd2field3+addHtmlHd2field4+addHtmlHr2;
+            $('#RiyouhyouIchiran').append(addHtml);
+
+            numRecord++;    
+        }
+
+//        addRiyouhyouRecord();
+
+        // 登録ボタン押下時の処理
+        $('#regist').live("click",function(){
+			//バリデーションチェック
+			var message = "";
+			message += validationCheck();
+			if (message != "") {
+				alert(message);
+				return false;
+			}
+            if(!inputValidate()) {
+                alert(error_msg);
+                return false;
+            }
+            var trfield=0;
+            var tdfield=6;
+            dataArrayYotei= new Array();
+            dataArrayJisseki= new Array();
+            $.each($("#RiyouhyouIchiran tbody").children(), function(i) {
+                var dataArrayYotei_tmp = new Array();
+                var dataArrayJisseki_tmp = new Array();
+                if(trfield%2==0) {
+                    tdfield=6;
+                    for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        tdfield=tdfield+1;
+                        tmpvalue="";
+                        if("RiyouYotei"==$(this).children().eq(tdfield).children().attr("name")){
+                            tmpvalue=$(this).children().eq(tdfield).children().val();
+                            if(tmpvalue=="") {
+                                tmpvalue="_";
+                            }
+                            dataArrayYotei_tmp.push(tmpvalue);
+                        }
+                    }
+                    dataArrayYotei.push(dataArrayYotei_tmp);
+                    $('#RiyouYoteiVal'+parseInt(i/2)).val(dataArrayYotei_tmp);
+                } else {
+                    // colspanで入ったものはカウントしないため
+                    tdfield=0;
+                    for (yd=1; yd<=NumOfDays; yd=yd+1) {
+                        tdfield=tdfield+1;
+                        tmpvalue="";
+                        if("RiyouJisseki"==$(this).children().eq(tdfield).children().attr("name")){
+                            tmpvalue=$(this).children().eq(tdfield).children().val();
+                            if(tmpvalue=="") {
+                                tmpvalue="_";
+                            }
+                            dataArrayJisseki_tmp.push(tmpvalue);
+                        }
+                    }
+                    dataArrayJisseki.push(dataArrayJisseki_tmp);
+                    $('#RiyouJissekiVal'+parseInt(i/2)).val(dataArrayJisseki_tmp);
+                }
+                trfield=trfield+1;
+            });
+            $("#numRecord").val(numRecord);
+            var taiyear=$("#hdTaishouYear").val();
+            var taimon=$("#taishoumonth").val();
+            $("#RiyouhyouYear").val(taiyear);
+            $("#RiyouhyouMonth").val(taimon);
+            $("#frmRiyouhyou [name=MODE]").val("regist");
+            $("#frmRiyouhyou [name=hdTaishouYear]").val(taiyear);
+            $("#frmRiyouhyou [name=taishoumonth]").val(taimon);
+            frmRiyouhyou.target="_self";
+            frmRiyouhyou.action="RIYOUHYOU_KUHEN.CGI";
+            frmRiyouhyou.method="POST";
+            frmRiyouhyou.submit();
+        });
+        
+        //  表示ボタンが押されたとき
+	$("#Hyouji").click(function(){
+            $("#frmMenuRiyouhyou [name=MODE]").val("search");
+            frmMenuRiyouhyou.target="_self";
+            frmMenuRiyouhyou.action="RIYOUHYOU_KUHEN.CGI";
+            frmMenuRiyouhyou.method="POST";
+            frmMenuRiyouhyou.submit();
+	});
+        //  印刷ボタンが押されたとき
+	$("#print").click(function(){
+            $("#frmMenuRiyouhyou [name=MODE]").val("print");
+            frmMenuRiyouhyou.target="printwindow";
+            frmMenuRiyouhyou.action="RIYOUHYOU_KUHEN.CGI";
+            frmMenuRiyouhyou.method="POST";
+            frmMenuRiyouhyou.submit();
+	});
+        // 返戻
+        $('#henrei').click(function(){
+             $('#regist').removeAttr('disabled');
+        });
+
+
+		$('#SlRiyoushamei').click(function(){
+	    	window.open("pop-nyukyosha.html", "NyukyoshaSentaku","width=800,height=600,resizable=yes,scrollbars=yes");
+		});
+
+                function inputValidate() {
+                    var error_flg="0";
+                    if($('#JissekiKakuteiFlg').attr('checked') == "checked") {
+                       $('.jissekikakuteicheck').each(function(i) {
+                           if($('.jissekikakuteicheck').eq(i).attr('checked') != "checked") {
+                               error_msg="実績チェックがされていないサービスがあります。";
+                               error_flg="1";
+                           }
+                       }); 
+                    }
+
+                    if(error_flg=="1") {
+                        return false;
+                    } else {
+                        return true;
+                    }
+                    
+                }
+
+	});
+
+
+                $('.shisetsulist').live('mouseover',function(){
+                   this.style.backgroundColor="lightgrey";
+                });
+                $('.shisetsulist').live('mouseout',function(){
+                   this.style.backgroundColor="white";
+                });
+		function validationCheck() {
+			var message = "";
+			//時間入れ子チェック
+			message += validateTime();
+			return message;
+		}
+		function validateTime() {
+			var message = "";
+			var separator = ":";
+			var sTimes = $("input[type='time'][name^='start']").not("[disabled='disabled']").get();
+			var eTimes = $("input[type='time'][name^='end']").not("[disabled='disabled']").get();
+			message = checkTime(sTimes, eTimes, separator, CAREPLAN_Item.num9, CAREPLAN_Item.num10);
+			return message;
+		}
+	</script>
+
+    <!-- Demo page code -->
+
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em;
+        }
+    </style>
+
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+
+  </head>
+
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body class=""> 
+  <!--<![endif]-->
+    
+    <div class="navbar">
+        <div class="navbar-inner">
+                <ul class="nav pull-right">
+                    <li id="fat-menu2">
+                            <a tabindex="-1" href="/E-LIFE/SYSTEM_SETTEI/cgi-bin/SIGN_IN.CGI">ログアウト</a>
+                    </li>
+
+                </ul>
+                <ul class="nav pull-right">
+
+                    <li id="fat-menu" class="dropdown">
+                        <a href="#" role="button" class="dropdown-toggle" data-toggle="dropdown">
+<!-- ###USER__NAME### -->
+                            <i class="icon-user"></i> %1
+<!-- ###USER__NAME### -->
+                        </a>
+
+                    </li>
+
+                </ul>
+                <ul class="nav pull-right">
+                    <li id="fat-menu3" class="dropdown on">
+                        <a href="#" class="dropdown-toggle" data-toggle="dropdown" tabindex="-1">###SELECT_SHISETSU###<i class="icon-caret-down"></i> </a>
+
+                        <ul id="shisetsuList_ul" class="dropdown-menu" style="z-index:1000">
+<!-- ###SHISETSU_TAISHOU### -->
+                            <li class="shisetsulist"><a href="javascript:Post('###USERID###','###PASSWORD###','%1','/E-LIFE/SYSTEM_SETTEI/cgi-bin/LOGIN.CGI')">%2</a></li>
+<!-- ###SHISETSU_TAISHOU### -->
+                        </ul>
+                    </li>
+                </ul>
+        <font class="brand"><span style="position:relative; top:-4px; padding-left:6px;"><img src="/images/HSS_LOGO_COLOR2.png" alt="HSSマーク" width="290" height="26"></span><span style="position:relative; top:-2px;">開発環境</span></font>
+        </div>
+    </div>
+    
+
+    <!-- メニューバーここから -->
+
+
+    <!-- メニューバーここまで -->
+        
+    <div class="header">
+        <h1 class="page-title">サービス利用票</h1>
+    </div>
+        
+	<div class="row-fluid">
+        <form id="frmMenuRiyouhyou" name="frmMenuRiyouhyou">
+		<table style="margin-left:2em;min-width:1024px;"><tr>
+		    <td style="width:30%;">利用者名：<font style="font-size:20px"><b>###RIYOUSHAMEI###</b></font>
+			</td>
+		    <td style="width:20%;">
+              <select id="taishouwareki" name="taishouwareki"></select><select id="taishouyear" name="taishouyear" style="" ></select>年<select id="taishoumonth" name="taishoumonth" style=""></select>月
+              <input type="hidden" id="hdTaishouYear" name="hdTaishouYear" />
+			</td>
+			<td style="width:10%;"><button id="Hyouji" type="button" class="btn btn-blue"><i class="icon-search"></i> 検索</button>
+                        </td>
+			<td style="width:10%;">
+			<input type="hidden" name="MODE" class="MODE" value="" />
+                        <input type="hidden" name="Riyoushaid" value="###RIYOUSHAID###" />
+                        <input type="hidden" name="USER_ID" value="###USERID###" />
+                        <input type="hidden" name="hdKeikakuSakuseiDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+                        <input type="hidden" name="hdKijunDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+                        <input type="hidden" name="KeikakuSakuseiDate" value="###KEIKAKUSAKUSEIDATE###">
+                        <input type="hidden" name="KijunDate" value="###KEIKAKUSAKUSEIDATE###">
+                        <input type="hidden" name="userid"  value="###USERID###" />
+                        <input type="hidden" name="password" value="###PASSWORD###" />
+                        <input type="hidden" name="shisetsu" value="###SHISETSUID###" />
+                        <input type="hidden" name="hdkensakudate" value="###HDKENSAKUDATE###" />
+                        <input type="hidden" name="hdShisetsuKensaku" value="###HDSHISETSUKENSAKU###" />
+                        <input type="hidden" name="hdCaremanagerKensaku" value="###HDCAREMANAGERKENSAKU###" />
+                        </td>
+			<td style="text-align:right;">
+				<div class="btn-toolbar">
+	            	<button id="regist" class="btn btn-pink" type="button" style="display:###TOUROKUDISP###" ###TOUROKUDISABLED### /><i class="icon-edit"></i> 登録</button>
+		        	<button id="print" class="btn btn-green" type="button" style="display:###PRINTDISP###" /><i class="icon-print"></i> 印刷</button>
+		        	<button id="henrei" class="btn btn-red" type="button" style="display:###TOUROKUDISP###" /><i class="icon-remove"></i> 返戻</button>
+		        	<button id="home" name="home" class="btn btn-move" type="button"><i class="icon-home"></i> 戻る</button>
+				</div>
+			</td>
+		</tr></table>
+        </form>
+	</div>
+    <div class="container-fluid">
+		<div class="well"style="min-width:1024px;">
+            <form id="frmRiyouhyou" name="frmRiyouhyou">
+            <input type="hidden" name="MODE" value="" />
+            <input type="hidden" name="Riyoushaid" value="###RIYOUSHAID###" />
+            <input type="hidden" name="USER_ID" value="###USERID###" />
+            <input type="hidden" name="hdKeikakuSakuseiDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+            <input type="hidden" name="hdKijunDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+            <input type="hidden" name="KeikakuSakuseiDate" value="###KEIKAKUSAKUSEIDATE###">
+            <input type="hidden" name="KijunDate" value="###KEIKAKUSAKUSEIDATE###">
+            <input type="hidden" name="userid"  value="###USERID###" />
+            <input type="hidden" name="password" value="###PASSWORD###" />
+            <input type="hidden" name="shisetsu" value="###SHISETSUID###" />
+            <input type="hidden" name="hdkensakudate" value="###HDKENSAKUDATE###" />
+            <input type="hidden" name="hdShisetsuKensaku" value="###HDSHISETSUKENSAKU###" />
+            <input type="hidden" name="hdCaremanagerKensaku" value="###HDCAREMANAGERKENSAKU###" />
+			<div>
+                 <table style="width:900px;">
+                    <tr>
+                       <td style="width:20%">
+                           <button id="add" name="add" class="btn btn-pink" type="button"><i class="icon-plus"></i> 利用サービス追加</button>
+                       </td>
+                       <td style="width:20%">要介護度:<input id="Youkaigodo" name="Youkaigodo" type="text" style="width:80px" value="" readonly>
+                       </td>
+                       <td style="width:20%">利用限度額:<input id="RiyouGendo" name="RiyouGendo" type="text" style="width:80px" value="" readonly>
+                       </td>
+                       <td style="width:10%" id="DispKirikae"></td>
+                       <td style="width:15%">サービス予定確定:<input id="YoteiKakuteiFlg" name="YoteiKakuteiFlg" type="checkbox" value="1" ###YOTEIKAKUTEI### >
+                       </td>
+                       <td style="width:15%">サービス実績確定:<input id="JissekiKakuteiFlg" name="JissekiKakuteiFlg" type="checkbox" value="1" ###JISSEKIKAKUTEI### >
+                       </td>
+                    </tr>
+                 </table>
+            </div>
+            <div class="clearfix"></div>
+            <div style="height:700px;">
+			<div style="max-height:650px; overflow-y:auto">
+				<table id="RiyouhyouIchiran" style="border:#bbbbbb solid 2px;width:100%;">
+				</table>
+            </div>
+            <div class="clearfix"></div>
+			<div>
+                 <table style="border-top:1px solid #bbbbbb;width:1000px; margin-top:1em;">
+                    <tr>
+                        <td style="width:20%;" rowspan="2">専門員<select id="CareManager" name="CareManager"></select></td>
+                        <td style="width:35%">予定合計(限度額対象)
+                            <input id="YoteiGoukeiGendo" name="YoteiGoukeiGendo" type="text" style="width:60px" value="0" readonly>単位
+                            (残り<span id="YoteiNokori" name="YoteiNokori">0</span>単位)
+                        </td>
+                        <td style="width:20%">予定総単位数
+                            <input id="YoteiGoukeiFull" name="YoteiGoukeiFull" type="text" style="width:60px" value="0" readonly>単位
+                        </td>
+                        <td style="width:20%">予定付随費用
+                            <input id="YoteiFuzui" name="YoteiFuzui" type="text" style="width:60px" value="0" readonly>円
+                        </td>
+                        <td style="width:5%" rowspan="2"><button id="calc" name="calc" class="btn btn-success" type="button">計算</button></td>
+                    </tr>
+                    <tr>
+                        <td style="width:35%">実績合計(限度額対象)
+                            <input id="JissekiGoukeiTotal" name="JissekiGoukeiTotal" type="text" style="width:60px" value="0" readonly>単位
+                            (残り<span id="JissekiNokori">0</span>単位)
+                        </td>
+                        <td style="width:20%">実績総単位数
+                            <input id="JissekiGoukeiFull" name="JissekiGoukeiFull" type="text" style="width:60px" value="0" readonly>単位
+                        </td>
+                        <td style="width:20%">実績付随費用
+                            <input id="JissekiFuzui" name="JissekiFuzui" type="text" style="width:60px" value="0" readonly>円
+                        </td>
+                    </tr>
+                 </table>
+            </div>
+            <input id="numRecord" name="numRecord" type="hidden">
+            <input id="RiyouhyouYear" name="RiyouhyouYear" type="hidden">
+            <input id="RiyouhyouMonth" name="RiyouhyouMonth" type="hidden">
+            <input name="hdTaishouYear" type="hidden">
+            <input name="taishoumonth" type="hidden">
+	        </div>
+            </form>
+      <form id="frmBack" name="frmBack" action="KYOTAKUSHIEN_MONTHLY_KEIKAKU_MENU.CGI" method="POST" >
+          <input type="hidden" name="MODE" value="init" />
+          <input type="hidden" name="Riyoushaid" value="###RIYOUSHAID###"/>
+          <input type="hidden" name="hdKeikakuSakuseiDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+          <input type="hidden" name="hdKijunDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+          <input type="hidden" name="KeikakuSakuseiDate" value="###KEIKAKUSAKUSEIDATE###">
+          <input type="hidden" name="KijunDate" value="###KEIKAKUSAKUSEIDATE###">
+          <input type="hidden" name="hdTaishouYear" value="">
+          <input type="hidden" name="hdTaishouMonth" value="">
+          <input type="hidden" name="USER_ID" value="###USERID###" />
+          <input type="hidden" id="hdkensakudate" name="hdkensakudate" value="###HDKENSAKUDATE###" />
+          <input type="hidden" name="userid"  value="###USERID###" />
+          <input type="hidden" name="password" value="###PASSWORD###" />
+          <input type="hidden" name="shisetsu" value="###SHISETSUID###" />
+          <input type="hidden" name="hdShisetsuKensaku" value="###HDSHISETSUKENSAKU###" />
+          <input type="hidden" name="hdCaremanagerKensaku" value="###HDCAREMANAGERKENSAKU###" />
+      </form>
+	    </div>
+	</div>    
+
+       <form action="" method="post" name="formlink">
+           <input type="hidden" name="userid">
+           <input type="hidden" name="password">
+           <input type="hidden" name="cgi">
+           <input type="hidden" name="shisetsu">
+       </form>
+
+
+    <script type="text/javascript">
+        function Post(md,tx,shisetsu,url) {
+            formlink.userid.value = md;
+            formlink.password.value = tx;
+            formlink.shisetsu.value = shisetsu;
+            formlink.action=url;
+            formlink.cgi.value = url;
+            formlink.submit();
+        }
+    </script>
+
+    <script src="/js/bootstrap.js"></script>
+    <script type="text/javascript">
+        $("[rel=tooltip]").tooltip();
+        $(function() {
+            $('.demo-cancel-click').click(function(){return false;});
+        });
+    </script>
+    
+  </body>
+</html>
+
+

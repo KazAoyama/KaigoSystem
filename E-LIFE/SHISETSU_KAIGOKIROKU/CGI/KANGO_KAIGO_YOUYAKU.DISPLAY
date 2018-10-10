@@ -1,0 +1,893 @@
+#!/bin/bash
+#
+# KANGO_KAIGO_YOUYAKU.DISPLAY : 看護介護要約.DISPLAY
+#
+# Usage : KANGO_KAIGO_YOUYAKU.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+
+
+# eval
+eval $(name-source ${namefile})
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KAIGO_KANGO_YOUYAKU.CGI"{print $1,$9}'                                                                |
+LANG=C sort -u -k2,2n                                                                       |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" -o "$(cat $tmp-btn_kengen)" = "2" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###PRINT_BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" -o "$(cat $tmp-btn_kengen)" = "1" ] && echo "###PRINT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+# ユニットマスタの準備
+awk '$(NF-2)!=9' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME        |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2 3                                                   > $tmp-riyosha_master_kana
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ $shisetsu = "0001" ];then
+  join0 key=2 <(echo "02")
+else
+  join0 key=2 <(echo "00")
+fi |
+awk '$8>="'${today}'"'                > $tmp-riyosha_status
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+if [ "$MODE" = "init" -o "$MODE" = "search" -o "search_room" ];then
+# nameをクリアする
+floor=$(self 3 $tmp-riyosha_status | head -n1)
+unit=$(self 4 $tmp-riyosha_status  | head -n1)
+room_select=""
+riyosha_name=""
+text_kikan_from=""
+hd_kikan_from=""
+text_kikan_to=""
+hd_kikan_to=""
+kyoshitsu=""
+shubetsu=""
+txtarea_haisetsu=""
+txtarea_genbyoreki=""
+txtarea_nyuuinkeika=""
+txtarea_kibokangae=""
+yakuzai_arerugi=""
+yakuzai_arerugi_ari_tx=""
+ishikishogai=""
+ishikishogai_nashi_konsui=""
+ishikishogai_nashi_keimin=""
+ishikishogai_nashi_kondaku=""
+ishidentatsu=""
+gengoshogai=""
+gengoshogai_nashi_hatsugo=""
+gengoshogai_nashi_shitsugo=""
+gengoshogai_nashi_kouon=""
+ninchishogai=""
+koushuku=""
+koushuku_ari_tx=""
+shiryoku=""
+shiryoku_ari=""
+shiryoku_megane=""
+tyoryoku=""
+tyoryoku_ari=""
+tyoryoku_hotyoki=""
+jyokuso=""
+jyokuso_ari_tx=""
+yakuzaikanri=""
+yakuzaishiyo_nanko=""
+yakuzaishiyo_nanko_tx=""
+yakuzaishiyo_tengan=""
+yakuzaishiyo_tengan_tx=""
+yakuzaishiyo_minzai=""
+yakuzaishiyo_minzai_tx=""
+yakuzaishiyo_tyusha=""
+yakuzaishiyo_tyusha_tx=""
+yakuzaishiyo_sonota=""
+yakuzaishiyo_sonota_tx=""
+shoti_kyuin=""
+shoti_kyunyu=""
+shoti_kyunyu_sanso=""
+shoti_kyunyu_sanso_num=""
+shoti_kyunyu_ivh=""
+shoti_kyunyu_sutoma=""
+shoti_kyunyu_keikan=""
+shoti_kyunyu_kateteru=""
+shoti_kyunyu_sonota=""
+shoti_kyunyu_pacemaker=""
+shoti_kyunyu_shoti=""
+shoti_kyunyu_shoti_tx=""
+kansensho_ari_mrsa=""
+kansensho_ari_ryokunokin=""
+kansensho_ari_hbv=""
+kansensho_ari_hcv=""
+kansensho_ari_sonota=""
+kansensho_ari_sonota_tx=""
+ninchisho_jiritsudo=""
+shogai_koureisha_jiritsudo=""
+kakaritsuke_mei1=""
+kakaritsuke_kamoku1=""
+kakaritsuke_shujii1=""
+kakaritsuke_number1=""
+kakaritsuke_mei2=""
+kakaritsuke_kamoku2=""
+kakaritsuke_number2=""
+kakaritsuke_mei3=""
+kakaritsuke_kamoku3=""
+kakaritsuke_shujii3=""
+kakaritsuke_number3=""
+kazokukousei_zokugara1=""
+kazokukousei_name1=""
+kazokukousei_kankei1=""
+kazokukousei_biko1=""
+kazokukousei_zokugara2=""
+kazokukousei_name2=""
+kazokukousei_kankei2=""
+kazokukousei_biko2=""
+kazokukousei_zokugara3=""
+kazokukousei_name3=""
+kazokukousei_kankei3=""
+kazokukousei_biko3=""
+kazokukousei_zokugara4=""
+kazokukousei_name4=""
+kazokukousei_kankei4=""
+kazokukousei_biko4=""
+kazokukousei_zokugara5=""
+kazokukousei_name5=""
+kazokukousei_kankei5=""
+kazokukousei_biko5=""
+kakaritsuke_shujii2=""
+nyukyosha_shimei=""
+furigana=""
+kaigodo=""
+kaigodo_kikan=""
+seibetsu=""
+birthday=""
+nenrei=""
+txtarea4=""
+txtarea5=""
+senmen=""
+kokucare=""
+gishi=""
+gishi_zenbu_upper=""
+gishi_zenbu_button=""
+gishi_bubun_upper=""
+gishi_bubun_buttom=""
+gishi_biko=""
+seiyo_seiyo=""
+seiyo_claw_hand=""
+seiyo_claw_foot=""
+seiyo_hige=""
+seiyo_mimi=""
+koui=""
+txtarea_senmen=""
+txtarea_nyuyoku=""
+taii=""
+taii_text=""
+kikyo=""
+ijo=""
+ido_jiritsu=""
+ido_tsue=""
+ido_siler=""
+ido_kuruma=""
+ido_rira=""
+ido_hosogu=""
+haikai=""
+kitaku=""
+fuketsu=""
+bouryoku=""
+hakai=""
+shuushu=""
+genkaku=""
+moso=""
+teikou=""
+fuantei=""
+tyuuya=""
+tukuri=""
+oogoe=""
+ishoku=""
+jisho=""
+higaimoso=""
+jiyugaishutsu=""
+sanpo=""
+kaimono=""
+event=""
+kinsen=""
+txtarea_kazokukibo=""
+txtarea_honninkibo=""
+s_keitai_shushoku=""
+s_keitai_shushoku_sonota=""
+s_keitai_fukushoku=""
+s_keitai_col_seigen=""
+s_keitai_col_seigen_tx=""
+s_keitai_solt_seigen=""
+s_keitai_sol_seigen_tx=""
+suibun_sesshu=""
+suibun_sesshu_suibun_tx=""
+shokuji_sesshu=""
+hojo_bupin=""
+hojo_bupin_jijogu_tx=""
+jo_bupin_snt_tx=""
+arerugi=""
+arerugi_ari_tx=""
+kinshi_s=""
+kinshi_s_ari_tx=""
+keikan_eiyo=""
+keikan_hana=""
+keikan_irou=""
+keikan_tyoyo=""
+keikan_eiyo=""
+keikan_eiyo_tube_tx=""
+keikan_eiyo_tube_tx_koukanbi=""
+enge_s=""
+enge_s_ari_tx=""
+txtarea6=""
+haisetsu_dousa=""
+haisetsu_dousa_benzaido=""
+hainyo=""
+haiben=""
+haiben_gezai=""
+taisaku=""
+taisaku_ari_tx=""
+hiru_toilet=""
+hiru_ptoilet=""
+hiru_bed=""
+hiru_nunopant=""
+hiru_rihapant=""
+hiru_pat=""
+hiru_tape=""
+hiru_nyoki=""
+hiru_ben=""
+yoru_toilet=""
+yoru_ptoilet=""
+yoru_bed=""
+yoru_nunopant=""
+yoru_rihapant=""
+yoru_pat=""
+yoru_tape=""
+yoru_nyoki=""
+txtarea7=""
+yokushitsu=""
+use=""
+use_sonota_tx=""
+n_ido=""
+n_senpatsu=""
+n_senshin=""
+irou=""
+sanso=""
+ivh=""
+yakuzai="off"
+kansensho=""
+txtarea_shinri=""
+text_vital=""
+hd_vital=""
+vital_text=""
+vital_taion=""
+vital_ketsuatsu_ue=""
+vital_ketsuatsu_shita=""
+vital_kokyu=""
+vital_spo2=""
+text_last_haiben=""
+hd_last_haiben=""
+koushinbi=""
+koushinsha=""
+hojo_bupin_snt_tx=""
+else
+ :
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ラジオボタンのデフォルトパラメータセット
+ishikishogai_nashi_konsui="off"
+ishikishogai_nashi_keimin="off"
+ishikishogai_nashi_kondaku="off"
+gengoshogai_nashi_hatsugo="off"
+gengoshogai_nashi_shitsugo="off"
+gengoshogai_nashi_kouon="off"
+yakuzaishiyo_nanko="off"
+yakuzaishiyo_tengan="off"
+yakuzaishiyo_minzai="off"
+yakuzaishiyo_tyusha="off"
+yakuzaishiyo_sonota="off"
+shoti_kyuin="off"
+shoti_kyunyu="off"
+shoti_kyunyu_sanso="off"
+shoti_kyunyu_ivh="off"
+shoti_kyunyu_sutoma="off"
+shoti_kyunyu_keikan="off"
+shoti_kyunyu_kateteru="off"
+shoti_kyunyu_sonota="off"
+shoti_kyunyu_pacemaker="off"
+shoti_kyunyu_shoti="off"
+kansensho_ari_mrsa="off"
+kansensho_ari_ryokunokin="off"
+kansensho_ari_hbv="off"
+kansensho_ari_hcv="off"
+kansensho_ari_sonota="off"
+gishi_zenbu_upper="off"
+gishi_zenbu_buttom="off"
+gishi_bubun_upper="off"
+gishi_bubun_buttom="off"
+seiyo_seiyo="off"
+seiyo_claw_hand="off"
+seiyo_claw_foot="off"
+seiyo_hige="off"
+seiyo_mimi="off"
+ido_jiritsu="off"
+ido_tsue="off"
+ido_sliver="off"
+ido_kuruma="off"
+ido_rira="off"
+ido_hosogu="off"
+haikai="off"
+kitaku="off"
+fuketsu="off"
+bouryoku="off"
+bougen="off"
+hakai="off"
+shuushu="off"
+genkaku="off"
+moso="off"
+teikou="off"
+fuantei="off"
+tyuuya="off"
+tukuri="off"
+oogoe="off"
+ishoku="off"
+jisho="off"
+higaimoso="off"
+jiyugaishutsu="off"
+sanpo="off"
+kaimono="off"
+event="off"
+s_keitai_col_seigen="off"
+s_keitai_solt_seigen="off"
+keikan_hana="off"
+keikan_irou="off"
+keikan_tyoyo="off"
+hiru_toilet="off"
+hiru_ptoilet="off"
+hiru_bed="off"
+hiru_nunopant="off"
+hiru_rihapant="off"
+hiru_pat="off"
+hiru_tape="off"
+hiru_nyoki="off"
+hiru_ben="off"
+yoru_toilet="off"
+yoru_ptoilet="off"
+yoru_bed="off"
+yoru_nunopant="off"
+yoru_rihapant="off"
+yoru_pat="off"
+yoru_tape="off"
+yoru_nyoki="off"
+yoru_nyoki="off"
+
+###searchfileの処理
+if [ -s "${searchfile}" ];then
+# eval
+  eval $(name-source ${searchfile})
+ [ -s /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/HTML/${riyosha_name}/output-kazokukousei.html ] && htmlkazokukousei="/E-LIFE/SHISETSU_KAIGOKIROKU/HTML/${riyosha_name}/output-kazokukousei.html" || htmlkazokukousei=""
+
+else
+  :
+fi
+
+
+# 利用者名の取得
+echo "_ 選択してください"                                           > $tmp-riyousya_hedder
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1                                                |
+  join1 key=1 $tmp-riyosha_master_kana                                   |
+  LANG=C sort -k3,3                                               |
+  delf 3 |
+  cat $tmp-riyousya_hedder -                                        |
+  awk '{print $0,"'${riyosha_name}'"}'                              |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'    |
+  sed 's/###SPACE###/　/g'                                          > ${tmp}-riyosha_name
+else
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1                                                |
+  join1 key=1 $tmp-riyosha_master_kana                            |
+  LANG=C sort -k3,3 |
+  delf 3 |
+  awk '{print $0,""}'                                               |
+  cat $tmp-riyousya_hedder -                                        |
+  sed 's/###SPACE###/　/g'>                                         ${tmp}-riyosha_name
+fi
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  self 3 $tmp-riyosha_status                                   |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $0,"'${floor}'"}'                                |
+# 1:FLOOR_CODE 2:floor_name
+  awk '{if($1==$2){print $1,$1"F","selected"}else{print $1,$1"F",""}}'   > ${tmp}-floor_name
+else
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3 $tmp-riyosha_status                                   |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  awk '$3=="'${floor}'"' $tmp-riyosha_status                   |
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${unit}'"}'                                 |
+# 1:UNTI_CODE 2:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 4 $tmp-riyosha_status                                   |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 > $tmp-unit_name
+fi
+
+# 居室
+echo "---" > $tmp-room_header
+cat $tmp-riyosha_status                                   |
+# 1:施設コード 2:建屋   3:フロア 4:ユニット   5:居室
+# 6:利用者ID   7:入居日 8:退去日 9:有効フラグ 10:更新日
+# 11:更新者
+awk '$3=="'${floor}'"&&$4=="'${unit}'"{print $5}'         |
+LANG=C sort -u                                            |
+cat $tmp-room_header - |
+awk '{print $1,$1,"'${room_select}'"}'                          |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' > $tmp-room_select
+
+
+#######################################################################################
+# formhame前の実態参照変換
+calsed "&" "&amp;" ${namefile}                      |
+calsed "<" "&lt;"                                   |
+calsed ">" "&gt;"                                   |
+calsed "\"" "&quot;"                                |
+# formhame前にキーワードが　"_"　のみの場合、消去
+awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+# formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+
+#######################################################################################
+
+#######################################################################################
+# namefileの再構成
+
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+FIN
+#######################################################################################
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE6### active
+###TEXT_KIKAN_FROM### ${text_kikan_from}
+###HD_KIKAN_FROM### ${hd_kikan_from}
+###TEXT_KIKAN_TO### ${text_kikan_to}
+###HD_KIKAN_TO### ${hd_kikan_to}
+###KYOSHITSU### ${kyoshitsu}
+###SHUBETSU### ${shubetsu}
+###NYUKYOSHA_SHIMEI### ${nyukyosha_shimei}
+###FURIGANA### ${furigana}
+###KAIGODO### ${kaigodo}
+###KAIGODO_KIKAN### ${kaigodo_kikan}
+###SEIBETSU### ${seibetsu}
+###BIRTHDAY### ${birthday}
+###NENREI### ${nenrei}
+###TXTAREA_GENBYOREKI### ${txtarea_genbyoreki}
+###TXTAREA_NYUUINKEIKA### ${txtarea_nyuuinkeika}
+###TXTAREA_NYUUINKANGAE### ${txtarea_kibokangae}
+###yakuzai_arerugi_ari_tx### ${yakuzai_arerugi_ari_tx}
+###koushuku_ari_tx### ${koushuku_ari_tx}
+###jyokuso_ari_tx### ${jyokuso_ari_tx}
+###yakuzaishiyo_nanko_tx### ${yakuzaishiyo_nanko_tx}
+###yakuzaishiyo_tengan_tx### ${yakuzaishiyo_tengan_tx}
+###yakuzaishiyo_minzai_tx### ${yakuzaishiyo_minzai_tx}
+###yakuzaishiyo_tyusha_tx### ${yakuzaishiyo_tyusha_tx}
+###yakuzaishiyo_sonota_tx### ${yakuzaishiyo_sonota_tx}
+###shoti_kyunyu_shoti_tx### ${shoti_kyunyu_shoti_tx}
+###kansensho_ari_sonota_tx### ${kansensho_ari_sonota_tx}
+###kakaritsuke_mei1### ${kakaritsuke_mei1}
+###kakaritsuke_kamoku1### ${kakaritsuke_kamoku1}
+###kakaritsuke_shujii1### ${kakaritsuke_shujii1}
+###kakaritsuke_number1### ${kakaritsuke_number1}
+###kakaritsuke_mei2### ${kakaritsuke_mei2}
+###kakaritsuke_kamoku2### ${kakaritsuke_kamoku2}
+###kakaritsuke_shujii2### ${kakaritsuke_shujii2}
+###kakaritsuke_number2### ${kakaritsuke_number2}
+###kakaritsuke_mei3### ${kakaritsuke_mei3}
+###kakaritsuke_kamoku3### ${kakaritsuke_kamoku3}
+###kakaritsuke_shujii3### ${kakaritsuke_shujii3}
+###kakaritsuke_number3### ${kakaritsuke_number3}
+###kazokukousei_zokugara1### ${kazokukousei_zokugara1}
+###kazokukousei_name1### ${kazokukousei_name1}
+###kazokukousei_kankei1### ${kazokukousei_kankei1}
+###kazokukousei_biko1### ${kazokukousei_biko1}
+###kazokukousei_zokugara2### ${kazokukousei_zokugara2}
+###kazokukousei_name2### ${kazokukousei_name2}
+###kazokukousei_kankei2### ${kazokukousei_kankei2}
+###kazokukousei_biko2### ${kazokukousei_biko2}
+###kazokukousei_zokugara3### ${kazokukousei_zokugara3}
+###kazokukousei_name3### ${kazokukousei_name3}
+###kazokukousei_kankei3### ${kazokukousei_kankei3}
+###kazokukousei_biko3### ${kazokukousei_biko3}
+###kazokukousei_zokugara4### ${kazokukousei_zokugara4}
+###kazokukousei_name4### ${kazokukousei_name4}
+###kazokukousei_kankei4### ${kazokukousei_kankei4}
+###kazokukousei_biko4### ${kazokukousei_biko4}
+###kazokukousei_zokugara5### ${kazokukousei_zokugara5}
+###kazokukousei_name5### ${kazokukousei_name5}
+###kazokukousei_kankei5### ${kazokukousei_kankei5}
+###kazokukousei_biko5### ${kazokukousei_biko5}
+###gishi_biko### ${gishi_biko}
+###taii_text### ${taii_text}
+###s_keitai_shushoku_sonota### ${s_keitai_shushoku_sonota}
+###s_keitai_col_seigen_tx### ${s_keitai_col_seigen_tx}
+###s_keitai_sol_seigen_tx### ${s_keitai_sol_seigen_tx}
+###suibun_sesshu_suibun_tx### ${suibun_sesshu_suibun_tx}
+###hojo_bupin_jijogu_tx### ${hojo_bupin_jijogu_tx}
+###hojo_bupin_snt_tx### ${hojo_bupin_snt_tx}
+###arerugi_ari_tx### ${arerugi_ari_tx}
+###kinshi_s_ari_tx### ${kinshi_s_ari_tx}
+###keikan_eiyo_tube_tx### ${keikan_eiyo_tube_tx}
+###keikan_eiyo_tube_tx_koukanbi### ${keikan_eiyo_tube_tx_koukanbi}
+###enge_s_ari_tx### ${enge_s_ari_tx}
+###taisaku_ari_tx### ${taisaku_ari_tx}
+###use_sonota_tx### ${use_sonota_tx}
+###TXTAREA5### ${txtarea5}
+###TXTAREA_KAZOKUKIBO### ${txtarea_kazokukibo}
+###TXTAREA_HONNINKIBO### ${txtarea_honninkibo}
+###TXTAREA_SHINRI### ${txtarea_shinri}
+###TXTAREA6### ${txtarea6}
+###TXTAREA7### ${txtarea7}
+###TXTAREA4### ${txtarea4}
+###TXTAREA_HAISETSU### ${txtarea_haisetsu}
+###TXTAREA_SENMEN### ${txtarea_senmen}
+###TXTAREA_NYUYOKU### ${txtarea_nyuyoku}
+###TXTAREA_SHINRI### ${txtarea_shinri}
+###TEXT_VITAL### ${text_vital}
+###HD_VITAL### ${hd_vital}
+###VITAL_TXT### ${vital_text}
+###VITAL_TAION### ${vital_taion}
+###VITAL_KETSUATSU_UE### ${vital_ketsuatsu_ue}
+###VITAL_KETSUATSU_SHITA### ${vital_ketsuatsu_shita}
+###VITAL_KOKYU### ${vital_kokyu}
+###VITAL_SPO2### ${vital_spo2}
+###TEXT_LAST_HAIBEN### ${text_last_haiben}
+###HD_LAST_HAIBEN### ${hd_last_haiben}
+###KOUSHINBI### ${koushinbi}
+###LI_KANGOKAIGOKIROKU1### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###SELECT_SHISETSU### $select_shisetsu
+###KOUSHINSHA### $koushinsha
+###HTMLKAZOKUKOUSEI### $htmlkazokukousei
+FIN
+# チェックボックス
+cat << FIN > $tmp-checkbox_name
+ishikishogai_nashi_konsui $ishikishogai_nashi_konsui
+ishikishogai_nashi_keimin $ishikishogai_nashi_keimin
+ishikishogai_nashi_kondaku $ishikishogai_nashi_kondaku
+gengoshogai_nashi_hatsugo $gengoshogai_nashi_hatsugo
+gengoshogai_nashi_shitsugo $gengoshogai_nashi_shitsugo
+gengoshogai_nashi_kouon $gengoshogai_nashi_kouon
+yakuzaishiyo_nanko $yakuzaishiyo_nanko
+yakuzaishiyo_tengan $yakuzaishiyo_tengan
+yakuzaishiyo_minzai $yakuzaishiyo_minzai
+yakuzaishiyo_tyusha $yakuzaishiyo_tyusha
+yakuzaishiyo_sonota $yakuzaishiyo_sonota
+shoti_kyuin $shoti_kyuin
+shoti_kyunyu $shoti_kyunyu
+shoti_kyunyu_sanso $shoti_kyunyu_sanso
+shoti_kyunyu_ivh $shoti_kyunyu_ivh
+shoti_kyunyu_sutoma $shoti_kyunyu_sutoma
+shoti_kyunyu_keikan $shoti_kyunyu_keikan
+shoti_kyunyu_kateteru $shoti_kyunyu_kateteru
+shoti_kyunyu_sonota $shoti_kyunyu_sonota1
+shoti_kyunyu_pacemaker $shoti_kyunyu_pacemaker
+shoti_kyunyu_shoti $shoti_kyunyu_shoti
+kansensho_ari_mrsa $kansensho_ari_mrsa
+kansensho_ari_ryokunokin $kansensho_ari_ryokunokin
+kansensho_ari_hbv $kansensho_ari_hbv
+kansensho_ari_hcv $kansensho_ari_hcv
+kansensho_ari_sonota $kansensho_ari_sonota
+gishi_zenbu_upper ${gishi_zenbu_upper}
+gishi_zenbu_buttom $gishi_zenbu_buttom
+gishi_bubun_upper $gishi_bubun_upper
+gishi_bubun_buttom $gishi_bubun_buttom
+seiyo_seiyo $seiyo_seiyo
+seiyo_claw_hand $seiyo_claw_hand
+seiyo_claw_foot $seiyo_claw_foot
+seiyo_hige $seiyo_hige
+seiyo_mimi $seiyo_mimi
+ido_jiritsu $ido_jiritsu
+ido_tsue $ido_tsue
+ido_sliver $ido_sliver
+ido_kuruma $ido_kuruma
+ido_rira $ido_rira
+ido_hosogu $ido_hosogu
+haikai $haikai
+kitaku $kitaku
+fuketsu $fuketsu
+bouryoku $bouryoku
+bougen $bougen
+hakai $hakai
+shuushu $shuushu
+genkaku $genkaku
+moso $moso
+teikou $teikou
+fuantei $fuantei
+tyuuya $tyuuya
+tukuri $tukuri
+oogoe $oogoe
+ishoku $ishoku
+jisho $jisho
+higaimoso $higaimoso
+jiyugaishutsu $jiyugaishutsu
+sanpo $sanpo
+kaimono $kaimono
+event $event
+s_keitai_col_seigen $s_keitai_col_seigen
+s_keitai_solt_seigen $s_keitai_solt_seigen
+keikan_hana $keikan_hana
+keikan_irou $keikan_irou
+keikan_tyoyo $keikan_tyoyo
+hiru_toilet $hiru_toilet
+hiru_ptoilet $hiru_ptoilet
+hiru_bed $hiru_bed
+hiru_nunopant $hiru_nunopant
+hiru_rihapant $hiru_rihapant
+hiru_pat $hiru_pat
+hiru_tape $hiru_tape
+hiru_nyoki $hiru_nyoki
+hiru_ben $hiru_ben
+yoru_toilet $yoru_toilet
+yoru_ptoilet $yoru_ptoilet
+yoru_bed $yoru_bed
+yoru_nunopant $yoru_nunopant
+yoru_rihapant $yoru_rihapant
+yoru_pat $yoru_pat
+yoru_tape $yoru_tape
+yoru_nyoki $yoru_nyoki
+yoru_nyoki $yoru_nyoki
+FIN
+cat $tmp-checkbox_name |
+while read check_no_namae guai ; do
+  if [ $guai = "on" ];then
+    guai="checked"
+  else
+    guai="@"
+  fi
+  echo "###${check_no_namae}### ${guai}"
+done >> $tmp-calsed1
+# ラジオボタン
+cat << FIN > $tmp-radio_name
+yakuzai_arerugi $yakuzai_arerugi
+ishikishogai $ishikishogai
+ishidentatsu $ishidentatsu
+gengoshogai $gengoshogai
+ninchishogai $ninchishogai
+koushuku $koushuku
+shiryoku $shiryoku
+shiryoku_ari $shiryoku_ari
+shiryoku_megane $shiryoku_megane
+tyoryoku $tyoryoku
+tyoryoku_ari $tyoryoku_ari
+tyoryoku_hotyoki $tyoryoku_hotyoki
+jyokuso $jyokuso
+yakuzaikanri $yakuzaikanri
+kansensho $kansensho
+senmen $senmen
+kokucare $kokucare
+gishi $gishi
+koui $koui
+taii $taii
+kikyo $kikyo
+ijo $ijo
+kinsen $kinsen
+s_keitai_shushoku $s_keitai_shushoku
+s_keitai_fukushoku $s_keitai_fukushoku
+suibun_sesshu $suibun_sesshu
+shokuji_sesshu $shokuji_sesshu
+hojo_bupin $hojo_bupin
+arerugi $arerugi
+kinshi_s $kinshi_s
+keikan_eiyo $keikan_eiyo
+enge_s $enge_s
+haisetsu_dousa $haisetsu_dousa
+haisetsu_dousa_benzaido $haisetsu_dousa_benzaido
+hainyo $hainyo
+haiben $haiben
+haiben_gezai $haiben_gezai
+taisaku $taisaku
+yokushitsu $yokushitsu
+use $use
+n_ido $n_ido
+n_senpatsu $n_senpatsu
+n_senshin $n_senshin
+FIN
+cat $tmp-radio_name |
+while read name_name valu ; do
+  echo "###$valu### checked"
+done >> $tmp-calsed1
+
+# セレクト
+echo "###ninchisho_jiritsudo_${ninchisho_jiritsudo}### selected" >> $tmp-calsed1
+echo "###shogai_koureisha_jiritsudo_${shogai_koureisha_jiritsudo}### selected" >> $tmp-calsed1
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+# 緊急連絡先
+awk '$1=="'${riyosha_name}'"&&$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_RENRAKUSAKI |
+# 1:利用者ID    2:連絡先ID       3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄  7:連絡先続柄備考 8:連絡先優先順位 9:電話番号1      10:電話番号2
+# 11:E-mail     12:郵便番号      13:住所          14:勤務先        15:請求書送付先
+# 16:身元引受人 17:返還金受取人  18:代理人        19:備考          20:緊急時個人データ反映
+# 21:予備1      22:予備2         23:予備3         24:有効フラグ    25:更新日時
+# 26:userid
+LANG=C sort -k8,8n |
+head -3 |
+LANG=C sort -k6,6 |
+join2 key=6 ${tbl_dir}/CONFIG/ZOKUGARA_MASTER |
+# 1:利用者ID              2:連絡先ID     3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄            7:連絡先続柄名 8:連絡先続柄備考 9:連絡先優先順位 10:電話番号1
+# 11:電話番号2            12:E-mail      13:郵便番号      14:住所          15:勤務先
+# 16:請求書送付先         17:身元引受人  18:返還金受取人  19:代理人        20:備考
+# 21:緊急時個人データ反映 22:予備1       23:予備2         24:予備3         25:有効フラグ
+# 26:更新日時             27:userid
+self 9 3 7 10 11 |
+LANG=C sort -k1,1n > $tmp-renrakusaki
+cp $tmp-renrakusaki ${work}/renrakusaki
+
+
+# HTMLの作成
+
+# 初期表示メッセージ
+cat <<- FIN > ${tmp}-html
+<table>
+  <tr>
+    <td style="font-size:14pt; color:blue; font-weight:bold;">
+実績入力する入居者のフロア・ユニット、介護分類・介護項目を選択して「表示」ボタンをクリックしてください。
+    </td>
+  </tr>
+</table>
+FIN
+
+cat ${html_dir}/KANGO_KAIGO_YOUYAKU1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KANGO_KAIGO_YOUYAKU2.html   |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###UNIT_NAME### - ${tmp}-unit_name |
+mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+mojihame -l###ROOM_NAME### - ${tmp}-room_select |
+mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+mojihame -l###KINKYU_RENRAKUSAKI### - ${tmp}-renrakusaki |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed - |
+sed 's/\\n/\n/g'
+#formhame -d"_" - ${tmp}-namefile 
+
+rm -f ${tmp}-*
+exit 0
+

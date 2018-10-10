@@ -1,0 +1,444 @@
+#!/bin/bash
+#
+# SCHEDULE_SHOUSAI.TOUROKU : 居宅訪問サービス事業所登録
+#
+# Usage : SCHEDULE_SHOUSAI.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+chkSakujo="1"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# イベント名
+[ -z "${EventName}" -o "${EventName}" = "_" ] && error_exit "イベント名を入力してください"
+
+# 開催日
+calcDate=$(echo "$EventDate" | sed 's/\///g')
+
+################################################
+# チェック群
+################################################
+
+# 請求確定後かどうかチェック
+# 請求確定ファイルを取得
+if [ -s ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu ] ; then
+   cat ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu  |
+   awk '$1=="'$shisetsu'"&&$(NF-2)!="9"' |
+   self 2                           |
+   getlast 1 1                      |
+   awk '{print $1"31","'$calcDate'"}'   |
+   # 確定日付が対象年月日より大きい場合は確定済み
+   awk '$1>=$2'                     > $tmp-kakutei_nengetsu
+   [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "請求確定確認エラー"
+   if [ "$(gyo $tmp-kakutei_nengetsu)" != "0" ] ; then
+       error_exit "請求が確定済みのため、変更できません"
+   fi
+fi
+
+# 課税非課税区分
+: > $tmp-kazei_master
+if [ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU ] ; then
+  cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU     |
+  awk '$3<='$calcDate'&&('$calcDate'<=$4||$4=="_"){print $2}' |
+  tail -1 > $tmp-kazei_master
+fi
+zeiritsu=$(cat $tmp-kazei_master)
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 事業所ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ -z "${ScheduleID}" -o "${ScheduleID}" = "_" ] ; then
+last_no="1"
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+# ディレクトリ作成
+mkdir -p ${kanri_dir}/SCHEDULE/$shisetsu
+
+[ -e ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID ] || echo "000001" > ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 999999 ] && echo "000001" > ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID
+get_no ${last_no} ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+ScheduleID=$(cat $tmp-id_all)
+fi
+#---------------------------------------------------------------
+
+# ゲスト外泊やセットしない場合は00:00をセット
+[ -z "$EventStart" -o "$EventStart" = "_" ] && EventStart="00:00"
+# ゲスト外泊やセットしない場合は23:59をセット
+[ -z "$EventEnd" -o "$EventEnd" = "_" ] && EventEnd="23:59"
+# 費用発生しない場合は０をセット
+[ -z "$EventFee" -o "$EventFee" = "_" ] && EventFee="0"
+# データ作成
+# スケジュール詳細基本データ
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+echo "$shisetsu" "$ScheduleID" "$EventType" "$EventName" "$EventDate" \
+"$EventStart" "$EventEnd" "$EventYoyaku" "$EventPlace" "$EventFee" \
+"$EventTantousha1" "$EventTantousha2" "$EventSupplement" "$EventTateya" "${EventKazeiKbn}" \
+"${chkSakujo}" "${sdaytime}" "${userid}"  > $tmp-schedule_detail_base_input
+
+cp $tmp-schedule_detail_base_input $tmp-schedule_detail_base2_input
+cp $tmp-schedule_detail_base_input $work_dir/schedule_detail_base_input
+
+
+: > $tmp-guest_input
+# ゲスト参加者データ
+seq $GaibuNum  |
+while read gaibunum ; do
+    yukoflg=$chkSakujo
+    gnum=$((gaibunum-1))
+    guestname=$(nameread GuestName$gnum $namedata | head -1)
+    guestkankeisha=$(nameread KankeiRiyoushamei$gnum $namedata | head -1)
+    guestkankeishaid=$(nameread KankeiRiyoushaid$gnum $namedata | head -1)
+    guestbiko=$(nameread GuestBiko$gnum $namedata | head -1)
+    guestfee=$(nameread GuestFee$gnum $namedata | head -1)
+    guestseibetsu=$(nameread slGuestSeibetsu$gnum $namedata | head -1)
+    input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $guestfee 9)
+    [ "${input_res}" != "OK" ] && error_exit "金額入力に誤りがあります。"
+# 1:施設            2:スケジュールID 3:ゲスト名 4:関係入居者 5:関係入居者ID
+# 6:備考            7:費用           8:性別     9:有効フラグ 10:処理時間
+# 11:ログインユーザ
+    if [ -z "$guestname" -o "$guestname" = "_" ] ; then
+       yukoflg="9"
+    fi
+    echo "$shisetsu" "$ScheduleID" "$guestname" "$guestkankeisha" "$guestkankeishaid" \
+"$guestbiko" "$guestfee" "$guestseibetsu" "${yukoflg}" "${sdaytime}" "${userid}" >> $tmp-guest_input
+
+done
+
+cp $tmp-guest_input $tmp-guest2_input
+
+cp $tmp-guest_input $work_dir/guest_input
+
+: > $tmp-riyousha_input
+
+# 利用者データ
+# 入居者ID
+echo ${dataCsvEventRiyoushaId}           |
+sed 's/,/ /g'      > $tmp-riyoushaid
+
+# 利用者チェック
+echo ${dataCsvEventRiyoushaCheck}           |
+sed 's/,/ /g'      > $tmp-riyoushacheck
+
+# 利用者備考
+echo ${dataCsvEventRiyoushaBiko}           |
+sed 's/,/ /g'      > $tmp-riyoushabiko
+
+# 利用者費用
+echo ${dataCsvEventRiyoushaFee}           |
+sed 's/,/ /g'      > $tmp-riyoushafee
+
+# 数値チェック
+echo ${dataCsvEventRiyoushaFee}           |
+sed 's/,//g'       > $tmp-fee-check
+
+feecheck=$(cat $tmp-fee-check)
+input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $feecheck 9)
+[ "${input_res}" != "OK" ] && error_exit "金額入力に誤りがあります。"
+
+
+cat $tmp-riyoushaid $tmp-riyoushacheck $tmp-riyoushabiko $tmp-riyoushafee |
+tateyoko         |
+# 1:施設   2:スケジュールID 3:利用者ID 4:利用チェック 5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ユーザID
+awk '{print "'${shisetsu}'","'$ScheduleID'",$0,"'${chkSakujo}'","'${sdaytime}'","'${userid}'"}'  |
+awk '$4=="1"||$5!="_"' > $tmp-riyousha_input
+
+cp $tmp-riyousha_input $work_dir/riyousha_input
+
+cp $tmp-riyousha_input $tmp-riyousha2_input
+
+# 請求データ作成
+cat $tmp-riyousha_input                      |
+# 1:課税区分 2:税率           3:開催日付  4:建屋         5:イベント名
+# 6:施設     7:スケジュールID 8:利用者ID  9:利用チェック 10:備考
+# 11:費用    12:有効フラグ    13:処理時間 14:ユーザID
+awk '$4=="1"{print "'${EventKazeiKbn}'","'${zeiritsu}'","'${calcDate}'","0'${EventTateya}'","'${EventName}'",$0}'        |
+# 1:課税区分 2:税率           3:開催日付  4:建屋         5:イベント名
+# 6:施設     7:スケジュールID 8:利用者ID  9:利用チェック 10:備考
+# 11:費用    12:有効フラグ    13:処理時間 14:ユーザID    15:税込み価格
+awk '{if($1=="0"){$2="0";$15=$11}else{$15=$11+$11*$2};print $0}'       |
+marume 15.0                                                         |
+# 1:施設       2:スケジュールID 3:利用者ID  4:建屋ID    5:開催日付
+# 6:イベント名 7:課税区分       8:税率      9:費用      10:税込み価格
+# 11:備考      12:有効フラグ    13:処理時間 14:ユーザID
+self 6 7 8 4 3 5 1 2 11 15 10 12 13 14                                    |
+# 価格が0のものは請求にあげない -> 解除
+#awk '$10>0'                                                         |
+LANG=C sort -k1,5                                        > $tmp-schedule_seikyu
+
+cp $tmp-schedule_seikyu $tmp-schedule_seikyu_input
+cp $tmp-schedule_seikyu $tmp-schedule_seikyu2_input
+
+cp $tmp-schedule_seikyu $work_dir/schedule_seikyu
+
+# 請求データ作成
+cat $tmp-guest_input                      |
+awk '$10!="_"'                            |
+# 1:課税区分        2:税率           3:開催日付 4:建屋        5:イベント名
+# 6:施設            7:スケジュールID 8:ゲスト名 9:関係入居者  10:関係入居者ID
+# 11:備考           12:費用          13:性別    14:有効フラグ 15:処理時間
+# 16:ログインユーザ
+awk '{print "'${EventKazeiKbn}'","'${zeiritsu}'","'${calcDate}'","0'${EventTateya}'","'${EventName}'",$0}'        |
+# 1:課税区分        2:税率           3:開催日付 4:建屋        5:イベント名
+# 6:施設            7:スケジュールID 8:ゲスト名 9:関係入居者  10:関係入居者ID
+# 11:備考           12:費用          13:性別    14:有効フラグ 15:処理時間
+# 16:ログインユーザ 17:税込価格
+awk '{if($1=="0"){$2="0";$17=$12}else{$17=$12+$12*$2};print $0}'       |
+marume 17.0                                                         |
+# 1:施設       2:スケジュールID 3:関係入居者ID 4:建屋      5:開催日付
+# 6:イベント名 7:ゲスト名       8:課税区分     9:税率      10:費用
+# 11:税込価格  12:備考          13:有効フラグ  14:処理時間 15:ログインユーザ
+self 6 7 10 4 3 5 8 1 2 12 17 11 14 15 16                           |
+# 価格が0のものは請求にあげない -> 解除
+#awk '$11>0'                                                         |
+LANG=C sort -k1,5                                        > $tmp-schedule_guest_seikyu
+
+cp $tmp-schedule_guest_seikyu $tmp-schedule_guest_seikyu_input
+cp $tmp-schedule_guest_seikyu $tmp-schedule_guest_seikyu2_input
+
+cp $tmp-schedule_guest_seikyu $work_dir/schedule_guest_seikyu
+
+seikyumonth=$(echo $calcDate | awk '{print substr($1,1,6)}')
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+SCHEDULE/${shisetsu}/SCHEDULE_SHOUSAI SCHEDULE_SHOUSAI
+SCHEDULE/${shisetsu}/SCHEDULE_SANKASHA SCHEDULE_SANKASHA
+SCHEDULE/${shisetsu}/SCHEDULE_GUEST SCHEDULE_GUEST
+SCHEDULE/${shisetsu}/SCHEDULE_RIYOUSHA_SEIKYU SCHEDULE_RIYOUSHA_SEIKYU
+SCHEDULE/${shisetsu}/SCHEDULE_GUEST_SEIKYU SCHEDULE_GUEST_SEIKYU
+FIN
+
+input_detail_dir=SCHEDULE/${shisetsu}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+# 参加者請求レコードが０の場合はリストに入れない
+cat <<- FIN > $tmp-koushin_pompa
+schedule_detail_base SCHEDULE_SHOUSAI 2 17 18 ${apdata_dir}/SCHEDULE ${input_dir}
+schedule_detail_base2 SCHEDULE_SHOUSAI 2 17 18 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+
+if [ "$(gyo $tmp-schedule_seikyu_input)" = "0" ] ; then
+cat <<- FIN > $tmp-add_pompa
+riyousha SCHEDULE_SANKASHA 3 8 9 ${apdata_dir}/SCHEDULE ${input_dir}
+riyousha2 SCHEDULE_SANKASHA 3 8 9 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+else
+cat <<- FIN > $tmp-add_pompa
+schedule_seikyu SCHEDULE_RIYOUSHA_SEIKYU 3 13 14 ${data_dir}/SEIKYU/SHISETSU/SCHEDULE/${shisetsu}/$seikyumonth ${input_dir}
+schedule_seikyu2 SCHEDULE_RIYOUSHA_SEIKYU 3 13 14 ${pompa_dir}/SCHEDULE ${input_dir}
+riyousha SCHEDULE_SANKASHA 3 8 9 ${apdata_dir}/SCHEDULE ${input_dir}
+riyousha2 SCHEDULE_SANKASHA 3 8 9 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+# ゲスト請求レコードが０の場合はリストに入れない
+if [ "$(gyo $tmp-schedule_guest_seikyu_input)" = "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+guest SCHEDULE_GUEST 3 10 11 ${apdata_dir}/SCHEDULE ${input_dir}
+guest2 SCHEDULE_GUEST 3 10 11 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+else
+cat <<- FIN >> $tmp-add_pompa
+guest SCHEDULE_GUEST 3 10 11 ${apdata_dir}/SCHEDULE ${input_dir}
+guest2 SCHEDULE_GUEST 3 10 11 ${pompa_dir}/SCHEDULE ${input_dir}
+schedule_guest_seikyu SCHEDULE_GUEST_SEIKYU 3 14 15 ${data_dir}/SEIKYU/SHISETSU/SCHEDULE/${shisetsu}/$seikyumonth ${input_dir}
+schedule_guest_seikyu2 SCHEDULE_GUEST_SEIKYU 3 14 15 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+   
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${shisetsu}'"||$2!="'${ScheduleID}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

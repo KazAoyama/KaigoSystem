@@ -1,0 +1,129 @@
+#!/bin/bash
+#
+# MASTER_POPUP_UNIT.DISPLAY : 居室マスタポップアップ
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+[ -z "${MODE}" ] && MODE="init"
+
+# 親からわたってきた${Click_id}が
+# unit_tsuika以外ならばばらして値取得(メンテ)、フロアは入力可能に
+# unit_tsuikaならば空にする、フロアは入力不可に
+case "${Click_id}" in
+  unit_tsuika )
+    shinki_flg="true"
+    Tateya_id="02" #いまのところユニットはケアのみなので02ケア固定
+    Floor_id=""
+    Unit_id=""
+  ;;
+  * )
+    shinki_flg="false"
+    echo "${Click_id}" |
+    sed 's/-/ /g' - > ${tmp}-click_id
+    # 1:建屋ID 2:フロア 3:ユニットID
+    Tateya_id="$(self 1 ${tmp}-click_id)"
+    Floor_id="$(self 2 ${tmp}-click_id)"
+    Unit_id="$(self 3 ${tmp}-click_id)"
+  ;;
+esac
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 表示の処理
+
+# 施設名称
+SHISETSU_NAME="$(awk '$1=="'${shisetsu_key}'" && $8!="9"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON | self 2)"
+
+# 建屋名称
+TATEYA_NAME="$(awk '$1=="'${Tateya_id}'" && $4!="9"' ${home_dir}/TBL/SHISETSU_MASTER/TATEYA_NAME | self 2)"
+
+# フロアテーブル
+awk '$1=="'${shisetsu_key}'" && $2=="'${Tateya_id}'" && $4!="9"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR |
+self 3 |
+LANG=C sort |
+# メンテ時は選択したもの以外はdisabled
+if [ "${Floor_id}" != "" ] ; then
+  awk '{if($1=="'${Floor_id}'"){$2="selected"}
+                           else{$2="disabled"};print}' -
+else
+  cat -
+fi > ${tmp}-floor_tbl
+# 1:フロア 2:選択するか使用できないか
+
+# ユニット名(新規登録画面では空)
+if [ "${Unit_id}" != "" ] ; then
+  UNIT_NAME="$(awk '$3!="9" && $1=="'${Unit_id}'"' ${home_dir}/TBL/SHISETSU_MASTER/UNIT_NAME | self 2)"
+else
+  UNIT_NAME=""
+fi
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html_alert
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 共通設定項目
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###SHISETSU_NAME### ${SHISETSU_NAME}
+###TATEYA_NAME### ${TATEYA_NAME}
+###UNIT_NAME### ${UNIT_NAME}
+###shisetsu_key### ${shisetsu_key} 
+###unit_key### ${Unit_id}
+###tateya_key### ${Tateya_id}
+###shinki_flg### ${shinki_flg}
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+cat ${html_dir}/MASTER_POPUP_UNIT.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l"FLOOR_SELECT" - ${tmp}-floor_tbl
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

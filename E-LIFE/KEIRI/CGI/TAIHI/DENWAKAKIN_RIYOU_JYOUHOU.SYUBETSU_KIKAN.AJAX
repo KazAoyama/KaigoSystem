@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+# DENWAKAKIN_RIYOU_JYOUHOU.SYUBETSU_KIKAN.AJAX : 電話課金　書き換えAJAX
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/DENWAKAKIN_RIYOU_JYOUHOU.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+[ "${shisetsu_key}" == "_" -o "${shisetsu_key}" == "" ] && shisetsu_key="${shisetsu}"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 表示データの作成
+
+# 帳票種別によって日次か月次になる
+case "${syubetsu_select}" in
+  # ------------------------
+  # 電話料金利用明細
+  # 月次のみ
+  1 )
+    kikan_display1="none"
+    kikan_display2=""
+cat << FIN | grep -v "^#" > ${tmp}-kikan_syubetsu_tbl
+_ 選択してください
+#1 日次 disabled
+2 月次 selected
+FIN
+  ;;
+  # ------------------------
+  # ------------------------
+  # 電話課金集計表
+  # どっちもなので選択させる
+  2 )
+    kikan_display1="none"
+    kikan_display2="none"
+cat << FIN > ${tmp}-kikan_syubetsu_tbl
+_ 選択してください
+1 日次
+2 月次
+FIN
+  ;;
+  # ------------------------
+esac
+
+# どちらであっても月次テーブルは用意するので
+find ${pompa_dir}/DENWA_KAKIN/${shisetsu_key}/ -type f -name "DENWA_KAKIN_CYOUHYOU.${shisetsu_key}.*" -print |
+tr "/" " " |
+tr "." " " |
+self NF |
+LANG=C sort |
+awk 'BEGIN{print "_","選択してください"}
+      {if($1=="'${lastmonth}'"){$3="selected"};
+      $2=substr($1,1,4)"/"substr($1,5,2); print}' > ${tmp}-kikan_month_tbl
+#--------------------------------------------------------
+
+# calsed
+cat << FIN > ${tmp}-calsed
+###kikan_display1### ${kikan_display1}
+###kikan_display2### ${kikan_display2}
+FIN
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+awk '/ajax_change2_start/,/ajax_change2_end/' ${html_dir}/DENWAKAKIN_RIYOU_JYOUHOU2.html |
+calsed -f ${tmp}-calsed - |
+mojihame -l"kikan_syubetsu_tbl" - ${tmp}-kikan_syubetsu_tbl |
+mojihame -l"kikan_month_tbl" - ${tmp}-kikan_month_tbl > ${tmp}-html
+echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+cat - ${tmp}-html
+#sed 's/###KAIGYO###/\n/g'     |
+#sed 's/###SPACE###/ /g' |
+#if [ -e $tmp-html_alert ] ; then
+#  cat - $tmp-html_alert
+#else
+#  cat -
+#fi
+#formhame -d"_" - ${namedata}
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,280 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN_YAKUZAI.TOUROKU
+# 介護保険情報在宅医学総合管理登録
+#
+# Written by T.Osako (Tokyu-hands.co.jp) :20100615
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+#  [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名を入力してください。"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+# 利用者データ
+  RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+
+# 利用者IDがなければ不正
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "データが不正です。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 在宅薬剤管理テーブル
+#--------------------------------------------------------------
+  #####################
+  # 在宅薬剤管理テーブル
+  #####################
+
+   ZaitakuYakuzaiKanriShidouFromGengou="$(nameread "ZaitakuYakuzaiKanriShidouFromGengou" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromYear="$(nameread "ZaitakuYakuzaiKanriShidouFromYear" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromMonth="$(nameread "ZaitakuYakuzaiKanriShidouFromMonth" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromDay="$(nameread "ZaitakuYakuzaiKanriShidouFromDay" ${namedata})"
+
+ [ -z "${ZaitakuYakuzaiKanriShidouFromYear}" -o "${ZaitakuYakuzaiKanriShidouFromYear}" = "_" ] && ZaitakuYakuzaiKanriShidouFromYear="99"
+ [ -z "${ZaitakuYakuzaiKanriShidouFromMonth}" -o "${ZaitakuYakuzaiKanriShidouFromMonth}" = "_" ] && ZaitakuYakuzaiKanriShidouFromMonth="99"
+ [ -z "${ZaitakuYakuzaiKanriShidouFromDay}" -o "${ZaitakuYakuzaiKanriShidouFromDay}" = "_" ] && ZaitakuYakuzaiKanriShidouFromDay="99"
+
+ [ "${ZaitakuYakuzaiKanriShidouFromYear}" = "0" ] && error_exit "在宅医学総合管理の開始日に0年は入力できません。"
+ [ "${ZaitakuYakuzaiKanriShidouFromMonth}" = "0" ] && error_exit "在宅医学総合管理の開始日に0月は入力できません。"
+ [ "${ZaitakuYakuzaiKanriShidouFromDay}" = "0" ] && error_exit "在宅医学総合管理の開始日に0日は入力できません。"
+
+echo "${ZaitakuYakuzaiKanriShidouFromYear}" |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_year_error
+
+echo "${ZaitakuYakuzaiKanriShidouFromMonth}" |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_month_error
+echo "${ZaitakuYakuzaiKanriShidouFromMonth}" |
+awk '$1!="99"&&$1>12{print $0}'  >$tmp-from_month_error2
+
+echo "${ZaitakuYakuzaiKanriShidouFromDay}"   |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_day_error
+echo "${ZaitakuYakuzaiKanriShidouFromDay}"   |
+awk '$1!="99"&&$1>31{print $0}'  > $tmp-from_day_error2
+
+   [ -s $tmp-from_year_error ] && error_exit "在宅医学総合管理の開始日の値が不正です。"
+   [ -s $tmp-from_month_error ] && error_exit "在宅医学総合管理の開始日の値が不正です。"
+   [ -s $tmp-from_month_error2 ] && error_exit "在宅医学総合管理の開始日の値が不正です。"
+   [ -s $tmp-from_day_error ] && error_exit "在宅医学総合管理の開始日の値が不正です。"
+   [ -s $tmp-from_day_error2 ] && error_exit "在宅医学総合管理の開始日の値が不正です。"
+
+
+#  [ -z "${NinchiFromYear}" -o "${NinchiFromYear}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+#  [ -z "${NinchiFromMonth}" -o "${NinchiFromMonth}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+#  [ -z "${NinchiFromDay}" -o "${NinchiFromDay}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+if [ ! -z "${ZaitakuYakuzaiKanriShidouFromYear}" -a "${ZaitakuYakuzaiKanriShidouFromYear}" != "99" -a ! -z "${ZaitakuYakuzaiKanriShidouFromMonth}" -a "${ZaitakuYakuzaiKanriShidouFromMonth}" != "99" -a ! -z "${ZaitakuYakuzaiKanriShidouFromDay}" -a "${ZaitakuYakuzaiKanriShidouFromDay}" != "99" ] ; then
+
+  [ ! -z "${ZaitakuYakuzaiKanriShidouFromMonth}" -o "${ZaitakuYakuzaiKanriShidouFromMonth}" != "_" ] && ZaitakuYakuzaiKanriShidouFromMonth_Maezero="$(echo ${ZaitakuYakuzaiKanriShidouFromMonth} | maezero 1.2)"
+  [ ! -z "${ZaitakuYakuzaiKanriShidouFromDay}" -o "${ZaitakuYakuzaiKanriShidouFromDay}" != "_" ] && ZaitakuYakuzaiKanriShidouFromDay_Maezero="$(echo ${ZaitakuYakuzaiKanriShidouFromDay} | maezero 1.2)"
+
+
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${ZaitakuYakuzaiKanriShidouFromGengou}'"{print substr($3,1,4)}' |
+  awk '{print $1+"'${ZaitakuYakuzaiKanriShidouFromYear}'"-1}'     |
+# 1:西暦年号
+  awk '{print $1"'${ZaitakuYakuzaiKanriShidouFromMonth_Maezero}'""'${ZaitakuYakuzaiKanriShidouFromDay_Maezero}'"}' > $tmp-yakuzai_from
+
+  ZaitakuYakuzaiKanriShidouFrom="$(head -1 $tmp-yakuzai_from | self 1)"
+else
+  ZaitakuYakuzaiKanriShidouFromGengou="99"
+  ZaitakuYakuzaiKanriShidouFrom="99999999"
+fi
+
+if [ "${ZaitakuYakuzaiKanriShidouFrom}" != "99999999" ] ; then
+ isdate "${ZaitakuYakuzaiKanriShidouFrom}" 
+ echo $?             > $tmp-yakuzai_from_check
+fi
+
+ [ -s $tmp-yakuzai_from_check -a $(cat $tmp-yakuzai_from_check) = "1" ] && error_exit "在宅医学総合管理指導の開始日に存在しない年月日が入力されています。"
+
+
+  # 追加データの作成
+  echo "${RIYOUSHAID}" "${ZaitakuYakuzaiKanriShidouFromGengou}" "${ZaitakuYakuzaiKanriShidouFromYear}" "${ZaitakuYakuzaiKanriShidouFromMonth}" "${ZaitakuYakuzaiKanriShidouFromDay}" "${ZaitakuYakuzaiKanriShidouFrom}" "_" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}"  > $tmp-riyousha_yakuzai_input
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５  12:削除フラグ    13:更新日時    14:UserID
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+[ -s ${pompa_dir}/RIYOUSHA_ZAITAKU_YAKUZAI ] || : > ${pompa_dir}/RIYOUSHA_ZAITAKU_YAKUZAI
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_ZAITAKU_YAKUZAI RIYOUSHA_ZAITAKU_YAKUZAI
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_yakuzai RIYOUSHA_ZAITAKU_YAKUZAI 1 13 14 ${pompa_dir} ${input_dir}
+FIN
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#cp $tmp-* /home/hands/work/okuda
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+ cp -p ${pompa_dir}/RIYOUSHA_ZAITAKU_YAKUZAI ${data_dir}/RIYOUSHA_ZAITAKU_YAKUZAI
+
+echo "result touroku_ok"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

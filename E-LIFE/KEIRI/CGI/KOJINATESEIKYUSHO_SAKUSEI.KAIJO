@@ -1,0 +1,297 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KAIJO : 請求
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.KAIJO namefile
+#
+# Written by aoyagi
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+##かりに
+#tmp=/home/hands/work/otsubo/kakutei
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ---------------------------------------
+# 変数
+
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+eval $(name-source ${namefile})
+
+# mode
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+# 処理年月
+syori_nengetsu="${year}${month}"
+# ---------------------------------------
+
+# ---------------------------------------
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU/ ] && mkdir ${input_dir}/${today}/SEIKYU/
+[ ! -e ${seikyu_dir}/SEIKYU_KAKUTEI ] && mkdir ${seikyu_dir}/SEIKYU_KAKUTEI
+# ---------------------------------------
+
+# ---------------------------------------
+# error
+
+function error_exit {
+  message=${1}
+  cat $tmp-lock |
+  while read name;do
+    rm -f ${name}.LOCK
+  done
+  rm ${tmp}-*
+  echo ${message}
+  exit 1
+}
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル作成
+
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu}
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理月前月が当月確定されていないときは何もできない
+# 毎月順番に確定しないといけないです。
+
+# 処理月前月
+sengetsu="$(mdate ${year}${month}m/-1)"
+# 処理月前月が当月確定されてたらファイルに値はいる
+LANG=C sort -k1,2 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!=9'               |
+awk '$2=="'${sengetsu}'"' |
+getlast 1 1               |
+awk '$3==2'               > ${tmp}-kakunin_sengetsu
+cp ${tmp}-kakunin_sengetsu ${work}/sengetsu
+[ ! -s ${tmp}-kakunin_sengetsu ] && error_exit "処理月前月が確定されていません"
+# ---------------------------------------
+
+# 翌月が確定されていたら解除できない
+# 処理月翌月
+yokugetsu="$(mdate ${year}${month}m/+1)"
+# 処理月翌月が当月確定されてたらファイルに値はいる
+LANG=C sort -k1,2 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!=9'                |
+awk '$2=="'${yokugetsu}'"' |
+getlast 1 1                |
+awk '$3==2'                > ${tmp}-kakunin_yokugetsu
+cp ${tmp}-kakunin_yokugetsu ${work}/yokugetsu
+[ -s ${tmp}-kakunin_yokugetsu ] && error_exit "処理月翌月が確定されているため解除できません"
+# ---------------------------------------
+
+# ---------------------------------------
+
+# 当月確定があったらぜったいなにもできないのだが、仕方なく解除処理
+# 仮確定ボタン時：仮確定があったら「既に確定済み」
+# 仮確定解除ボタン時：仮確定がなかったら「既に取り消し済みです」
+
+LANG=C sort -k1,1 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!="9"' - |
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+cjoin0 key=2 <(echo "${year}${month}") |
+getlast 1 1 > ${tmp}-kakutei_file
+if [ -s ${tmp}-kakutei_file ] ; then
+  kakutei_status="$(self 3 ${tmp}-kakutei_file)"
+    case "${kakutei_status}" in
+      1 )
+        error_exit "仮確定済みです"
+      ;;
+    esac
+else
+  if [ "${MODE}" = "karikakutei_kaijyo" ] ; then
+    error_exit "既に仮確定が解除されています"
+  fi
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理月当月のヘッダでスタータス1があるとエラー
+
+# ないとは思うが、処理月当月でステータスが1(計算の後は必ず請求選択するのでまずありえない)があったらエラーで落とす
+cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25  |
+getlast 1 2                |
+awk '$24!="9"'             |
+cjoin0 key=3 <(echo "1") - > ${tmp}-err_head
+[ -s ${tmp}-err_head ] && error_exit "請求選択がされていないものがあるため処理できません"
+# ---------------------------------------
+
+# ---------------------------------------
+# ヘッダファイル更新対象の絞込み
+
+# 処理月のステータス6：当月確定済み
+cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25 |
+getlast 1 2               |
+awk '$24!="9"'            |
+cjoin0 key=3 <(echo "6 7" | tarr)  > ${tmp}-kakutei_head_tougetsu
+
+# ステータス4：当月確定済み(繰越)
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+getlast 1 2              |
+awk '$24!="9"'           |
+cjoin0 key=3 <(echo "3") > ${tmp}-kakutei_head_kurikoshi
+
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+# ---------------------------------------
+
+# ---------------------------------------
+# 仮確定時にその月の対象がいない場合はここで終了
+
+if [ ! -s ${tmp}-kakutei_head_tougetsu ] ; then
+  if [ ! -s ${tmp}-kakutei_head_kurikoshi ] ; then
+    error_exit "請求対象者がいません"
+  fi
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理を開始
+
+# 確定ファイル
+# -
+# 1:施設ID 2:請求確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+
+# 仮確定ファイルの更新と請求確定月の更新(仮確定時は入れる、解除時は外す。)
+case "${MODE}" in
+  karikakutei )
+    cat ${tmp}-kakutei_head_tougetsu ${tmp}-kakutei_head_kurikoshi |
+    awk '{$14="'${year}${month}'";
+          $25="'${current_time}'";
+          $26="'${userid}'";
+          print}' -                                                |
+    LANG=C sort                                                    > ${tmp}-head_input
+
+    echo "${shisetsu} ${year}${month} 1 1 ${current_time} ${userid}" > ${tmp}-kakutei_input
+  ;;
+  kakutei_kaijyo )
+    cat ${tmp}-kakutei_head_tougetsu                               |
+    awk '{$3="5";
+          $14="_";
+          $25="'${current_time}'";
+          $26="'${userid}'";
+          print}' -                                                |
+    LANG=C sort                                                    > ${tmp}-head_input1
+
+    cat ${tmp}-kakutei_head_kurikoshi                              |
+    awk '{$3="2";
+          $25="'${current_time}'";
+          $26="'${userid}'";
+          print}' -                                                |
+    LANG=C sort                                                    > ${tmp}-head_input2
+  
+    cat ${tmp}-head_input1 ${tmp}-head_input2                      > ${tmp}-head_input
+
+    LANG=C sort -k1,2 -k5,5 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+    awk '$4!="9"' -            |
+    awk '$2=="'${year}${month}'"'  |
+#    getlast 1 1                |
+#    cjoin0 key=3 $tmp-kakutei_mas - |
+    awk '$3=="1" || $3=="2"'   |
+    awk '{$4="9";
+          $5="'${current_time}'";
+          $6="'${userid}'";
+          print}' -            > ${tmp}-kakutei_input
+  ;;
+esac
+
+# L4作成
+cat ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD ${tmp}-head_input |
+LANG=C sort -k1,2 -k25,25                                        > ${tmp}-L4_head
+#cat ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} ${tmp}-kakutei_input |
+#tee ${work}/kokodesuka |
+#LANG=C sort -k1,2 -k5,5 |
+#getlast 1 3             |
+#LANG=C sort             > ${tmp}-L4_kakutei
+cat ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu}      |
+awk '$2!="'${year}${month}'"'                                    |
+cat - ${tmp}-kakutei_input                                       |
+LANG=C sort                                                      > ${tmp}-L4_kakutei
+
+# ---------------------------------------
+
+# ---------------------------------------
+# チェック・更新
+
+cat << FIN > ${tmp}-koushin_file_input
+${tmp}-head_input ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+${tmp}-kakutei_input ${input_dir}/${today}/SEIKYU/SEIKYU_KAKUTEI.INPUT.$(basename ${0}).${current_time} 6
+FIN
+
+cat << FIN > ${tmp}-koushin_file_L4
+${tmp}-L4_head ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD 26
+${tmp}-L4_kakutei ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} 6
+FIN
+
+# チェック
+self 1 3 ${tmp}-koushin_file_input |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+self 1 3 ${tmp}-koushin_file_L4 |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 更新
+cat ${tmp}-koushin_file_input ${tmp}-koushin_file_L4 |
+while read File okiba retu ; do
+  cp -p ${File} ${okiba}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル削除
+
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# ---------------------------------------
+
+echo "更新完了！"
+
+rm -f ${tmp}-*
+exit 0
+

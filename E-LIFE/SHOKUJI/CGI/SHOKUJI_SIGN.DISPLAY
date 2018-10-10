@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# SHOKUJI_SIGN.DISPLAY
+# 食事サインディスプレイCGI
+#
+# Written by E.Okuda :2014/01/08
+
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/$(date "+%Y%m%d")/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+#-------------------------------------------------------------
+# 変数の定義
+namedata="$1"
+tourokuresult="$2"
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# 必要な値の取得
+name-source $namedata > $tmp-source
+
+#-------------------------------------------------------------
+shisetsu=$(nameread        "shisetsu"            $namedata)
+nyukyosha_id=$(nameread    "nyukyosha_id"        $namedata)
+chumon_no=$(nameread       "chumon_no"           $namedata)
+target_day=$(nameread      "target_day"          $namedata)
+MODE=$(nameread            "MODE"                $namedata)
+
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#-------------------------------------------------------------
+
+# 検証用
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && shisetsu="0003"
+[ -z "${nyukyosha_id}" -o "${nyukyosha_id}" = "_" ] && nyukyosha_id="00001258"
+[ -z "${chumon_no}" -o "${chumon_no}" = "_" ] && chumon_no="0003"
+[ -z "${target_day}" -o "${target_day}" = "_" ] && target_day=$(date "+%Y%m%d")
+
+#-------------------------------------------------------------
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+
+#cp -p $tmp-* /home/hands/work/okuda
+#  ;;
+### モードによる表示の分岐
+case "${MODE}" in
+ regist)
+    result=$(awk '$1=="result"{print $2}' ${tourokuresult})
+    if [ "${result}" = "ng" ] ; then
+     message=$(awk '$1=="message"{print $2}' ${tourokuresult})
+    else
+     message="登録を完了しました。"
+    fi
+    filesed=""
+ ;;
+# うまく見れるか検証のため
+ display)
+    file_dir="/home/hands/E-LIFE/SHOKUJI/DOWNLOAD"
+    # 仮食事オーダーＩＤ
+    fileid=${shisetsu}${nyukyosha_id}${target_day}${chumon_no}
+ ;;
+ init)
+    fileid=""
+ ;;
+esac
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat <<- FIN > $tmp-html1
+          <script type="text/javascript" language="javascript">
+            alert('${message}');
+          </script>
+FIN
+fi
+
+#-------------------------------------------------------------
+# 嵌め込みデータの作成
+cat <<FIN > $tmp-calsed
+###NYUKYOSHA_ID### $nyukyosha_id
+###SHISETSU### $shisetsu
+###RESTAURANT_ORDER### $chumon_no
+###TARGET_DAY### $target_day
+FIN
+
+#--------------------------------------------------
+
+# htmlの作成
+cat ${html_dir}/SHOKUJI_SIGN1.html |
+cat - ${file_dir}/${shisetsu}/${nyukyosha_id}/${fileid} |
+cat - ${html_dir}/SHOKUJI_SIGN2.html |
+calsed -f $tmp-calsed - |
+#データの嵌め込み
+#tee /home/hands/work/okuda/Result |
+#sed 's/###SIGNFILE###/'$filesed'/g' |
+sed 's/###SPACE###/ /g' |
+if [ -e $tmp-html1 ] ; then
+  cat - $tmp-html1
+else
+  cat -
+fi |
+cat -
+
+# 終了
+rm -f $tmp-*
+exit 0
+

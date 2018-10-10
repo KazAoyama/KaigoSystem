@@ -1,0 +1,149 @@
+#!/bin/bash
+#
+# CARE_WEEKPLAN.SEARCH
+# 週間サービス計画　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%H).$$ ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 利用者ID
+echo "${Riyoushaid}" "${hdKeikakuSakuseiDate}" > $tmp-riyoushaid_careplan 
+
+awk '$(NF-2)!="9"' ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+tail -1                         |
+self 2 > $tmp-latest_date
+dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+
+[ "$MODE" = "delete" ] && Rireki=${dispHdKeikakuSakuseiDate}
+[ "$MODE" = "regist" ] && Rireki=${hdKeikakuSakuseiDate}
+[ "$MODE" = "pattern" ] && Rireki=${hdSakuseiPattern}
+
+if [ "${MODE}" != "pattern" ] ; then
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+#  dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+# ウィークリーサービス取得
+  cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/WEEKPLAN_WEEKLYSERVICE   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# 有効分
+# --------------------------
+  awk '$(NF-2)!="9"'                 |
+#---------------------------
+# 対象年月
+  if [ "${Rireki}" != "_" -o "${Rireki}" != "" ] ; then
+     awk '$2=="'${Rireki}'"'
+  else
+     LANG=C sort -k2,2r |
+     head -1
+  fi |
+# 
+# --------------------------
+#--------------------------------------------------------------
+# 1:利用者ID 2:データID     3:曜日区分 4:サービス開始時刻 5:サービス終了時刻
+# 6:内容
+  self 1 3/7 |
+# 1:データ区分       2:ID               3:表示サービス名 4:週間チェック 5:曜日区分
+# 6:サービス開始時刻 7:サービス終了時刻
+  awk '{print "w",$2,$6,"1",$3,$4,$5}'                  |
+  LANG=C sort -k1,2n    >  ${tmp}-weekly_service
+
+# デイリーサービス取得
+  cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/WEEKPLAN_DAILYSERVICE   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# 有効分
+# --------------------------
+  awk '$(NF-2)!="9"'                 |
+# --------------------------
+# 対象年月
+  if [ "${Rireki}" != "_" -o "${Rireki}" != "" ] ; then
+     awk '$2=="'${Rireki}'"'
+  else
+     LANG=C sort -k2,2r |
+     head -1
+  fi |
+#--------------------------------------------------------------
+# 1:利用者ID 2:データID 3:サービス開始時刻 4:内容
+  self 1 3/5 |
+  awk '{print "d",$2,$4,$3}'    |
+# 1:データ区分 2:ID 3:表示サービス名 4:サービス開始時刻
+  LANG=C sort -k1,2n    >  ${tmp}-assessment_daily_service
+
+else
+# ウィークリーサービス取得
+  cat ${pompa_dir}/SHISETSU_CAREPLAN/PATTERN/${shisetsu}/WEEKPLAN_WEEKLYSERVICE_PATTERN   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$1=="'${shisetsu}'"'   |
+#--------------------------------------------------------------
+# 検索
+# 有効分
+# --------------------------
+  awk '$(NF-2)!="9"'                 |
+#---------------------------
+# 対象年月
+  awk '$2=="'${Rireki}'"'      |
+#
+# --------------------------
+#--------------------------------------------------------------
+# 1:施設ID 2:データID     3:曜日区分 4:サービス開始時刻 5:サービス終了時刻
+# 6:内容
+  self 1 3/7 |
+# 1:データ区分       2:ID               3:表示サービス名 4:週間チェック 5:曜日区分
+# 6:サービス開始時刻 7:サービス終了時刻
+  awk '{print "w",$2,$6,"1",$3,$4,$5}'                  |
+  LANG=C sort -k1,2n    >  ${tmp}-weekly_service
+  :> ${tmp}-assessment_daily_service
+fi
+
+
+cat ${tmp}-weekly_service ${tmp}-assessment_daily_service
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,222 @@
+#!/bin/bash
+#
+# GEKKAN_SERVICE_TEIKYOU_SHUKEI_KAIGODO.SEARCH
+# 月間サービス提供回数集計表（介護度）印刷　検索用CGI
+#
+# Written by K.Aoyama
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+KYOUTSU_TBL=${home_dir}/TBL
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "サービス提供事業者が不明です"
+# 対象年月
+[ -z "${TaishouNengetsu}" -o "${TaishouNengetsu}" = "_" ] && error_exit "対象年が不明です"
+
+# 曜日取得
+echo "0" "日"  > $tmp-youbi
+echo "1" "月" >> $tmp-youbi
+echo "2" "火" >> $tmp-youbi
+echo "3" "水" >> $tmp-youbi
+echo "4" "木" >> $tmp-youbi
+echo "5" "金" >> $tmp-youbi
+echo "6" "土" >> $tmp-youbi
+
+cp $tmp-youbi $work_dir/youbi
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+kaigodoNengappi=$TaishouNengetsu"31"
+
+# 利用者マスタ
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN  |
+awk '$23<="'$kaigodoNengappi'"&&"'$kaigodoNengappi'"<$28{print $1,$3}'  |
+# 1:利用者ID 2:介護度
+LANG=C sort -k1,2                                       > $tmp-riyousha_kaigodo
+
+cp $tmp-riyousha_kaigodo $work_dir/riyousha_kaigodo
+
+# 自事業所から事業者マスタのＩＤを抽出
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+awk '$1=="'$shisetsu'"&&($3=="11"||$3=="61"){print $2,$3}'    > $tmp-kyoukyusha
+
+# テスト
+# 施設
+#echo "0009" "11" > $tmp-kyoukyusha
+
+# 時期によって有効なサービスコードの年月日を出す。
+ls -F /home/hands/E-LIFE/TBL/SERVICECODE |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$kaigodoNengappi'"&&"'$kaigodoNengappi'"<$3{print $2}'      > $tmp-dir_date
+
+dir_date=$(cat $tmp-dir_date)
+
+# サービスコードをセットし、表示
+# 訪問介護サービス区分レコード取得
+cat ${home_dir}/TBL/SERVICECODE/$dir_date/SERVICECODE_HOUMONKAIGO    |
+# 1:サービスコード種類 2:サービスコード項目 3:サービスコード名 4:単位数
+awk '{print $2,$3,$4,$15}' > ${tmp}-servicecode_houmonkaigo_work
+cat ${home_dir}/TBL/SERVICECODE/$dir_date/SERVICECODE_HOUMONKAIGO_YOBO    |
+awk '{print $2,$3,$4,$11}' >> ${tmp}-servicecode_houmonkaigo_work
+
+cat ${tmp}-servicecode_houmonkaigo_work |
+LANG=C sort -k1,2                       > ${tmp}-servicecode_houmonkaigo
+
+cp ${tmp}-servicecode_houmonkaigo $work_dir/servicecode_houmonkaigo
+
+# 整形用
+kaigoSeikei=$(echo "3,4,5,6,7,1,2,_")
+
+#--------------------------------------------------------------
+# 訪問介護実績ファイルの取得
+# 対象となる全利用者のディレクトリを検索する
+: > $tmp-jisseki_data
+ls -F ${pompa_dir}/HOUMONKAIGO |
+grep /                         |
+sed 's/\///g'                  |
+while read path ; do
+if [ -s ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI ] ; then
+   cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI >> $tmp-jisseki_data
+fi
+done
+
+cp $tmp-jisseki_data $work_dir/jisseki_data
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 1:利用者ID      2:サービス提供事業者 3:対象年         4:対象月          5:実績ID
+# 6:日付          7:ホームヘルパーID   8:同行ヘルパーID 9:開始時間        10:終了時間
+# 11:サービス内容 12:時間              13:緊急加算区分  14:サービスコード 15:請求対象有無
+# --------------------------
+#
+cat $tmp-jisseki_data             |
+awk '$(NF-2)!="9"'                |
+awk '$3$4=="'$TaishouNengetsu'"'  |
+# 1:利用者ID      2:サービス提供事業者 3:対象年          4:対象月               5:レコードID
+# 6:提供日        7:担当ヘルパー名       8:同行ヘルパー名    9:サービス提供開始時間 10:サービス提供終了時間
+# 11:サービス内容 12:単位時間          13:緊急加算フラグ 14:サービスコード      15:請求区分
+LANG=C sort -k2,2                  |
+join1 key=2 $tmp-kyoukyusha        |
+tee $work_dir/kyoukyuusha |
+# --------------------------
+# 1:利用者ID              2:サービス提供事業者 3:サービスタイプ 4:対象年          5:対象月
+# 6:レコードID            7:提供日             8:担当ヘルパー名   9:同行ヘルパー    10:サービス提供開始時間
+# 11:サービス提供終了時間 12:サービス内容      13:単位時間      14:緊急加算フラグ 15:サービスコード
+# 16:請求区分
+LANG=C sort -k1,1                  |
+join1 key=1 $tmp-riyousha_kaigodo  |
+# 1:利用者ID              2:介護度                3:サービス提供事業者 4:サービスタイプ 5:対象年
+# 6:対象月                7:レコードID            8:提供日             9:担当ヘルパー名 10:同行ヘルパー
+# 11:サービス提供開始時間 12:サービス提供終了時間 13:サービス内容      14:単位時間      15:緊急加算フラグ
+# 16:サービスコード       17:請求区分
+
+#出力番号保険者番号に置き換える
+#join1 key=1 <(self 1 4 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN) - |
+#delf 1                                                                  |
+#LANG=C sort                                                             |
+#####################################################################################################
+#ここから検索条件で絞る処理
+####################################################################################################
+#対象者番号（保険者番号）の範囲が入力されていた場合
+#if [ "${txtTaishouBangouFrom}" != "_" -a "${txtTaishouBangouFrom}" != "" ] ;then
+#  awk '$1>="'${txtTaishouBangouFrom}'"' 
+#else 
+#  cat -
+#fi   |
+
+#if [ "${txtTaishouBangouTo}" != "_" -a "${txtTaishouBangouTo}" != "" ] ;then
+#  awk '$1<="'${txtTaishouBangouTo}'"' 
+#else
+#  cat -
+#fi    |
+
+#
+#介護条件
+if [ "${filter}" = "kaigo" ] ;then
+  awk '$4=="11"'
+elif [ "${filter}" = "yobou" ] ;then
+  awk '$4!="11"'
+else
+  cat -
+fi     |
+########################################################################################
+self 4 16 2                        |
+tee $work_dir/serviceteikyou0      |
+# 1:サービスタイプ 2:サービスコード 3:介護度
+LANG=C sort -k1,3                  |
+tee $tmp-all_syukei                |
+count 1 3                          |
+tee $work_dir/serviceteikyou1      |
+# 1:サービスタイプ 2:サービスコード 3:介護度 4:回数
+awk '{print $1,$2,$3,$4,"'$kaigoSeikei'"}' |
+sed 's/,/ /g'                      |
+tarr num=4                         |
+# 1:サービスタイプ 2:サービスコード 3:介護度 4:回数 5:整形用介護度
+tee $work_dir/serviceteikyou2      |
+awk '{if($3==$5){$6=$4}else{$6="0"};print $0}'   |
+# 1:サービスタイプ 2:サービスコード 3:介護度 4:回数 5:整形用介護度 6:セット用回数
+delf 3/5                           |
+tee $work_dir/serviceteikyou3      |
+yarr num=2                         |
+LANG=C sort -k1,2                  |
+join1 key=1/2 ${tmp}-servicecode_houmonkaigo > $tmp-syukeimae_list
+# 1:サービスタイプ 2:サービスコード 3:サービスコード名 4:単位 5～12:介護度ごとの回数
+
+# サービスごと集計
+cat $tmp-all_syukei                |
+self 1 2                           |
+count 1 2                          |
+LANG=C sort -k1,2                  > $tmp-shukei
+
+cat $tmp-syukeimae_list            |
+join1 key=1/2 - $tmp-shukei        |
+awk '{if($1=="11"){$1=$2"(介護)"}else{$1=$2"(予防)"};print $0}' |
+self 1 3 4/NF                      > $tmp-teikyoulist
+# 1:サービスタイプ  3:サービスコード名 4:単位 5～12:介護度ごとの回数
+cp $tmp-teikyoulist $work_dir/teikyoulist
+
+cat $tmp-teikyoulist
+
+## 終了
+rm -f $tmp-*
+exit 0

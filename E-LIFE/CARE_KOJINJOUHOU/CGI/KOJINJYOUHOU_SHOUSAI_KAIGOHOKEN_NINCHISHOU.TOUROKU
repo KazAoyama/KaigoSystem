@@ -1,0 +1,336 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.TOUROKU
+# 介護保険情報登録
+#
+# Written by T.Osako (Tokyu-hands.co.jp) :20100615
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+#  [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名を入力してください。"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+# 利用者データ
+  RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+
+# 利用者IDがなければ不正
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "データが不正です。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 利用者医療併用テーブル
+#--------------------------------------------------------------
+  #####################
+  # 利用者医療併用テーブル
+  #####################
+
+   NinchiFromGengou="$(nameread "NinchiFromGengou" ${namedata})"
+   NinchiFromYear="$(nameread "NinchiFromYear" ${namedata})"
+   NinchiFromMonth="$(nameread "NinchiFromMonth" ${namedata})"
+   NinchiFromDay="$(nameread "NinchiFromDay" ${namedata})"
+   NinchiToGengou="$(nameread "NinchiToGengou" ${namedata})"
+   NinchiToYear="$(nameread "NinchiToYear" ${namedata})"
+   NinchiToMonth="$(nameread "NinchiToMonth" ${namedata})"
+   NinchiToDay="$(nameread "NinchiToDay" ${namedata})"
+
+ [ -z "${NinchiFromYear}" -o "${NinchiFromYear}" = "_" ] && NinchiFromYear="99"
+ [ -z "${NinchiFromMonth}" -o "${NinchiFromMonth}" = "_" ] && NinchiFromMonth="99"
+ [ -z "${NinchiFromDay}" -o "${NinchiFromDay}" = "_" ] && NinchiFromDay="99"
+ [ -z "${NinchiToYear}" -o "${NinchiToYear}" = "_" ] && NinchiToYear="99"
+ [ -z "${NinchiToMonth}" -o "${NinchiToMonth}" = "_" ] && NinchiToMonth="99"
+ [ -z "${NinchiToDay}" -o "${NinchiToDay}" = "_" ] && NinchiToDay="99"
+
+ [ "${NinchiFromYear}" = "0" ] && error_exit "医療系サービス併用期間の期間(自)に0年は入力できません。"
+ [ "${NinchiFromMonth}" = "0" ] && error_exit "医療系サービス併用期間の期間(自)に0月は入力できません。"
+ [ "${NinchiFromDay}" = "0" ] && error_exit "医療系サービス併用期間の期間(自)に0日は入力できません。"
+ [ "${NinchiToYear}" = "0" ] && error_exit "医療系サービス併用期間の期間(至)に0年は入力できません。"
+ [ "${NinchiToMonth}" = "0" ] && error_exit "医療系サービス併用期間の期間(至)に0月は入力できません。"
+ [ "${NinchiToDay}" = "0" ] && error_exit "医療系サービス併用期間の期間(至)に0日は入力できません。"
+
+echo "${NinchiFromYear}" |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_year_error
+
+echo "${NinchiFromMonth}" |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_month_error
+echo "${NinchiFromMonth}" |
+awk '$1!="99"&&$1>12{print $0}'  >$tmp-from_month_error2
+
+echo "${NinchiFromDay}"   |
+awk '$1!="_"{print $0}'  |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-from_day_error
+echo "${NinchiFromDay}"   |
+awk '$1!="99"&&$1>31{print $0}'  > $tmp-from_day_error2
+
+echo "${NinchiToYear}"   |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-to_year_error
+
+echo "${NinchiToMonth}"  |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-to_month_error
+echo "${NinchiToMonth}" |
+awk '$1!="99"&&$1>12{print $0}'  >$tmp-to_month_error2
+
+echo "${NinchiToDay}"    |
+awk '$1!="_"{print $0}' |
+awk '$1!~/^[0-9]*$/{print $0}' > $tmp-to_day_error
+echo "${NinchiToDay}"   |
+awk '$1!="99"&&$1>31{print $0}'  > $tmp-to_day_error2
+
+   [ -s $tmp-from_year_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-from_month_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-from_month_error2 ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-from_day_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-from_day_error2 ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-to_year_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-to_month_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-to_month_error2 ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-to_day_error ] && error_exit "医療系サービス併用期間の値が不正です。"
+   [ -s $tmp-to_day_error2 ] && error_exit "医療系サービス併用期間の値が不正です。"
+
+
+#  [ -z "${NinchiFromYear}" -o "${NinchiFromYear}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+#  [ -z "${NinchiFromMonth}" -o "${NinchiFromMonth}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+#  [ -z "${NinchiFromDay}" -o "${NinchiFromDay}" = "_" ] && error_exit "医療系サービス併用期間を入力してください。"
+if [ ! -z "${NinchiFromYear}" -a "${NinchiFromYear}" != "99" -a ! -z "${NinchiFromMonth}" -a "${NinchiTFromMonth}" != "99" -a ! -z "${NinchiFromDay}" -a "${NinchiFromDay}" != "99" ] ; then
+
+  [ ! -z "${NinchiFromMonth}" -o "${NinchiFromMonth}" != "_" ] && NinchiFromMonth_Maezero="$(echo ${NinchiFromMonth} | maezero 1.2)"
+  [ ! -z "${NinchiFromDay}" -o "${NinchiFromDay}" != "_" ] && NinchiFromDay_Maezero="$(echo ${NinchiFromDay} | maezero 1.2)"
+
+
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${NinchiFromGengou}'"{print substr($3,1,4)}' |
+  awk '{print $1+"'${NinchiFromYear}'"-1}'     |
+# 1:西暦年号
+  awk '{print $1"'${NinchiFromMonth_Maezero}'""'${NinchiFromDay_Maezero}'"}' > $tmp-ninchi_from
+
+  NinchiFrom="$(head -1 $tmp-ninchi_from | self 1)"
+else
+  NinchiFromGengou="99"
+  NinchiFrom="99999999"
+fi
+
+if [ ! -z "${NinchiToYear}" -a "${NinchiToYear}" != "99" -a ! -z "${NinchiToMonth}" -a "${NinchiToMonth}" != "99" -a ! -z "${NinchiToDay}" -a "${NinchiToDay}" != "99" ] ; then
+
+  [ ! -z "${NinchiToMonth}" -o "${NinchiToMonth}" != "99" ] && NinchiToMonth_Maezero="$(echo ${NinchiToMonth} | maezero 1.2)"
+  [ ! -z "${NinchiToDay}" -o "${NinchiToDay}" != "99" ] && NinchiToDay_Maezero="$(echo ${NinchiToDay} | maezero 1.2)"
+
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+  awk '$1=="'${NinchiToGengou}'"{print substr($3,1,4)}' |
+  awk '{print $1+"'${NinchiToYear}'"-1}'     |
+# 1:西暦年号
+  awk '{print $1"'${NinchiToMonth_Maezero}'""'${NinchiToDay_Maezero}'"}' > $tmp-ninchi_to
+
+  NinchiTo="$(head -1 $tmp-ninchi_to | self 1)"
+
+else
+  NinchiToGengou="99"
+  NinchiTo="99999999"
+fi
+
+if [ "${NinchiFrom}" != "99999999" ] ; then
+ isdate "${NinchiFrom}" 
+ echo $?             > $tmp-ninchi_from_check
+fi
+
+if [ "${NinchiTo}" != "99999999" ] ; then
+ isdate "${NinchiTo}"
+ echo $?             > $tmp-ninchi_to_check
+fi
+
+ [ -s $tmp-ninchi_from_check -a $(cat $tmp-ninchi_from_check) = "1" ] && error_exit "医療系サービス併用期間の期間(自)に存在しない生年月日が入力されています。"
+ [ -s $tmp-ninchi_to_check -a $(cat $tmp-ninchi_to_check) = "1" ] && error_exit "医療系サービス併用期間の期間(至)に存在しない生年月日が入力されています。"
+ [ "${NinchiFrom}" -gt "${NinchiTo}" ] && error_exit "期間(自)は期間(至)より前の日付を入力してください。"
+
+
+  # 追加データの作成
+  echo "${RIYOUSHAID}" "${NinchiFromGengou}" "${NinchiFromYear}" "${NinchiFromMonth}" "${NinchiFromDay}" "${NinchiFrom}" "${NinchiToGengou}" "${NinchiToYear}" "${NinchiToMonth}" "${NinchiToDay}" "${NinchiTo}" "1" "${cur_time}" "${USERID}"  > $tmp-riyousha_ninchi_input
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:期間TO：元号   8:期間TO：年   9:期間TO：月   10:期間TO：日
+# 11:期間FROM：西暦  12:削除フラグ    13:更新日時    14:UserID
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+[ -s ${pompa_dir}/RIYOUSHA_NINCHISHOU_KASAN ] || : > ${pompa_dir}/RIYOUSHA_NINCHISHOU_KASAN
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_NINCHISHOU_KASAN RIYOUSHA_NINCHISHOU_KASAN
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_ninchi RIYOUSHA_NINCHISHOU_KASAN 1 13 14 ${pompa_dir} ${input_dir}
+FIN
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#cp $tmp-* /home/hands/work/okuda
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+ cp -p ${pompa_dir}/RIYOUSHA_NINCHISHOU_KASAN ${data_dir}/RIYOUSHA_NINCHISHOU_KASAN
+
+echo "result touroku_ok"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

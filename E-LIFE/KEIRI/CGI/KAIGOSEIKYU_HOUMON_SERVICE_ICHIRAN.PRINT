@@ -1,0 +1,378 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMON_SERVICE_ICHIRAN.PRINT : サービス請求額一覧
+#
+# Usage : KAIGOSEIKYU_HOUMON_SERVICE_ICHIRAN.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+domain="http://e-life.hands-lab.com"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+work=${app_dir}/WORK
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# 対象ファイル呼出
+cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO    |
+awk '$3=="7131"'                    > $tmp-from_pompa
+
+cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO    |
+awk '$3=="7132"'                    > $tmp-from_pompa_yobo
+
+# 対象者ごとに処理をするリスト作成
+cat $tmp-from_pompa                 |
+self 1                              |
+LANG=C sort -u -k1,1n                    |
+yarr                                > $tmp-taishosha
+
+cat $tmp-from_pompa_yobo            |
+self 1                              |
+LANG=C sort -u -k1,1n                    |
+yarr                                > $tmp-taishosha_yobo
+
+# ダウンロードディレクトリ
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+
+# 対象者ごとにデータを作成
+for member in $(cat $tmp-taishosha);do
+  # 月毎の処理
+  cat $tmp-from_pompa               |
+  awk '$1=="'${member}'"{print $5}' |
+  LANG=C sort -u -k1,1n  |
+  yarr                   > $tmp-month_list
+
+  for month in $(cat $tmp-month_list);do
+
+    # 対象者のデータを準備
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+    awk '$1=="'${member}'" && $5=="'${month}'"'                                                       > $tmp-taisho_data
+
+    # 対象者名とフリガナ
+    # マスタ準備
+    cat ${riyosha_dir}/RIYOUSHA_KIHON       |
+    join0 key=1 <(echo $member)             |
+    awk '$9!=9'                             |
+    self 1 2                                > $tmp-riyosha_kihon
+    # 1:利用ID 2:利用者氏名
+  
+    # 対象データの基本情報レコードから得るもの
+    cat $tmp-taisho_data                    |
+    awk '$4=="01"'                             > $tmp-kihon_joho
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+  
+    cat $tmp-kihon_joho                     |
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+    self 1 5 7 8                             |
+    # 1:利用者ID 2:提供年月 3:保険者番号 4:被保険者番号 5:給付率
+    join1 key=1 $tmp-riyosha_kihon                > $tmp-kihon
+    # 1:利用者ID 2:利用者名 3:提供年月 4:保険者番号 5:被保険者番号
+  
+  
+    # 請求年月和暦変換
+    cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU                    |
+    awk '$5!="9"{print $1,$2,$3,$4}'                                > $tmp-gengou_master
+    
+#    # 和暦変換（変更日）
+#    cat $tmp-gengou_master |
+#tee ${work}/start |
+#    awk '$3<="'${start}'"&&"'${start}'"<=$4' |
+#    awk '{print $2,"'${start}'",substr($3,1,4)-1}'    |
+#    awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+#    awk '{print $1$2"年"$3"月分"}'                          > $tmp-wareki_nengetsu
+#  
+#    # 同じく発行日
+#    cat $tmp-gengou_master |
+#    awk '$3<="'${today}'"&&"'${today}'"<=$4' |
+#    awk '{print $2,"'${today}'",substr($3,1,4)-1}'    |
+#    awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+#    awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-hakko_bi
+    
+  
+    cat $tmp-kihon_joho                     |
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+    self 1 37                                  |
+    1bai 2                                     > $tmp-futan_futan
+  
+    # 集計データから得るもの
+    cat $tmp-taisho_data                     |
+    awk '$4=="10"'                           > $tmp-shukei_data
+    # 1:利用者ID 2:登録時間 3:識別番号 4:集計情報を表す10 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:日数
+    # 11:計画単位数 12:限度額管理対象単位数 13:限度額管理対象外単位数 14:_ 15:_
+    # 16:保険単位数合計 17:保険単位数単価 18:保険請求額 19:保険利用者負担額 20:_
+    # 21:_ 22:_ 23:_ 24:_ 25:_ 26:_ 27:_ 28:_ 29:_ 30:_ 31:_ 32:_
+    
+    cat $tmp-shukei_data                     |
+    # 1:利用者ID 2:登録時間 3:識別番号 4:集計情報を表す10 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:日数
+    # 11:計画単位数 12:限度額管理対象単位数 13:限度額管理対象外単位数 14:_ 15:_
+    # 16:保険単位数合計 17:保険単位数単価 18:保険請求額 19:保険利用者負担額 20:_
+    # 21:_ 22:_ 23:_ 24:_ 25:_ 26:_ 27:_ 28:_ 29:_ 30:_ 31:_ 32:_
+    self 1 19                                  |
+    1bai 2                                     |
+    loopj num=1 - $tmp-futan_futan             |
+    awk '{sagaku=$2-$3;print $1,$3,sagaku,$2,"0",$2}' > $tmp-shukei
+
+    loopj num=1 $tmp-kihon $tmp-shukei        |
+tee ${work}/loopllop | cat                    > $tmp-shukei_second
+    # 1:利用者ID        2:利用者名    3:提供年月       4:保険者番号 5:被保険者番号
+    # 6:保険給付対象内 7:保険給付対象外 8:合計 9:請求済額 10:差し引き請求額
+    cat $tmp-shukei_second                   
+  done
+done                                          > $tmp-kekka
+# 印刷順の整理
+awk '$(NF-2)!=9' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+self 1 3 > $tmp-riyosha_kana
+cat $tmp-kekka                                |
+LANG=C sort -k1,1                             |
+join1 key=1 $tmp-riyosha_kana                 |
+LANG=C sort -k4,4 -k2,2                       |
+delf 2                                        |
+comma 6 7 8 9 10                              |
+self 3 2 4/NF                                 > $tmp-search_kekka
+
+KENSU=$(gyo $tmp-kekka)
+cat $tmp-kekka                                |
+# 1:利用者ID        2:利用者名    3:提供年月       4:保険者番号 5:被保険者番号
+# 6:保険給付対象内 7:保険給付対象外 8:合計 9:請求済額 10:差し引き請求額
+sm2 0 0 6 10                                  |
+comma 1 2 3 4 5                               > $tmp-goukei_kekka
+
+
+#######################################################################################
+    # calsedするfile
+
+# 請求年月
+TAOSHO_MONTH=$(echo $seikyu_nengetsu | awk '{print substr($1,1,4)"年"substr($1,5,2)"月分"}')
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###DOMAIN### ${domain}
+###TAISHO_MONTH### ${TAOSHO_MONTH}
+FIN
+# htmlfile
+cat ${html_dir}/SERVICE_SEIKYUGAKU_ICHIRAN.html      |
+mojihame -l###SERCH_KEKKA### - ${tmp}-search_kekka   |
+mojihame -l###GOUKEI_KEKKA### - ${tmp}-goukei_kekka  |
+calsed -f ${tmp}-calsed -                            > $tmp-base_pdf.html
+    
+    /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}/KAIGO.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf
+
+
+# 予防の対象者ごとにデータを作成
+for member in $(cat $tmp-taishosha_yobo);do
+  # 月毎の処理
+  cat $tmp-from_pompa_yobo          |
+  awk '$1=="'${member}'"{print $5}' |
+  LANG=C sort -u -k1,1n  |
+  yarr                   > $tmp-month_list
+
+  for month in $(cat $tmp-month_list);do
+    # 対象者のデータを準備
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+    awk '$1=="'${member}'" && $5=="'${month}'"'                                                       > $tmp-taisho_data
+
+    # 対象者名とフリガナ
+    # マスタ準備
+    cat ${riyosha_dir}/RIYOUSHA_KIHON       |
+    join0 key=1 <(echo $member)             |
+    awk '$9!=9'                             |
+    self 1 2                                > $tmp-riyosha_kihon
+    # 1:利用ID 2:利用者氏名
+  
+    # 対象データの基本情報レコードから得るもの
+    cat $tmp-taisho_data                    |
+    awk '$4=="01"'                             > $tmp-kihon_joho
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+  
+    cat $tmp-kihon_joho                     |
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+    self 1 5 7 8                            |
+    # 1:利用者ID 2:提供年月 3:保険者番号 4:被保険者番号 5:給付率
+    join1 key=1 $tmp-riyosha_kihon                > $tmp-kihon
+    # 1:利用者ID 2:利用者名 3:提供年月 4:保険者番号 5:被保険者番号
+  
+  
+    # 請求年月和暦変換
+    cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU                    |
+    awk '$5!="9"{print $1,$2,$3,$4}'                                > $tmp-gengou_master
+    
+  
+    cat $tmp-kihon_joho                     |
+    # 1:利用者ID 2:登録時間 3:識別番号(7131または7132) 4:基本情報を表す1 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:_ 10:_
+    # 11:_ 12:_ 13:_ 14:_ 15:被保険者生年月日
+    # 16:性別コード 17:被保険者要介護状態区分コード 18:_ 19:認定有効期間開始日 20:認定有効期間終了日
+    # 21:居宅サービス計画作成区分1(居宅介護支援事業所が作成したことを表す) 22:事業所番号 23:_ 24:_ 25:_
+    # 26:_ 27:_ 28:_ 29:_ 30:_
+    # 31:給付率 32:_ 33:_ 34:_ 35:保険サービス単位合計
+    # 36:合計請求額 37:利用者負担額 38:_ 39:_ 40:_
+    self 1 37                                |
+    1bai 2                                   > $tmp-futan_futan
+  
+    # 集計データから得るもの
+    cat $tmp-taisho_data                     |
+    awk '$4=="10"'                           > $tmp-shukei_data
+    # 1:利用者ID 2:登録時間 3:識別番号 4:集計情報を表す10 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:日数
+    # 11:計画単位数 12:限度額管理対象単位数 13:限度額管理対象外単位数 14:_ 15:_
+    # 16:保険単位数合計 17:保険単位数単価 18:保険請求額 19:保険利用者負担額 20:_
+    # 21:_ 22:_ 23:_ 24:_ 25:_ 26:_ 27:_ 28:_ 29:_ 30:_ 31:_ 32:_
+    
+    cat $tmp-shukei_data                     |
+    # 1:利用者ID 2:登録時間 3:識別番号 4:集計情報を表す10 5:提供年月
+    # 6:事業所番号 7:保険者番号 8:被保険者番号 9:サービス種類コード 10:日数
+    # 11:計画単位数 12:限度額管理対象単位数 13:限度額管理対象外単位数 14:_ 15:_
+    # 16:保険単位数合計 17:保険単位数単価 18:保険請求額 19:保険利用者負担額 20:_
+    # 21:_ 22:_ 23:_ 24:_ 25:_ 26:_ 27:_ 28:_ 29:_ 30:_ 31:_ 32:_
+    self 1 19                                 |
+    1bai 2                                    |
+    loopj num=1 - $tmp-futan_futan            |
+    awk '{sagaku=$2-$3;print $1,$3,sagaku,$2,"0",$2}' > $tmp-shukei
+
+    loopj num=1 $tmp-kihon $tmp-shukei        |
+tee ${work}/loopllop | cat                    > $tmp-shukei_second
+    # 1:利用者ID        2:利用者名    3:提供年月       4:保険者番号 5:被保険者番号
+    # 6:保険給付対象内 7:保険給付対象外 8:合計 9:請求済額 10:差し引き請求額
+    cat $tmp-shukei_second                   
+  done
+done                                          > $tmp-kekka
+cat $tmp-kekka                                |
+LANG=C sort -k1,1                             |
+join1 key=1 $tmp-riyosha_kana                 |
+LANG=C sort -k4,4 -k2,2                       |
+delf 2                                        |
+comma 6 7 8 9 10                              |
+self 3 2 4/NF                                 > $tmp-search_kekka
+
+KENSU=$(gyo $tmp-kekka)
+cat $tmp-kekka                                |
+# 1:利用者ID        2:利用者名    3:提供年月       4:保険者番号 5:被保険者番号
+# 6:保険給付対象内 7:保険給付対象外 8:合計 9:請求済額 10:差し引き請求額
+sm2 0 0 6 10                                  |
+comma 1 2 3 4 5                               > $tmp-goukei_kekka
+
+
+#######################################################################################
+    # calsedするfile
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###DOMAIN### ${domain}
+###TAISHO_MONTH### ${TAOSHO_MONTH}
+FIN
+    # htmlfile
+    cat ${html_dir}/SERVICE_SEIKYUGAKU_ICHIRAN_YOBO.html  |
+    mojihame -l###SERCH_KEKKA### - ${tmp}-search_kekka |
+    mojihame -l###GOUKEI_KEKKA### - ${tmp}-goukei_kekka |
+#    mojihame -l###GOUKEIRAN### - ${tmp}-goukeiran_disp |
+#    mojihame -l###UENOGOSEIKYUKINGAKU### - ${tmp}-goukeiran_disp |
+#    mojihame -l###GORIYOURYOU### - ${tmp}-goriyouryou |
+#    mojihame -l###HAKKOBI### - $tmp-hakko_bi |
+    calsed -f ${tmp}-calsed -                            > $tmp-base_pdf.html
+    
+    /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}/YOBO.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf
+
+# pdf合体
+#######################################################################################
+gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sPAPERSIZE=a4 -dNOPLATFONTS -sOutputFile=${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${current_time}.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf ${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${today}/${userid}/${current_time}/*.pdf
+
+# HTMLの作成
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+
+rm -f ${tmp}-*
+exit 0
+

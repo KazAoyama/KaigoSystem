@@ -1,0 +1,177 @@
+#!/bin/bash
+#
+# CAREPLAN_MENU.DISPLAY : 居宅介護支援メニュー.DISPLAY
+#
+# Usage : CAREPLAN_MENU.DISPLAY namefile datafile
+#
+# Written by Aoyama (hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/CAREPLAN/TRACE_LOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/CAREPLAN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -n "${userid}" ];then
+  :
+else
+  userid="00000077"
+fi
+if [ -n "${password}" ];then
+  :
+else
+  password="aoyagi"
+fi
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+#
+#
+## 利用者名の取得
+#if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+#  cat ${apptbl_dir}/RIYOSHA_MASTER                                  |
+## 1:RIYOSHA_CODE 2:RIYOSHA_NAME 
+#  awk '{print $0,"'${riyosha_name}'"}'                              |
+## 1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+#  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-riyosha_name
+#else
+#  cat ${apptbl_dir}/RIYOSHA_MASTER                              |
+#  awk '{print $0,""}'                                      > ${tmp}-riyosha_name
+#fi
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  cat ${apptbl_dir}/FLOOR_MASTER                               |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  awk '{print $0,"'${floor}'"}'                                |
+# 1:FLOOR_CODE 2:FLOOR_NAME 3:floor_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-floor_name
+else
+  cat ${apptbl_dir}/FLOOR_MASTER                              |
+  awk '{print $0,""}'                                      > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  cat ${apptbl_dir}/UNIT_MASTER                                |
+# 1:UNIT_CODE 2:UNIT_NAME
+  awk '{print $0,"'${unit}'"}'                                 |
+# 1:UNTI_CODE 2:ユニット名 3:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+  cat ${apptbl_dir}/UNIT_MASTER                               |
+  awk '$3=="1"{print $1,$2,""}'                                   > ${tmp}-unit_name
+fi
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d) 
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+
+
+
+
+#######################################################################################
+# formhame前の実態参照変換
+calsed "&" "&amp;" ${namefile}                      |
+calsed "<" "&lt;"                                   |
+calsed ">" "&gt;"                                   |
+calsed "\"" "&quot;"                                |
+# formhame前にキーワードが　"_"　のみの場合、消去
+awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+# formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+
+#######################################################################################
+
+#######################################################################################
+# namefileの再構成
+
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+FIN
+#######################################################################################
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-calsed1
+###DROPDOWN_ACTIVE7### active
+###TEXT_SAKUSEIBI### ${text_sakuseibi}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+###LI_KANGOKAIGOKIROKU4### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+# HTMLの作成
+
+# 初期表示メッセージ
+cat <<- FIN > ${tmp}-html
+FIN
+
+cat ${html_dir}/KYOTAKUSHIEN_MENU_KAIGO1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KYOTAKUSHIEN_MENU_KAIGO2.html   |
+mojihame -l###UNIT_NAME### - ${tmp}-unit_name |
+mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed - |
+formhame -d"_" - ${tmp}-namefile 
+
+rm -f ${tmp}-*
+exit 0

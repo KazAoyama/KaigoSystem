@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="jp" manifest="/js/restaurant.appcache">
+<head>
+<meta charset="utf-8">
+<title>ご注文完了</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="description" content="">
+<meta name="author" content="">
+<meta name="format-detection" content="telephone=no">
+<link rel="stylesheet" type="text/css" href="/css/bootstrap.css">
+<link rel="stylesheet" type="text/css" href="/css/restaurant.css">
+<script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.11.0/jquery-ui.min.js"></script>
+<script src="/js/epos-device-2.6.0.js"></script>
+<script src="/js/restaurant.js"></script>
+<script>
+
+//トップ認証画面へ
+function go_top(){
+
+
+  //遷移先の決定
+  if($("#user_type").val() == "kanriuser"){
+    urlstr = "./RESTAURANT_CHUMON_ICHIRAN.CGI"
+    $("#MODE").val("display");
+
+  }else{
+//    urlstr = "./RESTAURANT_TOPMENU.CGI?post_camera=on"
+    urlstr = "./RESTAURANT_DUMMY.CGI?post_camera=on"
+    $("#MODE").val("init");
+
+  }
+
+   var form = $("#baseinfo");
+   form.attr({
+         target: "_top",
+         method: "post",
+         action: urlstr
+   });
+   form.submit();
+}
+
+
+
+function changeResCodeToString(code){
+  switch (code){
+    case 'EPTR_AUTOMATICAL':
+      resmessage = "自動復帰エラー発生";
+      break;
+
+    case 'EPTR_BATTERY_LOW':
+      resmessage = "バッテリー残量なし";
+      break;
+
+    case 'EPTR_COVER_OPEN':
+      //カバーが空いてるとき、カバーが閉じていてもロール紙がセットされていないとき、など
+      resmessage = "ロール紙がセットされていないか、プリンタカバーが開いています。";
+      break;
+
+    case 'EPTR_CUTTER':
+      resmessage = "オートカッターエラー発生";
+      break;
+
+    case 'EPTR_MECHANICAL':
+      resmessage = "メカニカルエラー発生";
+      break;
+
+    case 'EPTR_REC_EMPTY':
+      resmessage = "プリンタのロール紙がなくなりました。交換してください。";
+      break;
+
+    case 'EPTR_UNRECOVERABLE':
+      resmessage = "復帰不可能エラー";
+      break;
+
+    case 'SchemaError':
+      resmessage = "要求ドキュメントエラー";
+      break;
+
+    case 'DeviceNotFound':
+      resmessage = "指定したプリンターが存在しません";
+      break;
+
+    case 'PrintSystemError':
+      resmessage = "印刷システムにエラー発生";
+      break;
+
+    case 'EX_BADPORT':
+      resmessage = "通信ポート異常検出";
+      break;
+
+    case 'EX_TIMEOUT':
+      resmessage = "印刷タイムアウト";
+      break;
+
+    case 'EX_SPOOLER':
+      resmessage = "印刷キューの空き容量不足";
+      break;
+
+    case 'JobNotFound':
+      resmessage = "指定ジョブIDが存在しません";
+      break;
+
+    case 'Printing':
+      resmessage = "印刷中";
+      break;
+
+    default:
+      resmessage = "(code)" + res.code;
+      break;
+
+  }
+
+  return resmessage;
+}
+
+
+var err_msg1 = "伝票印刷中にエラーが発生しました。画面をこのままにしてスタッフへご連絡願います。";
+var err_msg2 = "プリンタエラー回復後、注文一覧にてご入居者様の当該伝票を印刷してください。（注文番号：###CHUMON_NO###）";
+
+//var canvas = document.getElementById('canvas');
+var printer = null;
+var ePosDev = new epson.ePOSDevice();
+
+var msg_success = "";
+
+$( function() {
+//初期設定
+  //「閉じるボタン」非表示
+  $(".btn_finish").hide();
+
+  //マスタから取得
+  ePosDev.connect('###PRINTE_IP###', 8008, cbConnect);
+  //ST・本番G環境(センター南）
+  //ePosDev.connect('192.168.11.18', 8008, cbConnect);
+
+  //再印刷判定
+  if("###SAI_INSATSU###" == "1"){
+    msg_success = "伝票を印刷しました。";
+    $("#header_finish .well").text("伝票印刷");
+  }else{
+    msg_success = "ご注文を受け付けました。";
+  }
+
+
+});
+
+
+function cbConnect(data) {
+    if(data == 'OK' || data == 'SSL_CONNECT_OK') {
+        ePosDev.createDevice('local_printer', ePosDev.DEVICE_TYPE_PRINTER,
+                              {'crypto':false, 'buffer':false}, cbCreateDevice_printer);
+    } else {
+         $("#msg_area").css("text-align","left");
+         $("#msg_area").css("padding-left","5%");
+         $("#receipt_msg").text(err_msg1);
+         $("#receipt_msg_detail_1").text("詳細：" + data);
+         $("#receipt_msg_detail_2").text(err_msg2);
+         $(".btn_finish").show();
+    }
+}
+function cbCreateDevice_printer(devobj, retcode) {
+    if( retcode == 'OK' ) {
+        printer = devobj;
+        printer.timeout = 60000;
+        printer.onreceive = function (res) {
+                             
+                             if(res.success == true) {
+                                // 正常に印刷できたときのメッセージ
+                                $("#receipt_msg").text(msg_success);
+                                //3秒後にトップに遷移
+                                setTimeout("go_top()",1000);
+
+                             }else{
+                              $("#msg_area").css("text-align","left");
+                              $("#msg_area").css("padding-left","5%");
+                              $("#receipt_msg").text(err_msg1);
+                              $("#receipt_msg_detail_1").text("詳細：" + changeResCodeToString(res.code)  + " (status)" + res.status);
+                              $("#receipt_msg_detail_2").text(err_msg2);
+
+                              $(".btn_finish").show();
+                             }
+                            };
+        printer.oncoveropen = function () { 
+          $("#msg_area").css("text-align","left");
+          $("#msg_area").css("padding-left","5%");
+          $("#receipt_msg").text(err_msg1); 
+          $("#receipt_msg_detail_1").text("詳細：プリンタのカバーが開いています。");
+          $("#receipt_msg_detail_2").text(err_msg2);
+
+          $(".btn_finish").show();
+        };
+        //印刷実行
+        print();
+    } else {
+        $("#msg_area").css("text-align","left");
+        $("#msg_area").css("padding-left","5%");
+        $("#receipt_msg").text(err_msg1);
+        $("#receipt_msg_detail_1").text("詳細：" + retcode);
+        $("#receipt_msg_detail_2").text(err_msg2);
+
+        $(".btn_finish").show();
+    }
+}
+
+
+
+function print() {
+
+    //入居者氏名をcanvas(HTML5)上で画像化。（プリンタ未対応文字対策）
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.textAlign = 'left';
+    ctx.font = 'normal normal  52px "HiraKakuProN-W3", "Meiryo", sans-serif';
+    ctx.fillText('###NYUKYOSHA_NAME### 様', 0, 50);
+
+    printer.addTextLang('ja');
+    printer.addTextFont(printer.FONT_A);
+
+
+    printer.addTextAlign(printer.ALIGN_RIGHT);
+    //再印刷判定
+    if("###SAI_INSATSU###" == "1"){
+      printer.addText('[再]\n');
+    }
+
+    //注文番号
+    printer.addText('注文番号\n');
+    printer.addTextSize(2, 2);
+    printer.addText('###CHUMON_NO###\n');
+    //施設名
+    printer.addTextAlign(printer.ALIGN_CENTER);
+    printer.addTextVPosition(10);
+    printer.addTextSize(1, 1);
+    printer.addText('###SHISETSU_NAME###\n');
+
+    printer.addTextStyle(true, false, false, printer.COLOR_1);
+    printer.addTextSize(2, 2);
+    printer.addTextSmooth(true);
+    printer.addText('   お食事注文明細   \n');
+    printer.addTextSmooth(false);
+    printer.addFeed();
+    printer.addTextStyle(false, false, false, printer.COLOR_1);
+
+//    printer.addText('注文番号\n');
+//    printer.addTextAlign(printer.ALIGN_CENTER);
+//    printer.addTextSize(4, 4);
+//    printer.addTextSmooth(true);
+//   //注文番号
+//    printer.addText('###CHUMON_NO###\n');
+//    printer.addTextSmooth(false);
+//    printer.addTextSize(1, 1);
+    //注文受付時刻
+    printer.addTextAlign(printer.ALIGN_CENTER);
+    printer.addTextSize(1, 1);
+    printer.addText('###UKETSUKE_DATE1### ###UKETSUKE_DATE2###\n');
+    printer.addFeed();
+    //ご入居者
+//    printer.addTextAlign(printer.ALIGN_LEFT);
+//    printer.addTextPosition(0);
+//    printer.addTextSize(2, 2);
+//    printer.addText('###NYUKYOSHA_NAME### 様\n');
+
+    //canvas(HTML5)で画像化した入居者氏名をセット
+    printer.addTextAlign(printer.ALIGN_LEFT);
+    printer.addImage(ctx,0,0,500,60,printer.COLOR_1,printer.MODE_MONO);
+
+    //部屋番号
+    printer.addTextPosition(0);
+    printer.addTextSize(2, 2);
+    printer.addText('(部屋番号：###ROOM_NO###)\n');
+    printer.addHLine(30, 480, printer.LINE_THICK);
+    printer.addFeed();
+
+
+    printer.addTextAlign(printer.ALIGN_LEFT);
+    printer.addTextPosition(0);
+    printer.addTextSize(2, 2);
+    printer.addText('[注文明細]\n');
+<!-- ###RECEIPT_MEISAI### -->
+    //メニュー名はHTML用に&nbsp;で半角スペースをセットしてるのでプリンタ出力用にここで変換
+    menu_name="%5";
+    menu_name_new=menu_name.replace("&nbsp;"," ");
+
+    printer.addTextAlign(printer.ALIGN_LEFT);
+    printer.addTextPosition(0);
+    printer.addTextSize(2, 2);
+    printer.addText(menu_name_new + '\n');
+    //ご入居者数量
+    if("%6" != "" && "%6" != "0"){
+      printer.addTextPosition(150);
+      printer.addText('ご入居者×  %6\n');
+    }
+    //ゲスト数量
+    if("%7" != "" && "%7" != "0" ){
+      printer.addTextPosition(150);
+      printer.addText('ゲスト　×  %7\n');
+    }
+<!-- ###RECEIPT_MEISAI### -->
+
+/*
+    printer.addText('温泉卵\n');
+    printer.addTextPosition(150);
+    printer.addText('ご入居者×  1\n');
+    printer.addTextPosition(150);
+    printer.addText('ゲスト　×  0\n');
+    printer.addTextAlign(printer.ALIGN_LEFT);
+    printer.addTextPosition(20);
+    printer.addTextSize(1, 1);
+    printer.addText('コーヒー\n');
+    printer.addTextPosition(150);
+    printer.addText('ご入居者×  1\n');
+    printer.addTextPosition(150);
+    printer.addText('ゲスト　×  0\n');
+*/
+    printer.addFeed();
+    printer.addTextSize(2, 2);
+    printer.addTextAlign(printer.ALIGN_LEFT);
+    printer.addTextPosition(0);
+    printer.addText('[嗜好]\n');
+
+    //嗜好1
+    printer.addTextSize(2, 2);
+    printer.addTextPosition(0);
+    printer.addText('###SHUKO1###\n');
+    //嗜好2
+    printer.addTextPosition(0);
+    printer.addText('###SHUKO2###\n');
+
+
+    printer.addFeed();
+    printer.addCut(printer.CUT_FEED);
+    printer.addTextPosition(0);
+    printer.send();
+}
+
+</script>
+
+</head>
+<body id="body_kakutei" >
+  <div id="wrap">
+    <div id="header_finish" >
+      <div class="name">###NYUKYOSHA_NAME### 様（部屋番号： ###ROOM_NO###）</div>
+      <h1  class="well">ご注文受付</h1>
+    </div>
+    <div id="contents"> 
+       <div id="main" class="round_bord">
+            <!--入居者氏名画像化用（プリンタ未対応文字対策）-->
+            <div style="display:none;">
+                <canvas name="canvas" id="canvas" width="500" height="60" style="background:#FF0000;"></canvas>
+            </div>
+         <div  id="msg_area" style="text-align:center;padding-top:10%;">
+           <p id="receipt_msg" style="font-size:150%;font-weight:bold;line-height:1.5em;">伝票を印刷中です・・</p>
+           <p id="receipt_msg_detail_1" style="padding-top:3%;font-size:150%;font-weight:bold;line-height:1.5em;"></p>
+           <p id="receipt_msg_detail_2" style="font-size:150%;font-weight:bold;line-height:1.5em;"></p>
+         </div>
+         <div style="height:10%;margin-top:100px;dth:100%;text-align:center;"><button class="btn_finish" onClick="go_top();">閉じる</button></div>
+       </div>
+    </div>
+  </div>
+
+  <!--hidden  送信用-->
+  <form name="baseinfo" id="baseinfo">
+    <input type="hidden" name="user_type"  id="user_type" value="###USER_TYPE###" />
+    <input type="hidden" name="MODE"  id="MODE" />
+
+    <!-- 20150803 add--->
+    <input type="hidden" name="target_day"  id="target_day"  value="###TARGET_DAY###" />
+    <input type="hidden" name="target_shokuji_jikantai"  id="target_shokuji_jikantai"  value="###TARGET_SHOKUJI_JIKANTAI###" />
+
+  </form>
+<audio id="btnsound" preload="auto">
+<source src="/js/sound01_click.mp3" type="audio/mp3">
+</audio>
+</body>
+</html>

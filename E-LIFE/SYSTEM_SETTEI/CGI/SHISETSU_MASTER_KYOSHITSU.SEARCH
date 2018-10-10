@@ -1,0 +1,99 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KYOSHITSU.SEARCH : 施設マスタ居室情報 検索
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 検索の処理
+
+# ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM
+# 1:施設ID    2:建屋ID      3:フロア      4:ユニットID 5:居室
+# 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザID
+# -
+# ${home_dir}/TBL/RIYOURYOU_MASTER/KYOSHITSU_CHINRYOU
+# 1:施設ID 2:建屋ID     3:居室     4:期間FROM 5:期間TO
+# 6:金額   7:削除フラグ 8:更新日時 9:ユーザID
+
+# 利用料マスタの準備
+awk '$4<="'${today}'" && $5>="'${today}'" && $(NF-2)!="9"' ${home_dir}/TBL/RIYOURYOU_MASTER/KYOSHITSU_CHINRYOU |
+self 1/3 6 > ${tmp}-riyouryou
+# 1:施設ID 2:建屋ID 3:居室 4:金額
+
+
+# 居室マスタの準備
+# 施設(画面を開く段階で決定している${shisetsu_key})
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+awk '$(NF-2)!="9"' - |
+
+# 利用料マスタの結合
+self 1/2 5 1/NF |
+# 1:施設ID       2:建屋ID      3:居室      4:施設ID    5:建屋ID
+# 6:フロア       7:ユニットID  8:居室      9:居室定員  10:居室タイプ1
+# 11:居室タイプ2 12:削除フラグ 13:更新日時 14:ユーザID
+LANG=C sort |
+join2 key=1/3 ${tmp}-riyouryou - |
+# 1:施設ID       2:建屋ID       3:居室        4:金額      5:施設ID
+# 6:建屋ID       7:フロア       8:ユニットID  9:居室      10:居室定員
+# 11:居室タイプ1 12:居室タイプ2 13:削除フラグ 14:更新日時 15:ユーザID
+self 5/12 4 13/NF |
+# 1:施設ID    2:建屋ID      3:フロア      4:ユニットID 5:居室
+# 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:金額       10:削除フラグ
+# 11:更新日時 12:ユーザID
+
+# 建屋(必須選択なので空の場合は初期表示)
+if [ "${Tateya_select}" != "" -a "${Tateya_select}" != "_" ] ; then
+  cjoin0 key=2 <(echo "${Tateya_select}") -
+else
+  # 初期表示
+  cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  self 2            |
+  LANG=C sort -u      > $tmp-tateya
+
+  Tateya_select="$(head -1 $tmp-tateya)"
+
+  cjoin0 key=2 <(echo "${Tateya_select}") -
+fi |
+
+# フロア
+if [ "${Floor_select}" != "" -a "${Floor_select}" != "_" ] ; then
+  cjoin0 key=3 <(echo "${Floor_select}") -
+else
+  cat -
+fi |
+
+# ユニット
+if [ "${Unit_select}" != "" -a "${Unit_select}" != "_" ] ; then
+  cjoin0 key=4 <(echo "${Unit_select}") -
+else
+  cat -
+fi
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

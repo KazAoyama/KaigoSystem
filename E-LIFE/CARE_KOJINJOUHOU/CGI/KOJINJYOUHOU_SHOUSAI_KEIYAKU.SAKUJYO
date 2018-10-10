@@ -1,0 +1,447 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KEIYAKU.SAKUJYO
+# 個人情報詳細　契約　削除
+#
+# Written by E.Okuda 2014/05/02
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+#  cp $tmp-* /home/hands/work/okuda
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+RIYOUSHAID=$(nameread "RIYOUSHAID" $namedata)
+KEIYAKUID=$(nameread  "KEIYAKUID"  $namedata)
+shisetsu=$(nameread  "shisetsu"  $namedata)
+# 契約情報の取得
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_KEIYAKU |
+#tee $tmp-keiyaku_all  |
+awk '$2=="'${KEIYAKUID}'"' > $tmp-keiyaku
+
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_KEIYAKU |
+#tee $tmp-keiyaku_all  |
+awk '$2!="'${KEIYAKUID}'"' > $tmp-keiyaku_all
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+Shisetsu="$(awk '{print $3}' $tmp-keiyaku)"
+Tateya="$(awk '{print $4}' $tmp-keiyaku)"
+Kyoshitsu="$(awk '{print $7}' $tmp-keiyaku)"
+KeiyakuShurui="$(awk '{print $9}' $tmp-keiyaku)"
+
+# 施設か事業所か
+cat $tmp-keiyaku |
+awk '$3!~/^1/{print $3}' > $tmp-shisetsu
+
+# 利用料情報の取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_RIYOURYOU  > $tmp-riyouryou
+# 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+# 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+
+
+# 請求確定年月
+cat /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+awk '$(NF-2)!=9{print $0}' |
+LANG=C sort                |
+getlast 1 1                |
+self 2       > $tmp-kakutei_nengetsu
+
+kakutei_nengetsu=$(cat $tmp-kakutei_nengetsu)
+kakutei_year=$(echo ${kakutei_nengetsu} |  awk '{print substr($1,1,4)}')
+kakutei_month=$(echo ${kakutei_nengetsu} | awk '{print substr($1,5,2)}')
+kakutei_nengetsuhi=$(mdate ${kakutei_nengetsu}m | self NF)
+
+##########################
+# 入力データのチェック
+##########################
+
+# ログイン施設と別の施設だったら削除不可
+[ "${shisetsu}" != "${Shisetsu}" ] && error_exit "ログインしている施設・事業所以外の契約は削除できません。ログインしなおしてください。"
+
+# 契約がこれ一つしかなかったらエラー
+[ ! -s $tmp-keiyaku_all ] && error_exit "他に契約がないため削除できません。"
+
+# 起算開始日を迎えている利用料があればエラー
+cat $tmp-riyouryou |
+# 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+# 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+awk '$6<="'${kakutei_nengetsuhi}'"{print $0}' > $tmp-riyouryou_error
+
+[ -s $tmp-riyouryou_error ] && error_exit "請求確定済みの利用料が登録されているため、この契約は削除できません。"
+
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 利用者契約
+# 利用者契約金
+# 利用者利用料
+# 利用者特販
+# 施設利用者テーブル
+
+#--------------------------------------------------------------
+
+#######################
+# 1:利用者契約テーブル
+#######################
+
+  cat $tmp-keiyaku |
+  self 1/NF-3      |
+  awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'  > $tmp-riyousha_keiyaku_input
+  # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+  # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+  # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+  # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+  # 21:予備5           22:削除フラグ 23:更新日時   24:UserID
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 2:利用者契約金テーブル
+#########################
+
+# 現在のデータから削除するもの
+cat ${pompa_dir}/RIYOUSHA_KEIYAKUKIN |
+# 同じ契約種別の契約金情報を取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"{print $0}' |
+self 1/NF-3 |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'  > $tmp-riyousha_keiyakukin_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 3:利用者利用料テーブル
+#########################
+
+# 現在のデータから削除するもの
+cat ${pompa_dir}/RIYOUSHA_RIYOURYOU |
+# 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+# 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+# 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+# 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+# 21:更新者
+# 同じ契約種別の契約金情報を取得
+awk '$1=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"{print $0}' |
+self 1/NF-3    |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'          >  $tmp-riyousha_riyouryou_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+#########################
+# 4:利用者特販テーブル
+#########################
+cat ${pompa_dir}/RIYOUSHA_TOKUHAN |
+# 1:利用者(入居者)ID 2:施設ID  3:契約ID 4:特販種別ID 5:番号
+# 6:値引金額         7:開始日  8:終了日 9:内容       10:予備1
+# 11:予備2           12:予備3  13:予備4 14:予備5     15:削除フラグ
+# 16:更新日          17:更新者
+self 1/NF-3    |
+awk '{print $0,"9","'${cur_time}'","'${USERID}'"}'        >  $tmp-riyousha_tokuhan_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 5:施設利用者テーブル
+#########################
+
+#$tmp-keiyaku
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+
+# 施設データ
+if [ -s $tmp-shisetsu ] ; then
+  # この入居者の施設利用者ステータスが既にあるか
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS > $tmp-nowstatus
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+# 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新時間
+# 11:更新者
+
+  # この居室の利用者ステータスがあった場合
+  if [ -s $tmp-nowstatus -a "${KeiyakuShurui}" -le "007" ] ; then
+    # 削除する契約以外で同施設・居室の入居契約データがあれば施設利用者ステータスを更新
+    awk '$3=="'${Shisetsu}'"&&$4=="'${Tateya}'"&&$7=="'${Kyoshitsu}'"&&$(NF-2)!="9"{print $0}' $tmp-keiyaku_all |
+    awk '$9<="007"'  > $tmp-nyuukyo_keiyaku
+
+    if [ -s $tmp-nyuukyo_keiyaku ] ; then
+      NewNyuukyobi="$(cat $tmp-nyuukyo_keiyaku | self 12 | LANG=C sort | head -1)"
+      NewTaikyobi="$(cat $tmp-nyuukyo_keiyaku  | self 13 | LANG=C sort | tail -1)"
+
+      cat $tmp-nowstatus |
+      awk '{$7="'${NewNyuukyobi}'";$8="'${NewTaikyobi}'";$(NF-1)="'${cur_time}'";$NF="'${USERID}'";print $0}' > $tmp-shisetsu_riyousha_input
+
+    else
+      cat $tmp-nowstatus |
+      self 1/NF-3        |
+      awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' > $tmp-shisetsu_riyousha_input
+    fi
+  else
+  :
+  fi
+else
+ :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#########################
+# 6:事業所利用者テーブル
+#########################
+
+#$tmp-keiyaku
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+# 施設ではない(居宅訪問介護)
+if [ ! -s $tmp-shisetsu ] ; then
+  awk '$1=="'${Shisetsu}'"&&$2=="'${RIYOUSHAID}'"{print $0}' ${pompa_dir}/JIGYOUSHO_RIYOUSHA_STATUS > $tmp-jigyousho_riyousha_jyunbi_input
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日
+  awk '$3=="'${Shisetsu}'"' $tmp-keiyaku_all  > $tmp-hoka_jigyousho
+  
+  # 事業所利用者ステータスがあり、他の契約があったら
+  if [ -s $tmp-jigyousho_riyousha_jyunbi_input -a -s $tmp-hoka_jigyousho ] ; then
+
+    NewKeiyakubiFrom="$(cat $tmp-hoka_jigyousho | self 12 | LANG=C sort | head -1)"
+    NewKeiyakubiTo="$(cat $tmp-hoka_jigyousho  | self 13 | LANG=C sort | tail -1)"
+
+    echo "${Shisetsu}" "${RIYOUSHAID}" "${NewKeiyakubiFrom}" "${NewKeiyakubiTo}" "1" "${cur_time}" "${USERID}" > $tmp-jigyousho_riyousha_input
+  # 事業所利用者ステータスはあるが、他契約がなかったら
+  elif [ -s $tmp-jigyousho_riyousha_jyunbi_input ] ; then
+    cat $tmp-jigyousho_riyousha_jyunbi_input |
+    self 1/NF-3 |
+    awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' > $tmp-jigyousho_riyousha_input
+
+  else
+    :
+  fi
+else
+ : 
+fi
+
+###################
+# 7:包括利用者テーブル
+###################
+
+#$tmp-keiyaku
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+# 契約が訪問介護の予防と地域包括の時だけ更新
+if [ "${KeiyakuShurui}" = "021" -o "${KeiyakuShurui}" = "027" ] ; then
+  # 1:事業所(包括)ID 2:契約ID     3:契約種類   4:事業所ID 5:入居者ID
+  # 6:契約開始日     7:契約終了日 8:削除フラグ 9:更新時間 10:更新者
+  awk '$2=="'${RIYOUSHAID}'"&&$3=="'${KEIYAKUID}'"{print $0}' ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS > $tmp-houkatsu_now
+
+  # 包括データがあれば削除フラグにす
+  if [ -s $tmp-houkatsu_now ] ; then
+    cat $tmp-houkatsu_now |
+    delf NF-2/NF          |
+    awk '{print $0,"9","'${cur_time}'","'${USERID}'"}' > $tmp-houkatsu_riyousha_input
+  else
+    :
+  fi
+
+# 地域包括がない契約だった
+else
+    :
+fi
+
+
+
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+#cat <<- FIN | LANG=C sort -u > $tmp-target-table
+#RIYOUSHA/SHISETSU_RIYOUSHA_STATUS SHISETSU_RIYOUSHA_STATUS
+#FIN
+: > $tmp-target-table
+[ -s $tmp-riyousha_keiyaku_input ] && echo "RIYOUSHA_KEIYAKU RIYOUSHA_KEIYAKU" >> $tmp-target-table
+[ -s $tmp-riyousha_keiyakukin_input ] && echo "RIYOUSHA_KEIYAKUKIN RIYOUSHA_KEIYAKUKIN" >> $tmp-target-table
+[ -s $tmp-riyousha_riyouryou_input ] && echo "RIYOUSHA_RIYOURYOU RIYOUSHA_RIYOURYOU" >> $tmp-target-table
+[ -s $tmp-riyousha_tokuhan_input ] && echo "RIYOUSHA_TOKUHAN RIYOUSHA_TOKUHAN" >> $tmp-target-table
+[ -s $tmp-shisetsu_riyousha_input ] && echo "SHISETSU_RIYOUSHA_STATUS SHISETSU_RIYOUSHA_STATUS" >> $tmp-target-table
+[ -s $tmp-jigyousho_riyousha_input ] && echo "JIGYOUSHO_RIYOUSHA_STATUS JIGYOUSHO_RIYOUSHA_STATUS" >> $tmp-target-table
+[ -s $tmp-houkatsu_riyousha_input ] && echo "HOUKATSU_RIYOUSHA_STATUS HOUKATSU_RIYOUSHA_STATUS" >> $tmp-target-table
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+#cat <<- FIN > $tmp-koushin_pompa
+#shisetsu_riyousha SHISETSU_RIYOUSHA_STATUS 7 10 11 ${pompa_dir} ${input_dir} 
+#FIN
+: > $tmp-koushin_pompa
+
+[ -s $tmp-riyousha_keiyaku_input ] && echo "riyousha_keiyaku RIYOUSHA_KEIYAKU 2 23 24 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_keiyakukin_input ] && echo "riyousha_keiyakukin RIYOUSHA_KEIYAKUKIN 5 23 24 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_riyouryou_input ] && echo "riyousha_riyouryou RIYOUSHA_RIYOURYOU 5 20 21 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-riyousha_tokuhan_input ] && echo "riyousha_tokuhan RIYOUSHA_TOKUHAN 5 16 17 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-shisetsu_riyousha_input ] && echo "shisetsu_riyousha SHISETSU_RIYOUSHA_STATUS 6 10 11 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-jigyousho_riyousha_input ] && echo "jigyousho_riyousha JIGYOUSHO_RIYOUSHA_STATUS 2 6 7 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-houkatsu_riyousha_input ] && echo "houkatsu_riyousha HOUKATSU_RIYOUSHA_STATUS 3 8 9 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+cp -p ${pompa_dir}/RIYOUSHA_MASTER ${data_dir}/RIYOUSHA_MASTER
+cp -p ${pompa_dir}/RIYOUSHA_KIHON ${data_dir}/RIYOUSHA_KIHON
+cp -p ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS ${data_dir}/SHISETSU_RIYOUSHA_STATUS
+cp -p ${pompa_dir}/JIGYOUSHO_RIYOUSHA_STATUS ${data_dir}/JIGYOUSHO_RIYOUSHA_STATUS
+cp -p ${pompa_dir}/HOUKATSU_RIYOUSHA_STATUS ${data_dir}/HOUKATSU_RIYOUSHA_STATUS
+
+#cp -p ${pompa_dir}/RIYOUSHA_KEIYAKU ${riyousha_dir}/RIYOUSHA_KEIYAKU
+#cp -p ${pompa_dir}/RIYOUSHA_KEIYAKUKIN ${riyousha_dir}/RIYOUSHA_KEIYAKUKIN
+#cp -p ${pompa_dir}/RIYOUSHA_RIYOURYOU ${riyousha_dir}/RIYOUSHA_RIYOURYOU
+#cp -p ${pompa_dir}/RIYOUSHA_TOKUHAN ${riyousha_dir}/RIYOUSHA_TOKUHAN
+
+#echo "result ok ${KEIYAKUID}"
+echo "result ok"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

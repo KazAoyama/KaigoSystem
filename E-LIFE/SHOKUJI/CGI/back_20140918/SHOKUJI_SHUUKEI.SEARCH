@@ -1,0 +1,574 @@
+#!/bin/bash
+#
+# SHOKUJI_SHUUKEI.SEARCH
+# 食事集計検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+riyousha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+mkdir -p ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}
+touch 
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+Shisetsu=$(nameread "Shisetsu" ${namedata})
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread "shisetsu" ${namedata})"
+Tateya=$(nameread "Tateya" ${namedata})
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア　#TODO 従業員マスタからの処理
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+# 表示期間
+Hyouji_Kikan="$(nameread "Hyouji_Kikan" ${namedata})"
+if [ "${Hyouji_Kikan}" = "Month" ] ; then
+  TaishouYear="$(nameread "TaishouYear" ${namedata})"
+  TaishouMonth="$(nameread "TaishouMonth" ${namedata} | maezero 1.2)"
+  TaishouNengetsu="$(echo "${TaishouYear}""${TaishouMonth}")"
+  Taishoubi=$(echo "${TaishouNengetsu}""01")
+else
+  Nengetsuhi="$(nameread "Nengetsuhi" ${namedata} | sed 's/\///g')"
+  Taishoubi="$(echo "${Nengetsuhi}")"
+  TaishouNengetsu="$(echo "${Nengetsuhi}" | awk '{print substr($1,1,6)}')"
+fi
+
+# 現在の居室を取得
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 対象日よりﾀｲｷｮ日が後で2行以上あったら
+awk '$8>="'${Taishoubi}'"{print $6,$0}' |
+LANG=C sort -k1,1 -k8,9nr               |
+rank ref=1                 |
+awk '$1=="1"'              |
+#getlast 1 1                |
+self 8 7                   > $tmp-riyousha_kyoshitsu
+# 1:利用者ID 2: 居室No
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+
+## 20140908変更
+# 消費税率を取得
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU  |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+awk '$3<="'${Taishoubi}'"&&$4>="'${Taishoubi}'"{print $0}'   |
+self 2                                               > ${tmp}-zeiritsu
+zeiritsu=$(cat ${tmp}-zeiritsu | awk '{print $1+"1"}')
+###
+
+# 食事別集計
+if [ "${Shuukei}" = "1" ] ; then
+######20140915追記 縦軸日付じゃない場合
+  if [ "${Taishousha}" != "00" ] ; then
+
+    #スタッフ  
+    if [ -s ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI ] ; then
+      cat ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI    |
+      # 1:USERID       2:施設ID       3:日付 4:食事（朝昼夜おやつ他） 5:食事ID
+      # 6:食事メニューID 7:食事メニュー名称　8:食事種類ID 9:単価(税抜き) 10:数量
+      #11:色ID        12~16:予備  17:削除フラグ　　18:更新日時    19:ユーザID
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'    
+        else
+          awk '$3=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+    ### 20140912 追記
+      awk '{print $0,$12!="_"?$12:$9*"'${zeiritsu}'"}'  |
+      marume 20.0                         |
+      self 1/8 NF 10/NF-1                 |
+      awk '{print $1,$2,"4"$4$8,$9*$10,$10}'  |
+      #  LANG=C sort -k3,3                |
+      #  join2 key=3 /home/hands/E-LIFE/TBL/SHOKUJI/SHOKUJI_KUBUN_SHURUI - |
+      #  delf 3                           |
+        # 1:USERID       2:施設ID  3:食事種類区分(101 102)　4:料金 5:数量
+      LANG=C sort   |
+      join1 key=1 ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER - |
+      self 1 2 NF-3/NF   |
+      awk '{print "STAFF",$0}'        > $tmp-staff_data
+      # 1:"STAFF" 2:USERID 3:USER名 4:食事種類区分(101 102) 5:料金
+      # 6:数量 4:食事（朝昼夜おやつ他）
+    fi
+
+    #利用者
+    if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+      cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+      # 1:利用者ID 2:施設ID                 3:建屋         4:居室        5:入居者ゲストフラグ
+      # 6:日付     7:食事（朝昼夜おやつ他）8:食事ID        9:食事メニューID  10:食事メニュー名称
+      #11:食事種類12:単価（税抜）13:数量   14:色ID                           15:予備
+      #16～19:予備  20:削除フラグ　　21:更新日時    22:ユーザID
+    
+      #ゲストフラグ立ってた利用者ID読み替える
+    #  awk '{if($5=="2"){$1="_"};print}' |
+     
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'   
+        else
+          awk '$6=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+    #   awk '{print $4,$1,$7,$8,$9,$10,$11,$12*$13,$13,$5}'
+      self 4 1 7 8 9 10 11 12 13 5 16                  |
+      #  1:居室             2:利用者ID    3:食事区分（朝昼夜）4:食事ID  5:食事メニューID   
+      #  6:食事メニュー名称 7:食事種類    8:単価（税抜）      9:数量   10:入居者ゲストフラグ
+      # 11:税込価格
+      awk '{print $0,$NF!="_"?$NF:$8*"'${zeiritsu}'"}' |
+      marume -sage 12.0  |
+      self 1/7 NF 9/NF-2 |
+    
+    #  self 4 1 6 9 10                   |
+      LANG=C sort -k2,2                             |
+      join1 key=2 ${riyousha_dir}/RIYOUSHA_MASTER - |
+      self 1/3 NF-7/NF                              |   
+      #  1:居室              2:利用者ID          3:利用者名     4:食事区分（朝昼夜） 5:食事ID  
+      #  6:食事メニューID    7:食事メニュー名称  8:食事種類　   9:単価（税抜）      10:数量
+      # 11:入居者ゲストフラグ
+    
+      #利用者IDが"_"(ゲスト）なら利用者名は★ゲスト
+    #  awk '{if($2=="_"){$3="★ゲスト"};print}'       |
+      LANG=C sort                                    |  
+      #これを細かくわける（朝食メイン、昼食メインetc）
+    #  awk '{print $1,$2,$3,$NF$4$8,$9,$10}'            >  $tmp-riyousha_data
+    #  # 1:居室　 2:USERID 3:USER名 4:食事種類区分(101 102) 5:料金
+    #  # 6:数量
+      awk '{print $2,$3,$NF$4$8,$9*$10,$10}'             |
+    #>  $tmp-riyousha_data
+    # 1:USERID 2:USER名 3:食事種類区分(101 4:102) 5:料金
+    # 6:数量
+      cjoin1 key=1 $tmp-riyousha_kyoshitsu - |
+      self 2 1 3/NF                          > $tmp-riyousha_data
+    fi
+# 1:居室 2:USERID 3:USER名 
+
+######20140915追記　 縦軸日付の場合
+  else
+    if [ -s ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI -a  ] ; then
+      cat ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI    |
+      # 1:USERID       2:施設ID       3:日付 4:食事（朝昼夜おやつ他） 5:食事ID
+      # 6:食事メニューID 7:食事メニュー名称　8:食事種類ID 9:単価(税抜き) 10:数量
+      #11:色ID        12~16:予備  17:削除フラグ　　18:更新日時    19:ユーザID
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$6=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+      awk '{print $0,$12!="_"?$12:$9*"'${zeiritsu}'"}'  |
+      marume 20.0                         |
+      self 1/8 NF 10/NF-1                 |
+      awk '{print $3,$3,substr($3,1,4)"/"substr($3,5,2)"/"substr($3,7,2),"4"$4$8,$9*$10,$10}' |
+      LANG=C sort                         > $tmp-staff_data
+    else
+      :
+    fi
+    if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+      cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+      # 1:利用者ID 2:施設ID                 3:建屋         4:居室        5:入居者ゲストフラグ
+      # 6:日付     7:食事（朝昼夜おやつ他）8:食事ID        9:食事メニューID  10:食事メニュー名称
+      #11:食事種類12:単価（税抜）13:数量   14:色ID                           15:予備
+      #16～19:予備  20:削除フラグ　　21:更新日時    22:ユーザID
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$6=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+      awk '{print $0,$15!="_"?$15:$12*"'${zeiritsu}'"}' |
+      marume -sage 23.0  |
+      awk '{print $6,$6,substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2),$5$7$11,$23*$13,$13}' |
+      LANG=C sort        >$tmp-riyousha_data
+    else
+      :
+    fi
+  fi
+
+  #表示対象が利用者なのかスタッフなのか全てなのか ##日付なのか
+  if [ "${Taishousha}" == "01" ] ;then
+    cat $tmp-riyousha_data
+  elif [ "${Taishousha}" == "02" ] ;then
+    cat $tmp-staff_data
+  else
+    cat $tmp-staff_data $tmp-riyousha_data
+  fi                                             |
+# 1:居室 2:USERID 3:USER名 4:食事種類区分(101 5:102)
+# 6:料金
+
+  LANG=C sort > ${tmp}-moto_data
+  #データがあるなら整形する
+  if [ $(gyo ${tmp}-moto_data) -ge 1 ] ;then
+    cat ${tmp}-moto_data |
+    	  
+    if [ "${HyoujiKoumoku}" = "Suuryou" ] ; then
+  
+      delf 5 
+    else
+      delf 6
+    fi            |
+      # 集計
+      sm2 1 4 5 5 |
+      # 食事ごとに横へ
+      LANG=C sort -k4,4 |
+      map num=3   |
+      tee ${tmp}-tochuu |
+      # 1:居室　 2:USERID 3:USER名 4～食事種類区分ごとの数量(金額)計
+      #　1行目はヘッダー
+      # ヘッダ－除く処理--------------------------------------------------------------
+      awk '$1!="*"{print $0}' |
+      LANG=C sort -k1,3 |
+      #個人ごとまとめる
+      sm2 1 3 4 NF |
+      getlast 1 3  |
+      # 合計行作る-------------------------------- 
+      sm5 1 3 4 NF |
+      awk '{if($1~/^@/){print "@","all","合計",$0}
+            else{print $1,$2,$3,$0}
+           }'      |
+      self 1/3 7/NF > $tmp-data_before
+      # ------------------------------------------
+      #ヘッダー取得
+       awk '$1=="*"{print $0}' ${tmp}-tochuu |
+       cat - $tmp-data_before                >  $tmp-data 
+  else
+     : > $tmp-data
+  fi
+  
+#    else
+#  
+#      delf 6  |
+#      sm2 1 4 5 5 |
+#      map num=3   |
+#      awk '$1!="*"{print $0}' |
+#  # 1:居室     2:利用者ID 3:利用社名 4:金額(朝) 5:金額(昼)
+#  # 6:金額(夜) 7:おやつ   8:その他
+#      # 合計行
+#      sm5 1 3 4 NF |
+#      awk '{if($1~/^@/){print "@","all","合計",$0}
+#            else{print $1,$2,$3,$0}
+#           }'      |
+#      self 1/3 7/NF > $tmp-data
+#    fi
+
+# メニュー別集計の時
+elif [ "${Shuukei}" = "2" ] ; then
+
+######20140915追記 縦軸日付じゃない場合
+  if [ "${Taishousha}" != "00" ] ; then
+
+    if [ -s ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI ] ; then
+      #if [ ! -z "${NyuuryokuMODE}" -a "${NyuuryokuMODE}" = "StaffNyuuryoku" ] ; then
+      cat ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI    |
+      # 1:USERID       2:施設ID       3:日付 4:食事（朝昼夜おやつ他） 5:食事ID
+      # 6:食事メニューID 7:食事メニュー名称　8:食事種類ID 9:単価(税抜き) 10:数量
+      #11:色ID        12~16:予備  17:削除フラグ　　18:更新日時    19:ユーザID
+    
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$3=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+      self 1 6 7 9 10 4 12  |
+      # 1:USERID                 2:食事メニューID 3:食事メニュー名称 4:単価(税抜き) 5:数量
+      # 6:食事（朝昼夜おやつ他） 7:単価(税込み)
+
+    ### 20140912 追記 税込み計算
+      awk '{print $0,$NF!="_"?$NF:$4*"'${zeiritsu}'"}' |
+      marume -sage 8.0    |
+      self 1/3 NF 5 6     |
+      # 1:USERID                 2:食事メニューID 3:食事メニュー名称 4:単価(税抜き) 5:数量
+      # 6:食事（朝昼夜おやつ他）
+      LANG=C sort         |
+      cjoin1 key=1 ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER - |
+      self 1 2 NF-4/NF   |
+      # 1:USERID 2:USER名 3:食事メニューID 4:食事メニュー名称 5: 単価(税抜き 6:数量 
+      # 7:食事（朝昼夜おやつ他）
+      awk '{print "STAFF",$1,$2,"4",$3,$4,$5*$6,$6,$7}'        > $tmp-staff_data
+      # 1:"STAFF" 2:USERID 3:USER名 4:スタッフフラグ"3" 5:メニューID  
+      # 6:食事メニュー名称　7:料金    8:数量 9:食事（朝昼夜おやつ他）
+    else
+      :
+    fi
+    
+    if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+      cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+      # 1:利用者ID 2:施設ID                 3:建屋         4:居室        5:入居者ゲストフラグ
+      # 6:日付     7:食事（朝昼夜おやつ他）8:食事ID        9:食事メニューID  10:食事メニュー名称
+      #11:食事種類12:単価（税抜）13:数量   14:色ID                           15:予備
+      #16～19:予備  20:削除フラグ　　21:更新日時    22:ユーザID
+    
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$6=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+    #  self 4 1 5 9 10 12 13    |
+    ### 20140912 追記　税込み価格計算
+      awk '{print $0,$16!="_"?$16:$12*"'${zeiritsu}'"}' |
+      marume 23.0          |
+      self 1/11 NF 13/NF-1 |
+      awk '{print $4,$1,$5,$9,$10,$12*$13,$13,$7}'      |
+      # 1:居室 2:利用者ID 3:入居者ゲストフラグ     4:食事メニューID 5:食事メニュー名称
+      # 6:金額 7:数量     8:食事（朝昼夜おやつ他）
+      LANG=C sort -k2,2    |
+      join1 key=2 ${riyousha_dir}/RIYOUSHA_MASTER - |
+    #  self 1/3 NF-4/NF                              > $tmp-riyousha_data
+      self 2/3 NF-5/NF                              |
+      cjoin1 key=1 $tmp-riyousha_kyoshitsu -        |
+      self 2 1 3/NF                                 > $tmp-riyousha_data
+      # 1:居室             2:利用者ID 3:利用社名 4:入居者ゲストフラグ 5:メニューID
+      # 6:食事メニュー名称 7:料金     8:数量     9:食事（朝昼夜おやつ他）
+    else
+      :
+    fi
+######20140915追記 縦軸日付じゃない場合
+  else
+    if [ -s ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI ] ; then
+      #if [ ! -z "${NyuuryokuMODE}" -a "${NyuuryokuMODE}" = "StaffNyuuryoku" ] ; then
+      cat ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}/STAFF_SHOKUJI_JISSEKI    |
+      # 1:USERID       2:施設ID       3:日付 4:食事（朝昼夜おやつ他） 5:食事ID
+      # 6:食事メニューID 7:食事メニュー名称　8:食事種類ID 9:単価(税抜き) 10:数量
+      #11:色ID        12~16:予備  17:削除フラグ　　18:更新日時    19:ユーザID
+
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$3=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+      self 3 6 7 9 10 4 12  |
+# 1:日付                   2:食事メニューID 3:食事メニュー名称 4:単価(税抜き) 5:数量
+# 6:食事（朝昼夜おやつ他） 7:単価(税込み)
+    ### 20140912 追記 税込み計算
+      awk '{print $0,$NF!="_"?$NF:$4*"'${zeiritsu}'"}' |
+      marume -sage 8.0     |
+      self 1/3 NF 5 6      |
+      LANG=C sort   |
+      # 1:日付 2:食事メニューID 3:食事メニュー名称　 4:単価(税込) 5:数量
+#      join1 key=1 ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER - |
+#      self 1 2 NF-3/NF   |
+      awk '{print $1,$1,substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2),"4",$2,$3,$4*$5,$5,$6}'    > $tmp-staff_data
+      # 1:"STAFF" 2:USERID 3:USER名 4:スタッフフラグ"3" 5:メニューID
+      # 6:食事メニュー名称　7:料金    8:数量
+    else
+      :
+    fi
+    if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+      cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+      # 1:利用者ID 2:施設ID                 3:建屋         4:居室        5:入居者ゲストフラグ
+      # 6:日付     7:食事（朝昼夜おやつ他）8:食事ID        9:食事メニューID  10:食事メニュー名称
+      #11:食事種類12:単価（税抜）13:数量   14:色ID                           15:予備
+      #16～19:予備  20:削除フラグ　　21:更新日時    22:ユーザID
+
+        if [ "${Hyouji_Kikan}" = "Month" ] ; then
+          awk '$(NF-2)!="9"{print $0}'
+        else
+          awk '$6=="'${Nengetsuhi}'"&&$(NF-2)!="9"{print $0}'
+        fi |
+    #  self 4 1 5 9 10 12 13    |
+    ### 20140912 追記　税込み価格計算
+      awk '{print $0,$16!="_"?$16:$12*"'${zeiritsu}'"}' |
+      marume 23.0          |
+      self 1/11 NF 13/NF-1 |
+      awk '{print $6,$6,substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2),$5,$9,$10,$12*$13,$13,$7}'   >$tmp-riyousha_data
+#      awk '{print $4,$1,$5,$9,$10,$12*$13,$13}'     |
+#      LANG=C sort -k2,2    |
+#      join1 key=2 ${riyousha_dir}/RIYOUSHA_MASTER - |
+    #  self 1/3 NF-4/NF                              > $tmp-riyousha_data
+#      self 2/3 NF-4/NF                              |
+#      cjoin1 key=1 $tmp-riyousha_kyoshitsu -        |
+#      self 2 1 3/NF                                 > $tmp-riyousha_data
+      # 1:居室 2:利用者ID 3:利用社名 4:入居者ゲストフラグ 5:メニューID 6:食事メニュー名称 7:料金 8:数量
+    else
+      :
+    fi
+
+  fi
+
+  #表示対象が利用者なのかスタッフなのか全てなのか
+  if [ "${Taishousha}" == "01" ] ;then
+    cat $tmp-riyousha_data
+  elif [ "${Taishousha}" == "02" ] ;then
+    cat $tmp-staff_data
+  else
+    cat $tmp-staff_data $tmp-riyousha_data
+  fi                                             |
+
+  LANG=C sort  > ${tmp}-moto_data
+
+  #データがあるなら整形するし、マスタ用意する
+  if [ $(gyo ${tmp}-moto_data) -ge 1 ] ;then
+
+    #メニューIDが朝食、昼食、夕食、おやつ、未分類のどれに属するのか判定するマスタ用意################################
+    self 5 ${tmp}-moto_data |
+    LANG=C sort -u          > ${tmp}-menu
+    cjoin0 key=1 ${tmp}-menu /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU |
+# 1:メニューid 2:メニュー名   3:食事種類     4:施設ID          5:建屋ID
+# 6:入居者価格 7:ゲスト１価格 8:ゲスト２価格 9:スタッフ価格    10:朝食
+# 11:昼食      12:夕食        13:おやつ      14:期間From(西暦) 15:期間To(西暦)
+# 16:表示色    17:表示順      18:予備項目2   19:予備項目3      20:予備項目4
+# 21:予備項目5
+#    awk '{print $1,$9$10$11$12,$17!="_"?$17:"9999",$3}'             |
+    awk '{print $1,$3,$17!="_"?$17:"9999"}'            |
+    maezero 3.4                                         > ${tmp}-shokuji_when
+    # 1:メニューid 2:食事種類 3:表示順
+#    awk '{print $1,$2,$4$3}'  > ${tmp}-shokuji_when
+    # 1:メニューID 2:4桁の数値  3:表示順6keta
+    # この4桁の数値は0と1の組み合わせ。判定は以下のとおり
+    # 1000:朝食 0100:昼食 0010:夕食 0001:おやつ　それ以外はその他#################################################### # #
+
+    cat ${tmp}-moto_data | 
+    # 1:居室             2:利用者ID 3:利用社名 4:入居者ゲストフラグ 5:メニューID
+    # 6:食事メニュー名称 7:料金     8:数量     9:食事（朝昼夜おやつ他）
+    if [ "${HyoujiKoumoku}" = "Suuryou" ] ; then
+       delf 7 
+     else
+       delf 8  
+    fi                                     |
+       # メニューIDで朝食、昼食、夕食、おやつ、未分類のどれに属するのか判定
+       LANG=C sort -k5,5                    |
+       join2 key=5 ${tmp}-shokuji_when -    |
+  tee $tmp-shokujiwhenjoin |
+       # 1:居室        2:利用者ID       3:利用社名        4:入居者ゲストフラグ 5:メニューID
+       # 6:食事種類    7:メニュー表示順 8:食事メニュー名  9:数量               10:食事（朝昼夜おやつ他）
+
+#       # 1:居室       2:利用者ID       3:利用社名       4:入居者ゲストフラグ 5:メニューID
+#       # 6:判定フラグ 7:メニュー表示順 8:食事メニュー名 9:数量 
+
+       # 朝食なら1　昼食なら2　夕食なら3　おやつなら4 それ以外なら9　をメニューIDの頭にくっつける
+#       awk '{
+#             { if($6=="1000"){$5="1"$5} 
+#               else if($6=="0100"){$5="2"$5}
+#               else if($6=="0010"){$5="3"$5}
+#               else if($6=="0001"){$5="4"$5}
+#               else {$5="9"$5}
+#             } ;print
+#            }'                              |
+#       delf 6                               |
+#      # 1:居室           2:利用者ID       3:利用社名 4:入居者ゲストフラグ 5:判定フラグ＋メニューID
+#      # 6:メニュー表示順 7:食事メニュー名 8:数量
+#
+#       #メニューIDにゲストフラグくっつける
+#       awk '{print $1,$2,$3,$5$4,$6,$7,$8,$4}' |
+#       # 1:居室             2:利用者ID 3:利用社名      4:メニューID＋ゲストフラグ 5:メニュー表示順
+#       # 6:食事メニュー名称 7:数量     8:$ゲストフラグ
+
+       #メニューIDにゲストフラグくっつける
+       awk '{print $1,$2,$3,$4$6$10$7$5,$4$6$10$7$8,$9,$4}' |
+       # 1:居室   2:利用者ID  3:利用社名  4:ゲストフラグ+食事種類+(朝昼夜おやつ他)+表示順+メニューID 5:ゲストフラグ+食事種類+(朝昼夜おやつ他)+表示順+メニュー名
+       # 6:数量   7:ゲストフラグ
+
+#       # ゲストフラグ読み替え
+#       awk '{
+#                  if($7=="1"){$5=$5"(入居者)"}
+#             else if($7=="2"){$5=$5"(ゲスト１)"}
+#             else if($7=="3"){$5=$5"(ゲスト２)"}
+#             else if($7=="4"){$5=$5"(従業員)"};print
+#            }'       |
+#       delf 4 5 8    |
+       delf 4 7    |
+       LANG=C sort |   
+       # 1:居室 2:利用者ID 3:利用社名 4:食事メニュー名称 5:数量
+  
+       # 集計
+       sm2 1 4 5 5  |
+       LANG=C sort -k4,4 |
+       # 食事ごとに横へ
+       map num=3   |
+  
+       tee $tmp-all_data |
+       #キーは1:居室 2:利用者ID 3:利用社名まで。 4:メニュー名＋（食べた人）が1レコード目
+  
+  
+       #ヘッダーと分ける処理----------------------------------------------------------
+       awk '$1!="*"{print $0}' |
+       # 1:居室     2:利用者ID 3:利用社名 4:数量(メニュー名＋（食べた人）ごと)･･･
+       # 合計行
+       LANG=C sort -k1,3 |
+       sm2 1 3 4 NF |
+       getlast 1 3  |
+       sm5 1 3 4 NF |
+       #合計行の最初の3フィールドを"@","all","合計"と置き換える処理--------
+       awk '{if($1~/^@/){print "@","all","合計",$0}
+             else{print $1,$2,$3,$0}
+            }'     |
+       delf 4/6    > $tmp-data_before
+       #-------------------------------------------------------------------
+       cat $tmp-all_data |
+       awk '$1=="*"{print $0}' |
+       #----------これでヘッダーを戻す------------------------------------------------
+       cat - $tmp-data_before   >$tmp-data
+#     else
+#   
+#       delf 8  |
+#       #メニューIDにゲストフラグくっつける
+#       awk '{print $1,$2,$3,$5$4,$6,$7,$4}' |
+#       # 1:居室 2:利用者ID 3:利用社名 4:メニューID＋ゲストフラグ 5:食事メニュー名称 6:金額 $7:ゲストフラグ     
+#       # ゲストフラグ読み替え
+#       awk '{
+#                  if($7=="1"){$5=$5"(メ)"}
+#             else if($7=="2"){$5=$5"(ゲ)"}
+#             else if($7=="3"){$5=$5"(ス)"};print
+#            }' |
+#       delf 4 7      |
+#       LANG=C sort    |
+#       # 1:居室 2:利用者ID 3:利用社名 4:食事メニュー名称 5:数量
+#       # 集計
+#       sm2 1 4 5 5  |
+#       # 食事ごとに横へ
+#       map num=3   |
+#       tee $tmp-all_data |
+#       #キーは1:居室 2:利用者ID 3:利用社名まで。 4:メニュー名＋（食べた人)が1レコード目
+#  
+#       #ヘッダーと分ける処理----------------------------------------------------------
+#       awk '$1!="*"{print $0}' |
+#       # 1:居室     2:利用者ID 3:利用社名 4:金額(メニューID＋ゲストフラグごと)･･･
+#       #個人ごとまとめる
+#       sm2 1 3 4 NF |
+#       getlast 1 3  |
+#       # 合計行
+#       sm5 1 3 4 NF |
+#       awk '{if($1~/^@/){print "@","all","合計",$0}
+#             else{print $1,$2,$3,$0}
+#            }'     |
+#       delf 4/6    > $tmp-data_before
+#   
+#       cat $tmp-all_data |
+#       awk '$1=="*"{print $0}' |
+#       #----------これでヘッダーを戻す------------------------------------------------
+#       cat - $tmp-data_before   >$tmp-data
+#    
+#     fi
+  #データなければ以下
+  else 
+    : > $tmp-data 
+  fi
+fi
+#   [ ! -s $tmp-data ] && echo "@ @ 合計 0 0 0 0 0" > $tmp-data
+#cp $tmp-* /home/hands/work/okuda
+
+cat $tmp-data
+
+## 終了
+rm -f $tmp-*
+exit 0

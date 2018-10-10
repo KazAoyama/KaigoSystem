@@ -1,0 +1,78 @@
+#!/bin/bash
+#
+# TEST_SIGN_IN.DISPLAY : 権限管理表示
+#
+# Usage : TEST_SIGN_IN.DISPLAY
+#
+# Written by aoyai(handslab.Inc)
+
+exec 2> /home/hands/E-LIFE/TEST/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TEST"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+#if [ -n "${userid}" -a "${userid}" !="_" ];then
+#  :
+#else
+#  userid="00000077"
+#fi
+#if [ -n "${password}" ];then
+#  :
+#else
+#  password="aoyagi"
+#fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+
+# ログインUSER名と施設の取得（仮）
+cat ${apptbl_dir}/STAFF_NAME                     > ${tmp}-usermei
+# 1:USER_ID 2:ユーザー名
+
+cat ${apptbl_dir}/SHISETSU_NAME                  |
+# 1:施設コード 2:USER_ID
+awk '$1!="0"'                                    > ${tmp}-user_shisetsu
+
+cat ${namefile} > ${tmp}-name
+
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-calsed
+###USERID### ${userid}
+###PASSWORD### ${password}
+FIN
+
+# HTMLの作成
+cat ${html_dir}/TEST_SIGN_IN.html     |            
+mojihame -l###USER_ID### - ${tmp}-usermei |
+mojihame -l###SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed -             
+#formhame -d"_" - ${tmp}-namefile
+
+rm -f ${tmp}-*
+exit 0
+

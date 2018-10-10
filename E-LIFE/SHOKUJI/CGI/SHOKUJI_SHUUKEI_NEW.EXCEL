@@ -1,0 +1,752 @@
+#!/bin/bash
+#
+# SCHEDULE_NYUKYOSHA_ICHIRAN.DISPLAY
+# スケジュール一覧　表示用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# 施設
+#Shisetsu=$(nameread "Shisetsu" ${namedata})
+Shisetsu=$(nameread "SHISETSUID" ${namedata})
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread "shisetsu" ${namedata})"
+Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア　#TODO 従業員マスタからの処理
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+echo "1 月" > $tmp-youbi
+echo "2 火" >> $tmp-youbi
+echo "3 水" >> $tmp-youbi
+echo "4 木" >> $tmp-youbi
+echo "5 金" >> $tmp-youbi
+echo "6 土" >> $tmp-youbi
+echo "7 日" >> $tmp-youbi
+
+# 施設名
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+awk '$1=="'${Shisetsu}'"{print $2}' > $tmp-shisetsumei
+
+# 表示期間
+TaishouYear="$(nameread "TaishouYear" ${namedata})"
+TaishouMonth="$(nameread "TaishouMonth" ${namedata} | maezero 1.2)"
+TaishouNengetsu="$(echo "${TaishouYear}""${TaishouMonth}")"
+
+# 月
+echo "${TaishouNengetsu}" |
+awk '{print substr($1,5,2)*1"月"}' > $tmp-header-nengetsu
+
+
+# 献立表の最初の日曜日の日付を取得
+dayfirst_yobi_kbn=$(mdate -y ${TaishouNengetsu}01)
+if [ "${dayfirst_yobi_kbn}" = "7" ] ; then
+   first_sun=${TaishouNengetsu}01
+else
+   first_sun=$(mdate ${TaishouNengetsu}01/-${dayfirst_yobi_kbn})
+fi
+
+sunday=${first_sun}
+:> $tmp-kondate_data
+while [ "${sunday}" -le "${TaishouNengetsu}31" ]
+do
+  if [ -s ${pompa_dir}/KONDATE_TOUROKU/${Shisetsu}/KONDATE_TOUROKU_${sunday} ] ; then
+     awk '$(NF-2)!="9"' ${pompa_dir}/KONDATE_TOUROKU/${Shisetsu}/KONDATE_TOUROKU_${sunday} >> $tmp-kondate_data
+  fi
+  tmpsunday=${sunday}
+  sunday=$(mdate ${tmpsunday}/+7)
+done
+
+:> $tmp-kondate_jisseki_data
+# 当月の食事実績
+if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+  cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+# 有効
+  awk '$(NF-2)!="9"'|
+  tee $tmp-shokuji_jisseki_full_data |
+# 入居者の食数のみ
+  awk '$5=="1"'     |
+# 1:日付 2:食事種類(朝、昼、夜) 3:メニューID 4:数量
+  self 6 7 9 13 |
+  LANG=C sort -k1,3 |
+  sm2 1 3 4 4 > $tmp-shokuji_jisseki_data
+fi
+
+[ $(gyo $tmp-shokuji_jisseki_data) -eq 0 ] && echo "_" "_" "_" "_" > $tmp-shokuji_jisseki_data
+
+# 献立表
+# 1:日付   2:メニューAB 3:食事種類(朝、昼、夜) 4:食事名 5:メニューID
+# 6:発注数 7:調理数     8:検食数               9:代替名
+self 1/4 14/18 $tmp-kondate_data |
+# 1:日付   2:食事種類(朝、昼、夜) 3:メニューID 4:メニューAB 5:食事名
+# 6:発注数 7:調理数               8:検食数     9:代替名
+self 1 3 5 2 4 6/9               |
+LANG=C sort -k1,3                |
+# 1:日付   2:食事種類(朝、昼、夜) 3:メニューID 4:数量   5:メニューAB
+# 6:食事名 7:発注数               8:調理数     9:検食数 10:代替名
+join2 +"0" key=1/3 $tmp-shokuji_jisseki_data > $tmp-kondate_jisseki_data
+
+# 朝、昼、夜に分ける
+awk '$2=="1"' $tmp-kondate_jisseki_data > $tmp-kondate_jisseki_data_asa
+awk '$5=="A"' $tmp-kondate_jisseki_data_asa |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_asa_a
+sm2 0 0 8 8 $tmp-kondate_jisseki_data_asa_a > $tmp-kondate_jisseki_shuukei_asa_a
+
+awk '$5=="B"' $tmp-kondate_jisseki_data_asa |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_asa_b
+sm2 0 0 8 8 $tmp-kondate_jisseki_data_asa_b > $tmp-kondate_jisseki_shuukei_asa_b
+
+# A、Ｂに分ける
+awk '$2=="2"' $tmp-kondate_jisseki_data > $tmp-kondate_jisseki_data_hiru
+awk '$5=="A"' $tmp-kondate_jisseki_data_hiru |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_hiru_a
+sm2 0 0 8 8 $tmp-kondate_jisseki_data_hiru_a > $tmp-kondate_jisseki_shuukei_hiru_a
+
+awk '$5=="B"' $tmp-kondate_jisseki_data_hiru |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_hiru_b
+sm2 0 0 8 8 $tmp-kondate_jisseki_data_hiru_b > $tmp-kondate_jisseki_shuukei_hiru_b
+
+awk '$2=="3"' $tmp-kondate_jisseki_data > $tmp-kondate_jisseki_data_yoru
+awk '$5=="A"' $tmp-kondate_jisseki_data_yoru |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_yoru_a
+
+awk '$5=="B"' $tmp-kondate_jisseki_data_yoru |
+delf 2 5 |
+# 1:日付   2:メニューID 3:食事名 4:発注数 5:調理数
+# 6:検食数 7:代替名     8:数量
+self 1 2 4/8 3 |
+LANG=C sort -k1,7 > $tmp-kondate_jisseki_data_yoru_b
+
+# 曜日の表を作成
+mdate -a ${TaishouNengetsu}m |
+self 1 2 |
+LANG=C sort -k2,2 |
+join1 key=2 $tmp-youbi |
+delf 2 |
+LANG=C sort -k1,1 > $tmp-basic_hyou
+
+# 集計表元データ作成
+# 朝A
+[ $(gyo $tmp-kondate_jisseki_data_asa_a) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_asa_a
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_asa_a |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_asa_a 
+
+# 朝B
+[ $(gyo $tmp-kondate_jisseki_data_asa_b) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_asa_b
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_asa_b |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_asa_b
+
+# 昼A
+[ $(gyo $tmp-kondate_jisseki_data_hiru_a) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_hiru_a
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_hiru_a |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_hiru_a
+
+# 昼B
+[ $(gyo $tmp-kondate_jisseki_data_hiru_b) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_hiru_b
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_hiru_b |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_hiru_b
+
+# 夕A
+[ $(gyo $tmp-kondate_jisseki_data_yoru_a) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_yoru_a
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_yoru_a |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_yoru_a
+
+# 夕B
+[ $(gyo $tmp-kondate_jisseki_data_yoru_b) -eq 0 ] && echo "_ _ _ _ _ _ _ _" > $tmp-kondate_jisseki_data_yoru_b
+cat $tmp-basic_hyou |
+join2 +"_" key=1 $tmp-kondate_jisseki_data_yoru_b |
+# 1:年月日 2:曜日   3:メニューID 4:食事名 5:発注数
+# 6:調理数 7:検食数 8:代替名     9:数量
+self 1 NF 2/NF-1 > $tmp-shuukeihyou_yoru_b
+
+
+# Excelフォーマット用に整形
+# 1:年月日 2:曜日 3:食事名 4:数量
+# 朝
+self 1 2 4 9 $tmp-shuukeihyou_asa_a > $tmp-shuukeihyou_asa_a_excel
+self 1 2 4 9 $tmp-shuukeihyou_asa_b > $tmp-shuukeihyou_asa_b_excel
+# 1:年月日    2:曜日 3:朝A食事名 4:朝A食事数 5:朝B食事名
+# 6:朝B食事数
+loopj num=2 $tmp-shuukeihyou_asa_a_excel $tmp-shuukeihyou_asa_b_excel |
+awk '{$1=substr($1,7,2)*1;print $0}' >  $tmp-shuukeihyou_asa_excel
+self 1/3 $tmp-shuukeihyou_asa_excel > $tmp-shuukeihyou_asa_excel_amenu
+self 4 $tmp-shuukeihyou_asa_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_asa_excel_anum
+
+
+self 5 $tmp-shuukeihyou_asa_excel > $tmp-shuukeihyou_asa_excel_bmenu
+self 6 $tmp-shuukeihyou_asa_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_asa_excel_bnum
+
+
+# 昼
+self 1 2 4 9 $tmp-shuukeihyou_hiru_a > $tmp-shuukeihyou_hiru_a_excel
+self 1 2 4 9 $tmp-shuukeihyou_hiru_b > $tmp-shuukeihyou_hiru_b_excel
+loopj num=2  $tmp-shuukeihyou_hiru_a_excel $tmp-shuukeihyou_hiru_b_excel |
+delf 1 2 > $tmp-shuukeihyou_hiru_excel
+
+self 1 $tmp-shuukeihyou_hiru_excel > $tmp-shuukeihyou_hiru_excel_amenu
+self 2 $tmp-shuukeihyou_hiru_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_hiru_excel_anum
+
+
+self 3 $tmp-shuukeihyou_hiru_excel > $tmp-shuukeihyou_hiru_excel_bmenu
+self 4 $tmp-shuukeihyou_hiru_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_hiru_excel_bnum
+
+
+# 夕
+# 1:年月日 2:曜日   3:食事名 4:発注数 5:調理数
+# 6:数量   7:検食数 8:代替名
+self 1 2 4 5 6 9 7 8 $tmp-shuukeihyou_yoru_a > $tmp-shuukeihyou_yoru_a_excel
+self 1 2 4 5 6 9 7 8 $tmp-shuukeihyou_yoru_b > $tmp-shuukeihyou_yoru_b_excel
+# Aメニュー
+self 1/3 $tmp-shuukeihyou_yoru_a_excel |
+awk '{$1=substr($1,7,2)*1;print $0}' > $tmp-shuukeihyou_yoru_a_excel_menu
+self 4 $tmp-shuukeihyou_yoru_a_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_a_excel_hacchu
+self 5 $tmp-shuukeihyou_yoru_a_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_a_excel_chouri
+self 6 $tmp-shuukeihyou_yoru_a_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_a_excel_num
+
+
+self 7 $tmp-shuukeihyou_yoru_a_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_a_excel_kenshoku
+self 8 $tmp-shuukeihyou_yoru_a_excel > $tmp-shuukeihyou_yoru_a_excel_daitai
+
+# Bメニュー
+self 3 $tmp-shuukeihyou_yoru_b_excel > $tmp-shuukeihyou_yoru_b_excel_menu
+self 4 $tmp-shuukeihyou_yoru_b_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_b_excel_hacchu
+self 5 $tmp-shuukeihyou_yoru_b_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_b_excel_chouri
+self 6 $tmp-shuukeihyou_yoru_b_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_b_excel_num
+
+
+self 7 $tmp-shuukeihyou_yoru_b_excel |
+awk '{if($1=="_"){$1=0};print $0}' > $tmp-shuukeihyou_yoru_b_excel_kenshoku
+self 8 $tmp-shuukeihyou_yoru_b_excel > $tmp-shuukeihyou_yoru_b_excel_daitai
+
+# 対象人数
+:> $tmp-taishou_ninzu_list
+unei_dir="/DATA/E-LIFE/UNEI"
+self 1 $tmp-basic_hyou |
+while read curdate ; do 
+  # 体験入居者のIDを出す。
+  shortcode="001"
+  cat ${unei_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU |
+  awk '$(NF-2)!="9"'                             |
+# 1:利用者ID   2:施設ID     3:建屋ID 4:フロアID 5:契約種類ID
+# 6:契約開始日 7:契約終了日
+  self 1 3 4 5 9 12 13                                 |
+  awk '$2=="'$Shisetsu'"&&$3=="'${Tateya}'"&&$5=="'$shortcode'"&&$6<="'$curdate'"&&"'$curdate'"<=$7'   |
+  self 1  |
+  LANG=C sort -k1,1  > $tmp-taiken_riyoushaid  
+
+  cat ${unei_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+  awk '$7<="'$curdate'"&&"'$curdate'"<=$8'                |
+  awk '$1=="'$Shisetsu'"&&$2=="01"&&$(NF-2)!="9"{print $0}'            |
+  LANG=C sort -k6,6                                      |
+  # 一応体験入居者は抜いているが。。
+  join0 +ng key=6 $tmp-taiken_riyoushaid > /dev/null 2> $tmp-honnyukyosha_riyoushainfo
+  
+  cat $tmp-honnyukyosha_riyoushainfo                     |
+  self 6                                                 |
+  LANG=C sort -k1,1          > $tmp-honnyukyosha-riyoushaid
+
+  cat ${unei_dir}/RIYOUSHA/RIYOUSHA_KIHON |
+  LANG=C sort -k1,1                       |
+  join0 key=1 $tmp-honnyukyosha-riyoushaid               |
+  self 1 2 4                                               |
+  tee $tmp-taishou_riyoushaid                            |
+  self 3                                                 > $tmp-honnyukyosha_shoukei_list
+  honnyukyosha_shoukei_count=$(gyo $tmp-honnyukyosha_shoukei_list)
+
+  # 入院外泊人数を出す
+# 1:利用者ID     2:ID       3:施設ID 4:建屋ID 5:居室
+# 6:入院外泊区分 7:外泊FROM 8:外泊TO
+  cat ${unei_dir}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU |
+  awk '$(NF-2)!="9"'             |
+  awk '$3=="'${shisetsu}'"&&$4=="'${Tateya}'"&&$7<="'$curdate'"&&"'$curdate'"<=$8{print $1,$5,$6,$8,$2,$9,$7,$12}' |
+# 1:利用者ID 2:居室 3:入院外泊
+  LANG=C sort -k1,2 |
+  getlast 1 2       |
+# 1:利用者ID 2:利用者名   3:性別 4:居室 5:入院外泊
+# 6:外泊TO   7:入院外泊ID 8:時刻 9:外泊FROM 10:備考
+  join1 key=1 $tmp-taishou_riyoushaid           |
+# 1:性別 2:入院外泊
+  self 3 5                                      > $tmp-nyuingaihaku_list
+  nyuuingaihaku_count=$(gyo $tmp-nyuingaihaku_list)
+
+  # 本入居者から入院外泊をぬく
+  taishou_ninzu_count=`expr $honnyukyosha_shoukei_count - $nyuuingaihaku_count`
+
+  echo "$curdate" "$taishou_ninzu_count" >> $tmp-taishou_ninzu_list
+done
+
+cat $tmp-taishou_ninzu_list |
+LANG=C sort -k1,1 |
+self 2 > $tmp-taishou_ninzu_list_sort
+
+# 喫食率
+self 1 $tmp-basic_hyou |
+awk '{$1=substr($1,7,2)*1;print $0}' > $tmp-kisshoku_day
+self 2 $tmp-basic_hyou > $tmp-kisshoku_youbi
+
+# メニュー抽出
+cat ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU |
+# 喫食率対象のもののみ
+awk '$18=="1"'  |
+tee $tmp-sonota_sheet_menu |
+# 1:食事ID 2:食事タイプ
+self 1 3 |
+LANG=C sort -k1,1 > $tmp-shokuji_menu
+# 1:日付 2:食事種類 3:メニューID 4:数量
+cat $tmp-shokuji_jisseki_data |
+LANG=C sort -k3,3 |
+# 1:日付 2:食事種類 3:メニューID 4:メニュータイプ 5:数量
+join1 key=3 $tmp-shokuji_menu |
+LANG=C sort -k1,3 > $tmp-kondategai_jisseki
+
+
+# その他シート用食事実績
+echo "_" "1" "0" > $tmp-kara_data
+echo "_" "2" "0" >> $tmp-kara_data
+echo "_" "3" "0" >> $tmp-kara_data
+
+# ゲスト用食事実績
+LANG=C sort -k1,1 $tmp-sonota_sheet_menu > $tmp-kisshoku_taishou_menu
+cat $tmp-shokuji_jisseki_full_data |
+LANG=C sort -k9,9 |
+# 喫食率対象のもののみ
+join0 key=9 $tmp-kisshoku_taishou_menu |
+# ゲストの食数のみ
+awk '$5=="2"&&$7!="4"'     |
+# 1:日付 2:食事種類(朝、昼、夜) 3:数量
+self 6 7 13 |
+cat $tmp-kara_data - |
+LANG=C sort -k1,2 |
+sm2 1 2 3 3 |
+tee $tmp-guest_jisseki_shukei |
+map num=1 > $tmp-shokuji_guest_jisseki_map
+
+# ゲスト実績のヘッダ部分
+head -1 $tmp-shokuji_guest_jisseki_map |
+awk '{print $0,"_"}' | 
+self 1 NF 2/NF-1 |
+awk '{$1="@";$3="朝";$4="昼";$5="夕";print $0}'  > $tmp-header_shokuji_guest_jisseki_map
+
+# 月表に値をつける
+cat $tmp-basic_hyou |
+join2 +0 key=1 $tmp-shokuji_guest_jisseki_map |
+self 1 NF 2/NF-1 |
+awk '{$1=substr($1,7,2)*1;print $0}' |
+cat $tmp-header_shokuji_guest_jisseki_map - > $tmp-sonota_guest_jisseki
+
+# 合計
+cat $tmp-guest_jisseki_shukei |
+self 2 3 |
+LANG=C sort -k1,1 |
+sm2 1 1 2 2 |
+tateyoko |
+tail -1 > $tmp-sonota_guest_jisseki_shukei
+  
+
+# 1:日付 2:食事種類(朝、昼、夜) 3:メニューID 4:数量(集計）
+cat $tmp-shokuji_jisseki_data  |
+# 1:日付 2:メニューID 3:数量(集計）
+self 1 3 4                     |
+LANG=C sort -k1,2              |
+sm2 1 2 3 3                    > $tmp-hiduke_menu_jisseki
+
+# 1:メニューID 2:メニュー名 3:食事タイプ 4:入居者向け料金
+self 1 2 3 6 $tmp-sonota_sheet_menu |
+# 特別食
+awk '$3=="04"' |
+delf 3         |
+# 1:メニューID 2:メニュー名 3:入居者向け料金
+LANG=C sort -k1,1 > $tmp-tokubetsushoku_menu
+
+
+cat $tmp-hiduke_menu_jisseki |
+LANG=C sort -k2,2 |
+join1 key=2 $tmp-tokubetsushoku_menu |
+tee $tmp-tokubetsushoku_shukei |
+# 1:日付 2:メニューID 3:メニュー名 4:入居者向け料金 5:数量（集計）
+LANG=C sort -k1,2 |
+delf 2 3 |
+map num=1 > $tmp-chukan_work
+
+
+# 特別食料金のヘッダを取っておく
+head -1 $tmp-chukan_work > $tmp-header_chukan_work
+
+# 月表に値をつける
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-chukan_work |
+awk '{$1=substr($1,7,2)*1;print $0}' |
+cat $tmp-header_chukan_work - > $tmp-sonota_tokubetushoku
+[ $(gyo $tmp-sonota_tokubetushoku) -eq 0 ] && self 1 $tmp-basic_hyou | awk 'BEGIN{print "*";}{$1=substr($1,7,2)*1;print $0}' > $tmp-sonota_tokubetushoku
+
+# 特別食集計
+# マッピングされた表より集計を出力する
+# ヘッダ箇所を除く
+tail -n +2 $tmp-chukan_work |
+sm2 0 0 1 NF |
+# 日付の部分の集計を除く
+delf 1 > $tmp-sonota_tokubetsushoku_shukei
+#self 2 5 $tmp-tokubetsushoku_shukei |
+#LANG=C sort -k1,1  |
+#sm2 1 1 2 2 |
+#tateyoko |
+#tail -1 > $tmp-sonota_tokubetsushoku_shukei
+
+# アラカルト数量
+cat $tmp-kondate_data |
+# 1:日付 2:朝、昼、夜 3:メニューID
+self 1 3 14 |
+LANG=C sort -k1,3 > $tmp-kondate_menu
+
+
+cat $tmp-shokuji_jisseki_full_data |
+LANG=C sort -k9,9 |
+# 喫食率対象のもののみ
+join0 key=9 $tmp-kisshoku_taishou_menu |
+# メインメニューのみ
+awk '$11=="01"' |
+# 1:日付 2:朝、昼、夜 3:メニューID 4:メニュー名 5:数量
+self 6 7 9 10 13 |
+LANG=C sort -k1,3 |
+join1 +ng key=1/3 $tmp-kondate_menu > /dev/null 2> $tmp-alacartemenu
+
+cat $tmp-alacartemenu |
+# 1:日付 2:メニューID 3:メニュー名 4:数量
+delf 2 |
+LANG=C sort -k1,2 |
+sm2 1 3 4 4 |
+tee $tmp-alacartemenu_shukei |
+delf 2 |
+map num=1 > $tmp-alacarte_data_map
+
+# アラカルトメニューのヘッダを取っておく
+head -1 $tmp-alacarte_data_map > $tmp-header_alacarte_data_map
+
+# 月表に値をつける
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-alacarte_data_map |
+awk '{$1=substr($1,7,2)*1;print $0}' |
+cat $tmp-header_alacarte_data_map - > $tmp-sonota_alacarte
+[ $(gyo $tmp-sonota_alacarte) -eq 0 ] && self 1 $tmp-basic_hyou | awk 'BEGIN{print "*";}{$1=substr($1,7,2)*1;print $0}' > $tmp-sonota_alacarte
+
+self 1 $tmp-basic_hyou |
+awk 'BEGIN{print "@"}{print "@"}' > $tmp-space_gyo
+
+# 特別食とアラカルトをくっつける
+ycat $tmp-sonota_tokubetushoku $tmp-space_gyo $tmp-sonota_alacarte > $tmp-sonota_full_jisseki
+
+# アラカルト集計
+# マッピングされた表より集計を出力する
+# ヘッダ箇所を除く
+tail -n +2 $tmp-alacarte_data_map |
+sm2 0 0 1 NF |
+# 日付の部分の集計を除く
+delf 1 > $tmp-sonota_alacartemenu_shukei
+#self 2 4 $tmp-alacartemenu_shukei  |
+#LANG=C sort -k1,1 |
+#sm2 1 1 2 2 |
+#tateyoko |
+#tail -1 > $tmp-sonota_alacartemenu_shukei
+
+echo "@" "計" > $tmp-kara_syukei
+
+# 集計行の整形
+ycat $tmp-sonota_tokubetsushoku_shukei $tmp-kara_syukei $tmp-sonota_alacartemenu_shukei > $tmp-sonota_full_shukei
+
+# 献立表
+# 1:日付 2:食種 3:メニューID
+self 1 3 14 $tmp-kondate_data |
+LANG=C sort -k1,3 > $tmp-kondate_menu_id
+
+# アラカルトなど
+cat $tmp-kondategai_jisseki |
+join0 +ng key=1/3 $tmp-kondate_menu_id > /dev/null 2> $tmp-kondategai_jisseki_data
+
+# 特別食（その他より取得）
+cat $tmp-kondategai_jisseki_data |
+awk '$4=="04"' |
+delf 3 |
+sm2 1 3 4 4 > $tmp-tokubetushoku_jisseki_data
+
+cat $tmp-tokubetushoku_jisseki_data |
+awk '$2=="1"{print $1,$4}' > $tmp-tokubetsushoku_jisseki_asa
+[ $(gyo $tmp-tokubetsushoku_jisseki_asa) -eq 0 ] && echo "_" "_" > $tmp-tokubetsushoku_jisseki_asa
+cat $tmp-tokubetushoku_jisseki_data |
+awk '$2=="2"{print $1,$4}' > $tmp-tokubetsushoku_jisseki_hiru
+[ $(gyo $tmp-tokubetsushoku_jisseki_hiru) -eq 0 ] && echo "_" "_" > $tmp-tokubetsushoku_jisseki_hiru
+cat $tmp-tokubetushoku_jisseki_data |
+awk '$2=="3"{print $1,$4}' > $tmp-tokubetsushoku_jisseki_yoru
+[ $(gyo $tmp-tokubetsushoku_jisseki_yoru) -eq 0 ] && echo "_" "_" > $tmp-tokubetsushoku_jisseki_yoru
+
+# 朝特別食
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-tokubetsushoku_jisseki_asa |
+self 2 > $tmp-tokubetushoku_jisseki_excel_asa
+# 昼特別食
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-tokubetsushoku_jisseki_hiru |
+self 2 > $tmp-tokubetushoku_jisseki_excel_hiru
+# 夜特別食
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-tokubetsushoku_jisseki_yoru |
+self 2 > $tmp-tokubetushoku_jisseki_excel_yoru
+
+# アラカルト、その他
+cat $tmp-kondategai_jisseki_data |
+awk '$4=="01"' |
+delf 3 |
+sm2 1 3 4 4 > $tmp-alacarte_jisseki_data
+
+cat $tmp-alacarte_jisseki_data |
+awk '$2=="1"{print $1,$4}' > $tmp-alacarte_jisseki_asa
+[ $(gyo $tmp-alacarte_jisseki_asa) -eq 0 ] && echo "_" "_" > $tmp-alacarte_jisseki_asa
+cat $tmp-alacarte_jisseki_data |
+awk '$2=="2"{print $1,$4}' > $tmp-alacarte_jisseki_hiru
+[ $(gyo $tmp-alacarte_jisseki_hiru) -eq 0 ] && echo "_" "_" > $tmp-alacarte_jisseki_hiru
+cat $tmp-alacarte_jisseki_data |
+awk '$2=="3"{print $1,$4}' > $tmp-alacarte_jisseki_yoru
+[ $(gyo $tmp-alacarte_jisseki_yoru) -eq 0 ] && echo "_" "_" > $tmp-alacarte_jisseki_yoru
+
+# 朝アラカルト
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-alacarte_jisseki_asa |
+self 2 > $tmp-alacarte_jisseki_excel_asa
+# 昼その他
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-alacarte_jisseki_hiru |
+self 2 > $tmp-alacarte_jisseki_excel_hiru
+# 夜アラカルト
+self 1 $tmp-basic_hyou |
+join2 +0 key=1 $tmp-alacarte_jisseki_yoru |
+self 2 > $tmp-alacarte_jisseki_excel_yoru
+
+# 前月比計算
+# 前月
+TaishouZengetsu=$(mdate ${TaishouNengetsu}m/-1)
+# 前月の食事実績
+if [ -s ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouZengetsu}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+
+  cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouZengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+# 有効
+  awk '$(NF-2)!="9"'|
+# 入居者の食数のみ
+  awk '$5=="1"'     |
+# 1:日付 2:食事種類(朝、昼、夜) 3:メニューID 4:数量
+  self 6 7 9 13 |
+  LANG=C sort -k3,3 |
+  # 喫食対象のみ
+  join0 key=3 $tmp-sonota_sheet_menu |
+  LANG=C sort -k1,3 |
+  sm2 1 3 4 4 > $tmp-shokuji_jisseki_data_zengetsu
+fi
+
+[ $(gyo $tmp-shokuji_jisseki_data_zengetsu) -eq 0 ] && echo "_" "_" "_" "_" > $tmp-shokuji_jisseki_data_zengetsu
+
+# 朝集計
+awk '$2=="1"{print $4}' $tmp-shokuji_jisseki_data_zengetsu |
+#LANG=C sort -k1,3 |
+# 献立にのっているもののみ集計
+#join0 key=1/3 $tmp-kondate_menu_id |
+sm2 0 0 1 1 > $tmp-asa_zengetsu_shukei
+
+# 昼集計
+awk '$2=="2"{print $4}' $tmp-shokuji_jisseki_data_zengetsu |
+sm2 0 0 1 1 > $tmp-hiru_zengetsu_shukei
+
+# 夜集計
+awk '$2=="3"{print $4}' $tmp-shokuji_jisseki_data_zengetsu |
+sm2 0 0 1 1 > $tmp-yoru_zengetsu_shukei
+
+if [ $(gyo $tmp-asa_zengetsu_shukei) -eq 0 ] ; then
+  asa_zengetsu_shukei=0
+else
+  asa_zengetsu_shukei=$(cat $tmp-asa_zengetsu_shukei)
+fi
+if [ $(gyo $tmp-hiru_zengetsu_shukei) -eq 0 ] ; then
+  hiru_zengetsu_shukei=0
+else
+  hiru_zengetsu_shukei=$(cat $tmp-hiru_zengetsu_shukei)
+fi
+if [ $(gyo $tmp-yoru_zengetsu_shukei) -eq 0 ] ; then
+  yoru_zengetsu_shukei=0
+else
+  yoru_zengetsu_shukei=$(cat $tmp-yoru_zengetsu_shukei)
+fi
+
+# 当月
+# 朝
+cat $tmp-shuukeihyou_asa_excel_anum $tmp-shuukeihyou_asa_excel_bnum |
+sm2 0 0 1 1 > $tmp-asa_tougetsu_shukei
+
+asa_tougetsu_shukei=$(cat $tmp-asa_tougetsu_shukei)
+asa_hikaku_shukei=$(expr ${asa_tougetsu_shukei} - ${asa_zengetsu_shukei})
+echo "${asa_hikaku_shukei}" > $tmp-asa_hikaku_shukei
+
+# 昼
+cat $tmp-shuukeihyou_hiru_excel_anum $tmp-shuukeihyou_hiru_excel_bnum $tmp-alacarte_jisseki_excel_hiru $tmp-tokubetushoku_jisseki_excel_hiru |
+sm2 0 0 1 1 > $tmp-hiru_tougetsu_shukei
+
+hiru_tougetsu_shukei=$(cat $tmp-hiru_tougetsu_shukei)
+hiru_hikaku_shukei=$(expr ${hiru_tougetsu_shukei} - ${hiru_zengetsu_shukei})
+echo "${hiru_hikaku_shukei}" > $tmp-hiru_hikaku_shukei
+
+# 夜
+cat $tmp-shuukeihyou_yoru_a_excel_num $tmp-shuukeihyou_yoru_b_excel_num $tmp-alacarte_jisseki_excel_yoru $tmp-tokubetushoku_jisseki_excel_yoru |
+sm2 0 0 1 1 > $tmp-yoru_tougetsu_shukei
+
+yoru_tougetsu_shukei=$(cat $tmp-yoru_tougetsu_shukei)
+yoru_hikaku_shukei=$(expr ${yoru_tougetsu_shukei} - ${yoru_zengetsu_shukei})
+echo "${yoru_hikaku_shukei}" > $tmp-yoru_hikaku_shukei
+
+# Excel出力
+download_dir=$home_dir/SHOKUJI/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${Shisetsu}_shokuji_shuukei_*_download.xls
+
+TEMPLA=${home_dir}/SHOKUJI/TEMPLATE/SHOKUJI_SHUUKEI_NEW_FORM.xls
+Ehexcel < ${TEMPLA} 1 aa1 $tmp-shisetsumei \
+                    1 s1 $tmp-header-nengetsu \
+                    1 c5 ${tmp}-shuukeihyou_asa_excel_amenu               \
+                    1 o5 ${tmp}-shuukeihyou_asa_excel_anum               \
+                    1 o36 $tmp-kondate_jisseki_shuukei_asa_a             \
+                    1 r5 ${tmp}-shuukeihyou_asa_excel_bmenu               \
+                    1 ab5 ${tmp}-shuukeihyou_asa_excel_bnum               \
+                    1 ab36 $tmp-kondate_jisseki_shuukei_asa_b             \
+                    1 ah5 $tmp-shuukeihyou_hiru_excel_amenu          \
+                    1 ar5 $tmp-shuukeihyou_hiru_excel_anum \
+                    1 ar36 $tmp-kondate_jisseki_shuukei_hiru_a             \
+                    1 au5 $tmp-shuukeihyou_hiru_excel_bmenu \
+                    1 be5 $tmp-shuukeihyou_hiru_excel_bnum \
+                    1 be36 $tmp-kondate_jisseki_shuukei_hiru_b \
+                    2 ag1 $tmp-shisetsumei \
+                    2 u1 $tmp-header-nengetsu \
+                    2 c6 $tmp-shuukeihyou_yoru_a_excel_menu \
+                    2 o6 $tmp-shuukeihyou_yoru_a_excel_hacchu \
+                    2 r6 $tmp-shuukeihyou_yoru_a_excel_chouri \
+                    2 u6 $tmp-shuukeihyou_yoru_a_excel_num \
+                    2 x6 $tmp-shuukeihyou_yoru_a_excel_kenshoku \
+                    2 ad6 $tmp-shuukeihyou_yoru_a_excel_daitai \
+                    2 ap6 $tmp-shuukeihyou_yoru_b_excel_menu \
+                    2 az6 $tmp-shuukeihyou_yoru_b_excel_hacchu \
+                    2 bc6 $tmp-shuukeihyou_yoru_b_excel_chouri \
+                    2 bf6 $tmp-shuukeihyou_yoru_b_excel_num \
+                    2 bi6 $tmp-shuukeihyou_yoru_b_excel_kenshoku \
+                    2 bo6 $tmp-shuukeihyou_yoru_b_excel_daitai \
+                    3 w1 $tmp-shisetsumei \
+                    3 c1 $tmp-header-nengetsu \
+                    3 c8 $tmp-kisshoku_day \
+                    3 g8 $tmp-taishou_ninzu_list_sort \
+                    3 e8 $tmp-kisshoku_youbi  \
+                    3 i8 ${tmp}-shuukeihyou_asa_excel_anum \
+                    3 k8 ${tmp}-shuukeihyou_asa_excel_bnum \
+                    3 o8 $tmp-shuukeihyou_hiru_excel_anum \
+                    3 q8 $tmp-shuukeihyou_hiru_excel_bnum \
+                    3 s8 $tmp-alacarte_jisseki_excel_hiru \
+                    3 y8 $tmp-shuukeihyou_yoru_a_excel_num \
+                    3 aa8 $tmp-shuukeihyou_yoru_b_excel_num \
+                    3 ac8 $tmp-alacarte_jisseki_excel_yoru \
+                    3 u8 $tmp-tokubetushoku_jisseki_excel_hiru \
+                    3 ae8 $tmp-tokubetushoku_jisseki_excel_yoru \
+                    3 m45 $tmp-asa_hikaku_shukei \
+                    3 w45 $tmp-hiru_hikaku_shukei \
+                    3 ag45 $tmp-yoru_hikaku_shukei \
+                    4 b7 $tmp-sonota_guest_jisseki \
+                    4 d40 $tmp-sonota_guest_jisseki_shukei \
+                    4 k40 $tmp-sonota_full_shukei \
+                    4 j7 $tmp-sonota_full_jisseki > ${download_dir}/${Shisetsu}_shokuji_shuukei_$$_download.xls
+echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${Shisetsu}_shokuji_shuukei_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

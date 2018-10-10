@@ -1,0 +1,258 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.SEARCH
+# 個人情報詳細(介護保険)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+#-------------------------------------------------------------
+# 利用者基本情報テーブルの取得
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+  # 必要な情報のみに
+  self 1/8 14 15 9 10 > $tmp-kihon
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別   5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:現住所 10:携帯電話番号
+# 11:西暦：生年月日  12:感染症
+
+# 年齢の取得
+  Birthday="$(awk '{print substr($11,5,4)}' $tmp-kihon)"
+  Today="$(date +%m%d)"
+  today="$(date +%Y%m%d)"
+
+  # 誕生日が来ていれば
+#  if [ "${Birthday}" -le "${Today}" ] ;then
+    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000}' $tmp-kihon | marume -sage 1.0)"
+  # 誕生日が来ていなければ
+#  else
+#    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000-1}' $tmp-kihon | marume -sage 1.0)"
+#  fi
+
+  awk '{print "kihon",$0,"'${Nenrei}'"}' $tmp-kihon |
+  self 1/9 NF 10 11 NF-1                > $tmp-kihon_data
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別 5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:年齢 10:現住所
+# 11:携帯電話番号
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_RENRAKUSAKI        |
+  awk '$1=="'${RIYOUSHAID}'"&&$20>"0"&&$(NF-2)!="9"{print "renrakusaki",$0}' > $tmp-renrakusaki_before
+
+  if [ -s "$tmp-renrakusaki_before" ] ; then
+    cat $tmp-renrakusaki_before |
+    cjoin2 +"@" key=7 ${tbl_dir}/CONFIG/ZOKUGARA_MASTER - |
+#  delf 7  |
+    awk '{if($7=="999"){print $0,$9}else{print $0,$8}}'     |
+    self 1/6 NF 9/NF-1       
+# 1:利用者(入居者)ID 2:連絡先ＩＤ     3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄       7:連絡先続柄備考 8:連絡先優先順位 9:電話番号1      10:電話番号2
+# 11:E-mail          12:郵便番号      13:住所          14:勤務先        15:請求書送先
+# 16:身元引受人      17:返還金受取人  18:代理人        19:備考          20:緊急時個人データ反映
+# 21:予備1           22:予備２        23:予備３
+  else
+   :
+  fi  > $tmp-renrakusaki_data
+
+#--------------------------------------------------------------------
+
+### モードによる表示の分岐
+#case "${MODE}" in
+#
+#  init | pdf_print)
+
+# 1:利用者(入居者)ID         2:住所                 3:固定電話              4:携帯電話             5:入居日
+# 6:更新日                   7:希望医療機関1        8:希望医療機関2         9:希望医療機関3        10:希望しない金融機関1
+# 11:希望しない金融機関2     12:希望しない金融機関3 13:緊急時連絡先1：氏名  14:緊急時連絡先1：続柄 15:緊急時連絡先1：固定電話
+# 16:緊急時連絡先1：携帯電話 17:緊急時連絡先1：住所 18:緊急時連絡先2：氏名  19:緊急時連絡先2：続柄 20:緊急時連絡先2：固定電話
+# 21:緊急時連絡先2：携帯電話 22:緊急時連絡先2：住所 23:緊急時連絡先3：氏名  24:緊急時連絡先3：続柄 25:緊急時連絡先3：固定電話
+# 26:緊急時連絡先3：携帯電話 27:緊急時連絡先3：住所 28:治療病1：病名        29:治療病1：医療機関名 30:治療病1：電話番号
+# 31:治療病1：医師           32:治療病1：その他     33:治療病2：病名        34:治療病2：医療機関名 35:治療病2：電話番号
+# 36:治療病2：医師           37:治療病2：その他     38:治療病3：病名        39:治療病3：医療機関名 40:治療病3：電話番号
+# 41:治療病3：医師           42:治療病3：その他     43:アレルギー           44:アレルギー備考      45:感染症
+# 46:感染症備考              47:介護認定            48:身体障害者手帳       49:血液型              50:血液型Rh式
+# 51:血液型備考              52:肺炎球菌ワクチン    53:肺炎球菌ワクチン備考 54:内服薬              55:既往歴1：病名
+# 56:既往歴1：年齢           57:既往歴1：治療法     58:既往歴2：病名        59:既往歴2：年齢       60:既往歴2：治療法
+# 61:既往歴3：病名           62:既往歴3：年齢       63:既往歴3：治療法      64:既往歴4：病名       65:既往歴4：年齢
+# 66:既往歴4：治療法         67:既往歴5：病名       68:既往歴5：年齢        69:既往歴5：治療法
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KINKYUUJI_KOJINJYOUHOU    |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "kinkyuuji",$0}'     > $tmp-kinkyuuji_data
+
+
+  if [ ! -s $tmp-kinkyuuji_data ] ; then
+ 
+    # 入居日の取得
+
+# 入居者契約テーブル
+# 1:利用者(入居者)ID 2:契約ID          3:施設ID     4:建屋ID        5:フロアID
+# 6:ユニットID       7:居室ID          8:入居時年齢 9:契約種類ID    10:契約日
+# 11:引渡し日        12:入居日         13:退去日    14:契約開始日   15:契約終了日
+# 16:請求対象開始日  17:請求対象終了日 18:退去理由  19:退去理由詳細 20:備考
+
+    echo "${NYUUKYOSHISETSUID}" |
+    awk '$1!~/^1/'              > $tmp-shisetsu
+
+  # 施設だったら
+  if [ -s $tmp-shisetsu ] ; then
+    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU |
+    awk '$1=="'${RIYOUSHAID}'"&&$3=="'${NYUUKYOSHISETSUID}'"&&$4=="'${NYUUKYOTATEYAID}'"&&$7=="'${NYUUKYOKYOSHITSU}'"&&$(NF-2)!="9"{print $0}' |
+    awk '$9=="001"||$9=="002"||$9=="003"||$9=="004"{print $0}' |
+    LANG=C sort -k12,12    |
+    head -1 > $tmp-keiyaku
+
+    Nyuukyobi=$(awk '{print $12}' $tmp-keiyaku)
+   
+  else
+    cat ${pompa_dir}/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+    awk '$1=="'${NYUUKYOSHISETSUID}'"&&$2=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $3}' |
+    LANG=C sort |
+    head -1     > $tmp-keiyaku
+  
+    Nyuukyobi=$(awk '{print $1}' $tmp-keiyaku)
+
+  fi
+    echo "nyuukyobi" "${Nyuukyobi}"  > $tmp-nyuukyobi
+  fi
+
+
+# 介護保険データ
+  # 準備
+  cat ${tbl_dir}/CONFIG/KAIGODO_MASTER                             |
+  awk '$4<="'${today}'"&&$5>="'${today}'"&&$(NF-2)!="9"{print $0}' |
+  self 1 2            |
+  LANG=C sort -u      > $tmp-kaigodo
+# 1:介護度ID 2:介護度名称
+  cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU       |
+  awk '$(NF-2)!="9"{print $1,$2}'                    > $tmp-gengou
+
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KAIGOHOKEN      |
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度              4:保険者番号                    5:保険者名
+# 6:被保険者番号          7:性別                  8:生年月日：和暦元号  9:生年月日：和暦誕生年          10:生年月日：和暦誕生月
+# 11:生年月日：和暦誕生日 12:郵便番号             13:住所               14:認定年月：和暦元号           15:認定年月：和暦年
+# 16:認定年月：和暦月     17:認定年月：和暦日     18:認定年月：西暦     19:有効期間FROM：和暦元号       20:有効期間FROM：和暦年
+# 21:有効期間FROM：和暦月 22:有効期間FROM：和暦日 23:有効期間FROM：西暦 24:有効期間TO：和暦元号         25:有効期間TO：和暦年
+# 26:有効期間TO：和暦月   27:有効期間TO：和暦日   28:有効期間TO：西暦   29:居宅介護支援者又は～事業所名 30:認定審査会の意見及びサービスの種類指定
+# 31:備考                 32:利用者負担率
+#  awk '$1=="'${RIYOUSHAID}'"&&$23<="'${today}'"&&$28>="'${today}'"&&$(NF-2)!="9"{print $0}' > $tmp-kaigonintei_before
+  # 過去の介護度ではないもの(未来も含む)
+#  awk '$1=="'${RIYOUSHAID}'"&&$28>="'${today}'"&&$(NF-2)!="9"{print $0}'  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}'  |
+  LANG=C sort -k23,23 -k28,28                          |
+  # 最新の
+  tail -1                                              > $tmp-kaigonintei_before
+
+  if [ -s "$tmp-kaigonintei_before" ] ; then
+    cat $tmp-kaigonintei_before    |
+    self 3 19/22 24/27             |
+# 1:介護度               2:有効期間FROM：和暦元号 3:有効期間FROM：和暦年 4:有効期間FROM：和暦月 5:有効期間FROM：和暦日
+# 6:有効期間TO：和暦元号 7:有効期間TO：和暦年     8:有効期間TO：和暦月   9:有効期間TO：和暦日
+    cjoin1 key=6 $tmp-gengou -     |
+    cjoin1 key=2 $tmp-gengou -     |
+    cjoin1 key=1 $tmp-kaigodo -    |
+# 1:介護度               2:介護度名称           3:有効期間FROM：和暦元号 4:元号名称 5:有効期間FROM：和暦年
+# 6:有効期間FROM：和暦月 7:有効期間FROM：和暦日 8:有効期間TO：和暦元号   9:元号名称 10:有効期間TO：和暦年
+# 11:有効期間TO：和暦月  12:有効期間TO：和暦日
+    awk '{print "kaigonintei",$2,$4$5"年"$6"月"$7"日",$9$10"年"$11"月"$12"日"}' 
+  else
+   :
+  fi   > $tmp-kaigonintei_data
+# 1:kaigonintei 2:介護度名称 3:有効期限FROM 4:有効期限To
+
+
+# 身障手帳情報
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_SHINSHOU      |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' > $tmp-shinshou_before
+
+  if [ -s "$tmp-shinshou_before" ] ; then 
+    echo "shinshou" "1"
+  else
+    echo "shinshou" "0"
+  fi  > $tmp-shinshou_data
+
+# 現病
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_GENBYOU       |
+# 1:利用者(入居者)ID 2:現病気ID 3:病名       4:医療機関名 5:電話
+# 6:医師名           7:その他   8:削除フラグ 9:更新日     10:更新者
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0,"genbyou"}'  |
+  self NF 2/7                                      |
+  sed 's/_/@/g'                                    > $tmp-genbyou
+
+# 既往歴
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_BYOUREKI      |
+# 1:利用者(入居者)ID 2:既往歴ID 3:病名   4:年齢 5:治療方法
+# 6:削除フラグ       7:更新日   8:更新者
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0,"kioureki"}'  |
+  self NF 2/5                                      |
+  sed 's/_/@/g'                                    > $tmp-kioureki
+
+# 感染症(20150204)
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KINKYUUJI_KOJINJYOUHOU_TSUIKA |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0,"kansenlist"}' |
+  self NF 2/11   |
+  sed 's/_/@/g'                                    > $tmp-kansenlist
+
+#-----------------------------------------------------------------------------------
+# # 該当データ
+ if [ -s "$tmp-kihon_data" -o -s "$tmp-kinkyuuji_data" -o -s "$tmp-nyuukyobi" -o -s "$tmp-renrakusaki_data" -o -s "$tmp-kioureki" -o -s $tmp-genbyou -o -s $tmp-kansenlist ] ; then    
+   cat - $tmp-kihon_data $tmp-kinkyuuji_data $tmp-nyuukyobi $tmp-renrakusaki_data $tmp-kaigonintei_data $tmp-shinshou_data $tmp-kioureki $tmp-genbyou $tmp-kansenlist
+ else
+   :
+ fi 
+
+#-------------------------------------------------------------
+#  ;;
+#esac
+
+## 終了
+rm -f $tmp-*
+exit 0

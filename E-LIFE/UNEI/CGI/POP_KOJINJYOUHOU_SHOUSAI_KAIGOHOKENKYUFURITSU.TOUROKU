@@ -1,0 +1,206 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKENKYUFUWARIAI.TOUROKU
+# 個人情報詳細介護保険給付割合POPUP
+#
+# Written by E.Okuda 2013/12/16
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date "+%Y%m%d")/LOG.$(basename ${0}).${HOSTNAME}; set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "result ng"
+  echo "message ${message}"
+  rm -f $tmp-*
+  exit 1
+}
+
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 利用者番号
+MODE="$(nameread "MODE" ${namedata})"
+RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+KyufuWariaiStart="$(nameread "KyufuWariaiStart" ${namedata})"
+KyufuWariaiEnd="$(nameread "KyufuWariaiEnd" ${namedata})"
+KyufuWariai="$(nameread "KyufuWariai" ${namedata})";
+SakujoFlg="$(nameread "SakujoFlg" ${namedata})";
+
+kyufuwariaiyuko="1"
+
+[ "${KyufuWariaiStart}" -ge "${KyufuWariaiEnd}" ] && error_exit "期間(自)は期間(至)より前の日付を入力してください。"
+
+# 開始日がセットされていない場合は、今日の日付
+defaultStartDate=$(date +%Y%m%d)
+[ -z "${KyufuWariaiStart}" -o "${KyufuWariaiStart}" = "_" ] && KyufuWariaiStart=${defaultStartDate}
+# 終了日がセットされていない場合は99999999
+[ -z "${KyufuWariaiEnd}" -o "${KyufuWariaiEnd}" = "_" ] && KyufuWariaiEnd="99999999"
+
+setKyufuWariaiStart=$(echo "${KyufuWariaiStart}" | sed 's/-//g')
+setKyufuWariaiEnd=$(echo "${KyufuWariaiEnd}" | sed 's/-//g')
+
+# レコードを削除したい時は開始日と終了日を同じにする
+[ "${SakujoFlg}" = "1" ] && kyufuwariaiyuko="9"
+
+:> $tmp-choufuku-check
+
+if [ "$kyufuwariaiyuko" = "1" ]; then
+  if [ -s ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI ] ; then
+     awk '$(NF-2)!="9"&&$1=="'${RIYOUSHAID}'"&&$2!="'${KyufuritsuID}'"{print $3,$4}' ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI |
+     # 開始日が同じ場合は修正とみなしてチェックからは外す
+     awk '$1!="'$setKyufuWariaiStart'"' |
+     awk '"'$setKyufuWariaiStart'"<=$2&&"'$setKyufuWariaiEnd'">=$1' > $tmp-choufuku-check
+  fi
+fi
+
+[ "$(gyo $tmp-choufuku-check)" != "0" ] && error_exit "給付割合の期間が重複しています"
+
+if [ -z "${KyufuritsuID}" -o "${KyufuritsuID}" = "_" ] ; then
+     ## 履歴IDの発番 ##i
+     # 今回取得するID数
+      last_no="1"
+
+      mkdir -p ${kanri_dir}/RIYOUSHA_KYUFURITSU_ID
+      [ -e ${kanri_dir}/RIYOUSHA_KYUFURITSU_ID/${RIYOUSHAID} ] || echo "00001" > ${kanri_dir}/RIYOUSHA_KYUFURITSU_ID/${RIYOUSHAID}
+      get_no ${last_no} ${kanri_dir}/RIYOUSHA_KYUFURITSU_ID/${RIYOUSHAID} > $tmp-kyufuritsu_id
+      kyufuritsu_id="$(cat $tmp-kyufuritsu_id)"
+else
+      kyufuritsu_id=${KyufuritsuID}
+fi
+
+
+# 1:利用者ID   2:給付率ID 3:給付割合適用開始日 4:給付割合適用終了日 5:給付割合
+# 6:有効フラグ 7:ログ時間 8:ユーザID
+echo "${RIYOUSHAID}" "${kyufuritsu_id}" "${setKyufuWariaiStart}" "${setKyufuWariaiEnd}" "${KyufuWariai}" "${kyufuwariaiyuko}" "${cur_time}" "${USERID}" > $tmp-kyufu_wariai_rireki_input
+
+#--------------------------------------------------------------
+
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA/RIYOUSHA_KYUFUWARIAI_RIREKI RIYOUSHA_KYUFUWARIAI_RIREKI
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+kyufu_wariai_rireki RIYOUSHA_KYUFUWARIAI_RIREKI 2 7 8 ${pompa_dir} ${input_dir}
+FIN
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+done
+#--------------------------------------------------------------
+cp -p ${pompa_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI ${data_dir}/RIYOUSHA_KYUFUWARIAI_RIREKI
+
+echo "result ok"
+
+## 終了
+rm -f $tmp-*
+exit 0
+

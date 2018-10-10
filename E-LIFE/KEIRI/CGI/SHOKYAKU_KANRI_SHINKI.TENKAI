@@ -1,0 +1,135 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI_SHINKI.TENKAI : 償却管理新規登録.TENKAI
+#
+# Usage : SHOKYAKU_KANRI_SHINKI.TENKAI namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# 利用者idの取得
+echo ${Riyoushaid} > $tmp-riyousha
+
+# 処理する年月を決める
+start=$(echo ${shokyaku_start}                    |
+awk '{print substr($1,1,6)}')
+start_day=$(echo ${start} | awk '{print substr($1,1,4)"/"substr($1,5,2)"/01"}')
+kaisu=$(echo ${shokyaku_kaisu} | lcalc '$1-1')
+#mdate -e ${start}m/+${kaisu}                      |
+#tarr                                              |
+#LANG=C sort -k1,1n                                |
+#yarr                                              > $tmp-nengetsu
+for kaisu_month in $(seq ${kaisu} | yarr);do
+  date -d "${start_day} ${kaisu_month} months" '+%Y%m'
+done                                               > $tmp-month_list_pre
+echo ${start}                                      |
+cat - $tmp-month_list_pre                          |
+yarr                                               > $tmp-nengetsu
+endday=$(cat $tmp-nengetsu | tarr | tail -n1 | awk '{print $1"01"}')
+END_MONTH=$(cat $tmp-nengetsu | tarr | tail -n1)
+
+# 処理を回してデータをつくる
+for month in $(cat $tmp-nengetsu);do
+
+  if [ $month = $start ];then
+    month_kingaku=${shokyaku_kingaku_1}
+    echo ${month} ${Riyoushaid} ${start} "1" ${shokyaku_kaisu} ${ichijikingaku} ${hi_henkankingaku} ${shokyakukingaku} "0" ${month_kingaku} |
+    # 1:年月     2:利用者id 3:起算月   4:経過月数       5:償却合計回数
+    # 6:一時金額 7:非返還金 8:償却金額 9:前月償却額累計 10:月償却金額
+    lcalc '$1,$2,$3,$4,$5-$4,$6,$7,$8,$9,$8-$9,$10,$10,$8-$10' > $tmp-month
+    # 1:年月          2:利用者id        3:起算月        4:経過月数       5:残り月数
+    # 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+    # 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+    cat $tmp-month                                             >> $tmp-month_data
+  elif [ $month = $END_MONTH ];then
+    month_kingaku=${shokyaku_kingaku_rast}
+    cat $tmp-month                                              |
+    # 1:年月          2:利用者id        3:起算月        4:経過月数       5:残り月数
+    # 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+    # 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+    awk '{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$12;$10=$13;$11="'${month_kingaku}'";$12=$12+$11;$13=$13-$11;print}' > $tmp-month_new
+    cat $tmp-month_data $tmp-month_new                         > $tmp-month_data_new
+    mv $tmp-month_data_new $tmp-month_data
+    mv $tmp-month_new $tmp-month
+  else
+    month_kingaku=${shokyaku_kingaku_tsuki}
+    cat $tmp-month                                              |
+    # 1:年月          2:利用者id        3:起算月        4:経過月数       5:残り月数
+    # 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+    # 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+    awk '{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$12;$11="'${month_kingaku}'";$10=$13;$12=$12+$11;$13=$13-$11;print}' > $tmp-month_new
+    cat $tmp-month_data $tmp-month_new                         > $tmp-month_data_new
+    mv $tmp-month_data_new $tmp-month_data
+    mv $tmp-month_new $tmp-month
+  fi
+  
+done
+
+# 利用者IDを部屋番号に
+
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS       |
+# 1:施設id   2:建屋id 3:フロア 4:ユニッid 5:居室
+# 6:入居者id 7:入居日 8:退去日
+LANG=C sort -k6,6n                                |
+join0 key=6 <(echo ${Riyoushaid})                 |
+awk '$7<="'${endday}'" && $8>="'${shokyaku_start}'"' |
+self 6 5                                          > $tmp-room
+
+cat $tmp-month_data                               |
+# 1:年月          2:利用者id        3:起算月        4:経過月数       5:残り月数
+# 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+# 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+join1 key=2 $tmp-room                             |
+delf 2                                            > $tmp-search_data
+# 1:年月          2:部屋番号        3:起算月        4:経過月数       5:残り月数
+# 6:一時金額      7:非返還金        8:償却金額      9:前月償却額累計 10:前月償却残高
+# 11:当月償却金額 12:当月償却額累計 13:当月償却残高
+
+
+cat $tmp-search_data
+
+rm -f ${tmp}-*
+exit 0
+

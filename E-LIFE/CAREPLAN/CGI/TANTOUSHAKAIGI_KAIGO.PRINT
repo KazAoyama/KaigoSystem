@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# TANTOUSHAKAIGI_KAIGO.PRINT : 担当者会議印刷
+#
+# Usage : TANTOUSHAKAIGI_KAIGO.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} $work_dir/namedata_tantoushakaigi
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,$3,$4}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+# 印刷結果
+if [ "$(gyo ${result_data})" != 0 ] ; then
+  cat ${result_data}        > $tmp-listdata
+else
+  : > $tmp-listdata
+fi
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata)
+#--------------------------------------------------------
+
+# テスト
+
+: > ${tmp}-careplan_sakuseishaname
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" -o "$hdKeikakuSakuseiDate" = " " ] ; then
+    cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+    KeikakuSakuseishaID=$(self 4 ${tmp}-careplan_date)
+    cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER                 |
+    awk '$1=="'$KeikakuSakuseishaID'"{print $2}'                 > ${tmp}-careplan_sakuseishaname
+else
+    cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_DATE   |
+    awk '$(NF-2)!="9"'                                           |
+    awk '$2=="'$hdKeikakuSakuseiDate'"'                           |
+    delf 6/8                                                      > ${tmp}-careplan_date
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+    KeikakuSakuseishaID=$(self 4 ${tmp}-careplan_date)
+    cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER                 |
+    awk '$1=="'$KeikakuSakuseishaID'"{print $2}'                 > ${tmp}-careplan_sakuseishaname
+fi
+
+
+# 追加レコード対応
+# 出席者
+seq $SHUSSEKISHANUM  |
+while read syussekishanum ; do
+   snum=$((syussekishanum-1))
+   shussekishashimei=$(nameread ShussekishaShimei$snum $tmp-listdata | head -1)
+   shussekishashozoku=$(nameread ShussekishaShozoku$snum $tmp-listdata | head -1)
+   echo "$shussekishashozoku" "$shussekishashimei" >> ${tmp}-shussekishawork1
+done
+
+# 減らしたレコードは表示しない
+cat ${tmp}-shussekishawork1 |
+awk '$1!="_"&&$2!="_"'  > $tmp-shussekisharecord
+
+
+dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!=""{print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+printKentouKoumoku=$(echo $KentouKoumoku | sed 's/\\n/<br>/g')
+printKentouNaiyou=$(echo $KentouNaiyou | sed 's/\\n/<br>/g')
+printKetsuron=$(echo $Ketsuron | sed 's/\\n/<br>/g')
+printKadai=$(echo $Kadai | sed 's/\\n/<br>/g')
+
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###USERID### $USER_ID
+###HDKAISAIDATE### $hdKaisaiDate
+###KAISAIDATE### $KaisaiDate
+###KAISAIPLACE### $KaisaiPlace
+###OPENHOUR### $OpenHour
+###OPENMINUTE### $OpenMinute
+###CLOSEHOUR### $CloseHour
+###CLOSEMINUTE### $CloseMinute
+###KAISAINUMBER### $KaisaiNumber
+###KENTOUKOUMOKU### $printKentouKoumoku
+###KENTOUNAIYOU### $printKentouNaiyou
+###KETSURON### $printKetsuron
+###KADAI### $printKadai
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_TANTOUSHAKAIGI_KAIGO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###SHUSSEKISHA### - $tmp-shussekisharecord |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###CAREPLANSAKUSEISHA### - ${tmp}-careplan_sakuseishaname |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-tantoushakaigi_kaigo_base_pdf.html
+#--------------------------------------------------------------
+cp $tmp-tantoushakaigi_kaigo_base_pdf.html $work_dir/tantoushakaigi_kaigo_base_pdf.html
+
+case "${MODE}" in
+  #一括印刷
+  allprint )
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 5 --margin-right 5 --margin-top 2 $tmp-tantoushakaigi_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/IKKATSU/$USER_ID/${Riyoushaid}_D_TANTOUSHAKAIGI_KAIGO.pdf
+  ;;
+
+  # 個別印刷
+  * )
+  mkdir -p ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}
+
+  # 過去のPDFを一旦消す
+  rm ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/TANTOUSHAKAIGI_KAIGO.pdf
+
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 5 --margin-right 5 --margin-top 2 $tmp-tantoushakaigi_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/TANTOUSHAKAIGI_KAIGO.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${Riyoushaid}/TANTOUSHAKAIGI_KAIGO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+  cat ${tmp}-html.html
+;;
+esac
+
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

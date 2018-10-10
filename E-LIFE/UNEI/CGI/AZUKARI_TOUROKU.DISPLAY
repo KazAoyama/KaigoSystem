@@ -1,0 +1,383 @@
+#!/bin/bash
+#
+# AZUKARI_TOUROKU.DISPLAY : .DISPLAY
+#
+# Usage : AZUKARI_TOUROKU.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL/AZUKARI_TOUROKU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+tourokufile=${4}
+downloadfile=${5}
+
+cp ${tourokufile} ${work}/tourokufile
+# eval
+eval $(name-source ${namefile})
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+
+
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/UNEI/DOWNLOAD/${file}\""
+fi
+
+# エラーメッセージ
+case "${MODE}" in
+  search )
+    [ "$(gyo ${searchfile})" = 0 ] && message="対象者データがありません"
+  ;;
+  touroku )
+    result=$(awk '$1=="result"{print $2}' ${tourokufile})
+    if [ "${result}" = "ok" ];then
+      message="登録しました"
+    else
+      message=$(awk '$1=="message"{print $2}' ${tourokufile})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+  ;;
+esac
+
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat <<- FIN > $tmp-html2
+  <script type="text/javascript" language="javascript">
+    alert('${message}');
+  </script>
+FIN
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" -o "${MODE}" = "touroku" ];then
+  KOUMOKU=""
+  hd_azukari_hiduke=""
+  AZUKARI_TIME=""
+  TAIOU=""
+  TAIOU_USER="_"
+  FLOOR="0"
+  KAZU_DISABLED=""
+  DATE_HEAD=""
+  AZUKARI_DAY=""
+  KOUMOKU_HEAD=""
+  KOUMOKU_DISP=""
+  TIME_HEAD=""
+  TIME_DISP=""
+  WATASITA_KOSU_HEAD=""
+  WATASITA_KOSU=""
+  WATASITA_HITO_HEAD=""
+  WATASITA_HITO=""
+  KOUMOKU_DISABLED=""
+  Shusei_Id=""
+elif [ "${MODE}" = "shusei" ];then
+  echo "${Shusei_Id}"                         |
+  awk '{print substr($1,1,8),substr($1,10,7),substr($1,18,4)substr($1,26,2)}'  > $tmp-ShuseiId
+  Riyousha=$(self 1 $tmp-ShuseiId)
+  ShuseiID=$(self 2 $tmp-ShuseiId)
+  Month=$(self 3 $tmp-ShuseiId)
+
+  cat ${pompa_dir}/AZUKARI_TOUROKU/${shisetsu}/AZUKARI_TOUROKU ${pompa_dir}/AZUKARI_TOUROKU/${shisetsu}/${Month}.AZUKARI_TOUROKU |
+  # 1:対応       2:利用者ID    3:預り項目    4:預り日付   5:預り時間
+  # 6:預り対応者 7:預り数量    8:お渡し数量@ 9:誰にお渡し 10:備考
+  # 11:渡した日  12:渡した時間 13:対応者     14:データID  15:有効フラグ
+  # 16:処理日時
+  awk '$14=="'${ShuseiID}'"'                                           > $tmp-kensaku_data
+  KOUMOKU=$(self 3 $tmp-kensaku_data)
+  hd_azukari_hiduke=$(awk '{if($11=="@"){print $4}else{print $11}}' $tmp-kensaku_data | awk '{print substr($1,1,4)"-"substr($1,5,2)"-"substr($1,7,2)}')
+  AZUKARI_TIME=$(awk '{if($12=="@"){print $5}else{print $12}}' $tmp-kensaku_data)
+  TAIOU=$(self 1 $tmp-kensaku_data)
+  TAIOU_USER=$(awk '{if($13=="@"){print $6}else{print $13}}' $tmp-kensaku_data)
+else
+  Shusei_Id=""
+fi
+
+# 日付の取得
+if [ "${hd_azukari_hiduke}" = "_" -o -z "${hd_azukari_hiduke}" ];then
+  hd_azukari_hiduke=$(date +%Y%m%d | awk '{print substr($1,1,4)"-"substr($1,5,2)"-"substr($1,7,2)}')
+else
+  :
+fi
+
+cal_azukari_hiduke=$(echo $hd_azukari_hiduke | sed 's/-//g')
+
+# 項目のセット
+if [ -n "${KOUMOKU}" -a "${KOUMOKU}" != "_" ];then
+  cat ${tbl_dir}/${shisetsu}/AZUKARI_KOUMOKU  |
+  awk '$4!=9'                                 |
+  LANG=C sort -k3,3n                          |
+  self 1 2                                    |
+  awk '{print $0,"'${KOUMOKU}'"}'             |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  cat ${tbl_dir}/${shisetsu}/AZUKARI_KOUMOKU  |
+  awk '$4!=9'                                 |
+  LANG=C sort -k3,3n                          |
+  self 1 2
+fi                                            > $tmp-koumoku
+
+
+# 対応のセット
+cat <<-FIN                                    > $tmp-taiou_master
+1 預り
+2 お渡し
+FIN
+
+if [ -n "${TAIOU}" -a "${TAIOU}" != "_" ];then
+  awk '{print $0,"'${TAIOU}'"}' $tmp-taiou_master  |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  cat $tmp-taiou_master                       
+fi                                                 > $tmp-taiou
+
+# 対応者のセット
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON    |
+# 1:従業員ID 2:従業員名 3:従業員名カナ 4:勤務期間from 5:勤務時間to
+# 6:ID 7:PASS 8:削除フラグ 9:更新日時 10:ユーザーID
+awk '$4<="'${cal_azukari_hiduke}'" && $5>="'${cal_azukari_hiduke}'" && $9!="9"' |
+self 1 2                                                       > $tmp-user_master
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${hometbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+# 1:userid 2:施設id  3:建屋 4:フロア 5:ユニットid
+# 6:事業所詳細 7:役職（ケアマネかサ責） 8:介護支援専門員番号
+LANG=C sort -k2,2n                                             |
+join0 key=2 <(echo ${shisetsu})                                |
+awk '$3=="01"'                                                 |
+self 1                                                         |
+uniq                                                           |
+LANG=C sort -k1,1n                                             |
+join1 key=1 $tmp-user_master                                   |
+awk '{print $0,"'${TAIOU_USER}'"}'                                 |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > $tmp-jisshisha
+
+# フロアのセット
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                    |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 <(echo $shisetsu)                                      |
+join0 key=2 <(echo "01")                                       |
+awk '$9==1'                                                    |
+self 3                                                         |
+LANG=C sort -u                                                 > $tmp-floor_base
+echo "0 全て"                                                  > $tmp-floor_all
+awk '{print $1,$1"F"}' $tmp-floor_base                         |
+cat $tmp-floor_all -                                           |
+awk '{print $0,"'${FLOOR}'"}'                                  |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' > $tmp-floor
+
+# ソート順
+cat <<-FIN >> $tmp-floor_sort
+1 昇順
+2 降順
+FIN
+
+if [ -n "${FLOOR_SORT}" -a "${FLOOR_SORT}" != "_" ];then
+  awk '{print $0,"'${FLOOR_SORT}'"}' $tmp-floor_sort            |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'
+else
+  cat $tmp-floor_sort
+fi                                                              > $tmp-sort_select
+
+# searchfileの処理
+cat ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2                          > $tmp-riyosha_kihon
+
+if [ "$(gyo ${searchfile})" -ne 0 ];then
+  cat ${searchfile}
+else
+  :
+fi                               > $tmp-search
+
+
+# 登録ボタンは検索後のみ表示
+if [ "${MODE}" = "search" -o "${MODE}" = "shusei" ];then
+  echo "###MODE_DISPLAY###" "@"
+
+  # 対応によって表示項目をチェンジ
+  case ${TAIOU} in
+  1 )
+    DATE_HEAD="none"
+    AZUKARI_DAY="none"
+    KOUMOKU_HEAD="none"
+    KOUMOKU_DISP="none"
+    TIME_HEAD="none"
+    TIME_DISP="none"
+    WATASITA_KOSU_HEAD="none"
+    WATASITA_KOSU="none"
+    WATASITA_HITO_HEAD="none"
+    WATASITA_HITO="none"
+    KOUMOKU_DISABLED=""
+  ;;
+  2 )
+    KAZU_DISABLED="disabled"
+    DATE_HEAD=""
+    AZUKARI_DAY=""
+    KOUMOKU_HEAD=""
+    KOUMOKU_DISP=""
+    TIME_HEAD=""
+    TIME_DISP=""
+    WATASITA_KOSU_HEAD=""
+    WATASITA_KOSU=""
+    WATASITA_HITO_HEAD=""
+    WATASITA_HITO=""
+    KOUMOKU_DISABLED="disabled"
+  ;;
+  esac
+
+else
+  echo "###MODE_DISPLAY###" "none"
+fi                                >> $tmp-calsed1
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE1### active
+###LI_UNEI3### active
+###TEXT_AZUKARI_HIDUKE### ${text_azukari_hiduke}
+###HD_AZUKARI_HIDUKE### ${hd_azukari_hiduke}
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###SELECT_SHISETSU### $select_shisetsu
+###AZUKARI_TIME### ${AZUKARI_TIME}
+###KAZU_DISABLED### ${KAZU_DISABLED}
+###DATE_HEAD### ${DATE_HEAD}
+###AZUKARI_DAY### ${AZUKARI_DAY}
+###KOUMOKU_HEAD### ${KOUMOKU_HEAD}
+###KOUMOKU_DISP### ${KOUMOKU_DISP}
+###TIME_HEAD### ${TIME_HEAD}
+###TIME_DISP### ${TIME_DISP}
+###WATASITA_KOSU_HEAD### ${WATASITA_KOSU_HEAD}
+###WATASITA_KOSU### ${WATASITA_KOSU}
+###WATASITA_HITO_HEAD### ${WATASITA_HITO_HEAD}
+###WATASITA_HITO### ${WATASITA_HITO}
+###KOUMOKU_DISABLED### ${KOUMOKU_DISABLED}
+###Shusei_Id### ${Shusei_Id}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+cat ${html_dir}/AZUKARI_TOUROKU1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/AZUKARI_TOUROKU2.html   |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###KOUMOKU_SELECT### - ${tmp}-koumoku        |
+mojihame -l###TAIOU_SELECT### - ${tmp}-taiou        |
+mojihame -l###TAIOU_USER_SELECT### - ${tmp}-jisshisha |
+mojihame -l###FLOOR_SELECT### - ${tmp}-floor              |
+mojihame -l###SORT_SELECT### - ${tmp}-sort_select              |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-search       |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+#mojihame -l###SEARCH_DATA### - ${tmp}-search_data |
+calsed -f ${tmp}-calsed - |
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+
+rm -f ${tmp}-*
+exit 0
+

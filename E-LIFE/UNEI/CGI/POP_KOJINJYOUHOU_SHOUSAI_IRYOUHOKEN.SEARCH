@@ -1,0 +1,121 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_IRYOUHOKEN.SEARCH
+# 個人情報詳細(医療保健情報)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+IRYOUHOKENID="$(nameread  "IRYOUHOKENID" $namedata)"
+
+USERID="$(nameread  "USERID" $namedata)"
+SHISETSUID="$(nameread  "SHISETSUID" $namedata)"
+RIYOUSHAID="$(nameread  "RIYOUSHAID" $namedata)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${tbl_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+
+
+### モードによる表示の分岐
+#case "${MODE}" in
+  # 初期表示
+#  search)
+
+###########
+# 居宅支援事業所情報の取得
+###########
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_IRYOUHOKEN  |
+# 1:利用者(入居者)ID  2:利用者医療保健ID    3:種類                4:医療保健名称      5:保険者番号
+# 6:記号番号          7:受給者番号          8:資格取得日：元号    9:資格取得日：年    10:資格取得日：月
+# 11:資格取得日：日   12:資格取得日：西暦   13:有効期限(至)：元号 14:有効期限(至)：年 15:有効期限(至)：月
+# 16:有効期限(至)：日 17:有効期限(至)：西暦 18:福祉医療名
+
+# 利用者IDと契約IDが一致し、有効フラグが9:削除ではないなもの
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${IRYOUHOKENID}'"&&$(NF-2)!="9"{print $0}'  > $tmp-iryouhoken
+
+#if [ -s $tmp-iryouhoken_jyunbi ] ; then
+#  cat $tmp-iryouhoken_jyunbi                              |
+#  cjoin2 +"_" key=3 ${tbl_dir}/CONFIG/IRYOUHOKEN_SHURUI - |
+#  # 医療保健名がある場合はそれを、ない場合は保険種類名を医療保健名とする
+#  awk '{if($5!="_"){print $0,$5}
+#        else{print $0,$4}
+#       }'                                |
+#  self 1/3 NF 6/NF-1                     > $tmp-iryouhoken
+#else
+#  : > $tmp-iryouhoken
+#fi
+
+
+echo "search_result ok" > $tmp-result
+
+#  ;;
+
+#--------------------------------------------------------------
+cat $tmp-result $tmp-iryouhoken
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

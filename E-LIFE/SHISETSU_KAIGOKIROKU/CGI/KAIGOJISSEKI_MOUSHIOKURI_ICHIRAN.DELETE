@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.DELETE : 介護実績削除用CGI
+#
+# Usage : KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN.DELETE ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+cgi_path="/RACK_KORITSU/cgi-bin"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+cp ${tmp}-name namefile
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+
+# 削除するデータを呼び出す
+search_month=$(echo ${hd_date}  | awk '{print substr($1,1,6)}')
+
+# 建屋がシニアの場合
+if [ $tateya == "01" ] ; then
+  cat ${pompa_dir}/${shisetsu_select}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR  
+# 建屋がケアの場合
+elif [ $tateya == "02" ] ; then
+  cat ${pompa_dir}/${shisetsu_select}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+fi                                                                                |
+
+#cat ${pompa_dir}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:日誌共有 8:支援経過共有 9:内容 10:色 11:登録日時 12:ID
+LANG=C sort -k13,13             |
+join0 +ng key=13 <(echo ${ShuseiId}) > ${tmp}-deldata 2> ${tmp}-newdata
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+# INPUTに保存
+# ディレクトリ作成
+mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-deldata ${input_dir}/${today}/KAIGOJISSEKI_MOUSHIOKURI_ICHIRAN_DELETE.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:日誌共有 8:支援経過共有 9:内容 10:色 11:登録日時
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+cp ${tmp}-newdata new_pompa
+cp ${tmp}-deldata del_pompa
+# POMPAデータを更新
+
+
+lock_file=${pompa_dir}/KAIGOJISSEKI_IKKATSU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+# 申送りを保存
+if [ -e ${tmp}-deldata ];then
+  # データを置き換えます
+  # 建屋がシニアの場合
+  if [ $tateya == "01" ] ; then
+    cp -p ${tmp}-newdata ${pompa_dir}/${shisetsu_select}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR
+  # 建屋がケアの場合
+  elif [ $tateya == "02" ] ; then
+    cp -p ${tmp}-newdata ${pompa_dir}/${shisetsu_select}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+  fi
+  #cp -p ${tmp}-newdata ${pompa_dir}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+cat ${tmp}-deldata
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+# 終了
+rm -f $tmp-*
+
+exit 0

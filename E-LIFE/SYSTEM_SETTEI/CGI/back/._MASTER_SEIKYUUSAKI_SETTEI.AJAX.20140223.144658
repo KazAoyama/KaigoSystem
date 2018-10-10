@@ -1,0 +1,337 @@
+#!/bin/bash
+#
+# MASTER_SEIKYUUSAKI_SETTEI.AJAX : 支払設定画面　フロア書き換えAJAX
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 表示データの作成
+
+case "${MODE}" in
+  kobetu_settei )
+    # 選択された利用者の利用者利用料マスタを有効なものに絞り込む
+    cjoin0 key=1 <(echo "${kobetu_settei}") ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+    cjoin0 key=3/4 <(echo "${Shisetsu} ${Tateya_select}") - |
+    # 1:利用者ID   2:契約ID     3:施設ID 4:建屋ID     5:利用料種別ID
+    # 6:起算開始日 7:起算終了日 8:金額   9:削除フラグ 10:更新日時
+    # 11:更新者
+    # -
+    # 有効なものに絞る
+    awk '$9!="9"' - |
+    awk '{$6=substr($6,1,6); $7=substr($7,1,6); print}' - |
+    awk '$6<="'${Disp_month_select}'" && $7>"'${Disp_month_select}'"' - |
+    self 3 5 |
+    # 1:施設ID 2:利用料種別ID
+    LANG=C sort |
+    # 名称を取得する
+    cjoin0 key=1/2 - ${tbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+    # 1:施設ID   2:利用料種別ID 3:利用科目名 4:税区分 5:金額
+    # 6:支払区分 7:費用算出方法 8:有効フラグ 9:更新日 10:更新者
+    self 2 3 > ${tmp}-riyouryou_syubetu
+    # 1:利用料種別ID 2:利用科目名
+
+    # 請求先マスタの絞込み
+    cjoin0 key=1/2 <(echo "${kobetu_settei} ${Shisetsu}") ${tbl_dir}/SEIKYUUSAKI_SETTEI/${Shisetsu}/SEIKYUUSAKI_SETTEI.${Shisetsu} |
+    # 1:利用者ID 2:施設ID     3:項目ID   4:適用月FROM 5:適用月TO
+    # 6:請求先   7:削除フラグ 8:更新時間 9:更新者
+    # -
+    # 有効なものに絞込み
+    awk '$9!="9"' - |
+    awk '$4<="'${Disp_month_select}'" && $5>"'${Disp_month_select}'"' - |
+    LANG=C sort > ${tmp}-master_seikyusaki
+
+    # 有効な利用者テーブル取得
+    awk '$5!="9"' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+    # 1:利用者ID 2:利用者氏名 3:利用者氏名カナ 4:利用者氏名外字 5:削除フラグ
+    # 6:更新日時 7:更新者
+    self 1 2 |
+    # 1:利用者ID 2:利用者氏名
+    LANG=C sort > ${tmp}-riyousha_tbl
+
+    # ------------------------
+    # 利用者利用料のリストぶんだけ繰り返し処理でfilehame部分の作成
+    while read ID NAME ; do
+      # 請求先の内容で現在選択されている人の名前を取得
+      seikyusaki_id="$(cjoin0 key=3 <(echo "${ID}") ${tmp}-master_seikyusaki | self 6)"
+      if [ "${seikyusaki_id}" != "" -a "${seikyusaki_id}" != "_" ] ; then
+        SEIKYUSAKI="$(cjoin0 key=1 <(echo "${seikyusaki_id}") ${tmp}-riyousha_tbl)様"
+      else
+        SEIKYUSAKI="設定なし"
+      fi
+
+      # 項目名と項目ID
+      KOUMOKU="$(cjoin0 key=1/2 <(echo "${Shisetsu} ${ID}") ${tbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER | awk '$8!="9"' | self 3)"
+      KOUMOKU_ID="${ID}"
+      KOUMOKU_ID_1="${ID}"
+      KOUMOKU_ID_2="${ID}"
+      KOUMOKU_ID_3="${ID}"
+      KOUMOKU_ID_4="${ID}"
+      KOUMOKU_ID_5="${ID}"
+      KOUMOKU_ID_6="${ID}"
+      KOUMOKU_ID_7="${ID}"
+      KOUMOKU_ID_8="${ID}"
+
+      # 請求適用月FROMを取得しテーブル作成
+      seikyu_from="$(cjoin0 key=3 <(echo "${ID}") ${tmp}-master_seikyusaki | self 4)"
+      if [ "${seikyu_from}" != "" -a "${seikyu_from}" != "_" ] ; then
+        # 現在設定されている年月＋Disp_month_selectの前月から7ヶ月ぶん表示
+        mdate -e ${Disp_month_select}/+6 |
+        tarr |
+        cat <(echo "${seikyu_from}") <(mdate ${Disp_month_select}/-1) - |
+        self 1 1 |
+        LANG=C sort |
+        awk '{if($1=="'${seikyu_from}'"){$3="selected"};print}' - |
+        # 表示ととのえる
+        awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' -
+      else
+        # 設定なし＋Disp_month_selectの前月から7ヶ月ぶん表示
+        mdate -e ${Disp_month_select}/+6 |
+        tarr |
+        cat <(mdate ${Disp_month_select}/-1) - |
+        self 1 1 |
+        LANG=C sort |
+        # 表示ととのえる
+        awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' - |
+        cat <(echo "_ 設定なし") -
+      fi > ${tmp}-seikyu_from_select
+
+      # html部分作成
+      cat << FIN | self 1/NF > ${tmp}-calsed
+      ###KOUMOKU### ${KOUMOKU}
+      ###SEIKYUSAKI### ${SEIKYUSAKI}
+      ###SEIKYUSAKI_ID### ${seikyusaki_id}
+      ###KOUMOKU_ID### ${KOUMOKU_ID}
+      ###KOUMOKU_ID_1### ${KOUMOKU_ID_1}
+      ###KOUMOKU_ID_2### ${KOUMOKU_ID_2}
+      ###KOUMOKU_ID_3### ${KOUMOKU_ID_3}
+      ###KOUMOKU_ID_4### ${KOUMOKU_ID_4}
+      ###KOUMOKU_ID_5### ${KOUMOKU_ID_5}
+      ###KOUMOKU_ID_6### ${KOUMOKU_ID_6}
+      ###KOUMOKU_ID_7### ${KOUMOKU_ID_7}
+      ###KOUMOKU_ID_8### ${KOUMOKU_ID_8}
+FIN
+      awk '/\<SEIKYU_SETTEI_start\>/,/\<SEIKYU_SETTEI_end\>/' ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI.FILEHAME.html |
+      calsed -f ${tmp}-calsed - |
+      mojihame -l"SEIKYUSAKI_FROM_SELECT" - ${tmp}-seikyu_from_select
+    done < ${tmp}-riyouryou_syubetu > ${tmp}-filehame_file
+    # ------------------------
+
+    # ------------------------
+    # 請求書連名テーブルの取得
+    cjoin0 key=1 <(echo "${kobetu_settei}") ${tbl_dir}/SEIKYUUSAKI_SETTEI/${Shisetsu}/RENMEI_SETTEI.${Shisetsu} |
+    # 1:利用者ID 2:連名する利用者ID 3:適用月FROM 4:適用月TO 5:削除フラグ
+    # 6:更新時間 7:更新者
+    awk '$5!="9"' - |
+    awk '$3<="'${Disp_month_select}'" && $4>"'${Disp_month_select}'"' - > ${tmp}-renmei_settei_table
+  
+    # 請求書宛名filehameチェックボックス部分作成
+    # -
+    # 連名表示する利用者を整える
+    self 2 ${tmp}-renmei_settei_table |
+    LANG=C sort |
+    cjoin0 key=1 ${tmp}-riyousha_tbl |
+    # レコードがあったらチェック入ってるのでチェック入れる
+    awk '{$2=$2"様"; print $0,"checked"}' - > ${tmp}-check_box_table
+    # もしデータが空ならば設定なしを入れる
+    if [ ! -s ${tmp}-check_box_table ] ; then
+      echo "_ 設定なし checked" > ${tmp}-check_box_table
+    fi
+    # -
+    # 期間部分作成(キー：利用者IDが同じ人は全てFROMが同じになっている)
+    seikyu_atena_kikan="$(self 3 ${tmp}-renmei_settei_table | LANG=C sort -u)"
+    if [ "${seikyu_atena_kikan}" != "" -a "${seikyu_atena_kikan}" != "_" ] ; then
+      # 現在設定されている年月＋disp_month_selectの前月から7ヶ月ぶんを表示
+      mdate -e ${Disp_month_select}/+6 |
+      tarr |
+      cat <(echo "${seikyu_atena_kikan}") <(mdate ${Disp_month_select}/-1) - |
+      self 1 1 |
+      LANG=C sort |
+      awk '{if($1=="'${seikyu_atena_kikan}'"){$3="selected"};print}' - |
+      awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' -
+    else
+      # 設定なし＋disp_month_selectの前月から7ヶ月ぶんを表示
+      mdate -e ${Disp_month_select}/+6 |
+      tarr |
+      cat <(mdate ${Disp_month_select}/-1) - |
+      self 1 1 |
+      LANG=C sort |
+      # 表示ととのえる
+      awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' - |
+      cat <(echo "_ 設定なし") -
+    fi > ${tmp}-renmei_settei_kikan_table
+    # -
+    # もじはめする
+    awk '/\<SEIKYU_ATENA_start\>/,/\<SEIKYU_ATENA_end\>/' ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI.FILEHAME.html |
+    mojihame -l"SEIKYU_ATENA_check_table" - ${tmp}-check_box_table > ${tmp}-check_box_table_filehame
+    # ------------------------
+
+    # filehameする
+    awk '/\<filehame_start\>/,/\<filehame_end\>/' ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI.FILEHAME.html |
+    filehame -l"SEIKYU_ATENA_filehame" - ${tmp}-check_box_table_filehame |
+    mojihame -l"SEIKYU_ATENA_FROM_SELECT" - ${tmp}-renmei_settei_kikan_table |
+    filehame -l"SEIKYU_SETTEI_filehame" - ${tmp}-filehame_file > ${tmp}-result_html
+  ;;
+  room_search )
+    # 選択された部屋に選択された時点で存在する人をだす
+    cjoin0 key=1/3 <(echo "${Shisetsu} ${Tateya_select} ${Floor_select}") ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# てすと
+#    cjoin0 key=1/3 <(echo "${Shisetsu} ${Tateya_select} ${Floor_select}") ~/E-LIFE/SYSTEM_SETTEI/POMPA/SHISETSU_RIYOUSHA_STATUS_cp |
+    # 1:施設ID   2:建屋ID 3:フロア 4:ユニット   5:居室
+    # 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新日時
+    # 11:更新者
+    cjoin0 key=5 <(echo "${Room_select}") - |
+    # 有効なものに絞り込む
+    awk '$9!="9"' |
+    awk '{$7=substr($7,1,6); $8=substr($8,1,6); print}' - |
+    awk '$7<="'${Disp_month_select}'" && $8>"'${Disp_month_select}'"' |
+    self 6 |
+    # 1:入居者ID
+    LANG=C sort |
+    # 名前を取得する
+    cjoin0 key=1 - ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+    # 1:利用者ID 2:利用者氏名 3:利用者氏名カナ 4:利用者氏名外字 5:削除フラグ
+    # 6:更新日時 7:更新者
+    awk '$5!="9"' |
+    self 1 2 |
+    cat <(echo "_ 選択してください") - > ${tmp}-room_user
+    # 1:利用者ID 2:利用者氏名
+
+    # 電話課金請求先絞込み
+    cjoin0 key=1/4 <(echo "${Shisetsu} ${Tateya_select} ${Floor_select} ${Room_select}") ${tbl_dir}/SEIKYUUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+    # 1:施設ID     2:建屋ID         3:フロア     4:部屋番号 5:請求期間FROM
+    # 6:請求期間TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+    # -
+    # 有効なものに絞込み
+    awk '$8!="9"' - |
+    awk '$5<="'${Disp_month_select}'" && $6>"'${Disp_month_select}'"' - |
+    LANG=C sort > ${tmp}-master_seikyusaki
+
+    # 選択されている部屋・年月の電話課金の請求先が設定されていたら画面上に表示する
+    seikyusaki="$(self 7 ${tmp}-master_seikyusaki | cjoin0 key=1 - ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER | awk '$5!="9"' | self 2)"
+    if [ "${seikyusaki}" = "" -o "${seikyusaki}" = "_" ] ; then
+      seikyusaki="設定なし"
+    fi
+    # 選択されている部屋・年月の電話課金の請求先が設定されていたら画面上に表示する
+    seikyusaki_id="$(self 7 ${tmp}-master_seikyusaki)"
+    if [ "${seikyusaki_id}" = "" -o "${seikyusaki_id}" = "_" ] ; then
+      seikyusaki_id=""
+    fi
+
+    # 請求適用月FROMを取得しテーブル作成
+    seikyu_from="$(self 5 ${tmp}-master_seikyusaki)"
+    if [ "${seikyu_from}" != "" -a "${seikyu_from}" != "_" ] ; then
+      # 現在設定されている年月＋Disp_month_selectの前月から7ヶ月ぶん表示
+      mdate -e ${Disp_month_select}/+6 |
+      tarr |
+      cat <(echo "${seikyu_from}") <(mdate ${Disp_month_select}/-1) - |
+      self 1 1 |
+      LANG=C sort |
+      awk '{if($1=="'${seikyu_from}'"){$3="selected"};print}' - |
+      # 表示ととのえる
+      awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' -
+    else
+      # 設定なし＋Disp_month_selectの前月から7ヶ月ぶん表示
+      mdate -e ${Disp_month_select}/+6 |
+      tarr |
+      cat <(mdate ${Disp_month_select}/-1) - |
+      self 1 1 |
+      LANG=C sort |
+      # 表示ととのえる
+      awk '{$2=substr($2,1,4)"/"substr($2,5,2); print}' - |
+      cat <(echo "_ 設定なし") -
+    fi > ${tmp}-room_seikyu_select
+  ;;
+  tateya | floor | tateya_2 | floor_2 )
+    # フロア作成
+    cjoin0 key=1/2 <(echo "${shisetsu_key} ${Tateya_select}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR |
+    # 1:施設ID   2:建屋ID 3:フロア 4:削除フラグ 5:更新日時
+    # 6:ユーザID
+    awk '$4!="9"' |
+    self 3 3 |
+    # 1:フロア 2:フロア
+    case "${MODE}" in
+      tateya | tateya_2 )
+        cat -
+      ;;
+      floor | floor_2 )
+        awk '{if($1=="'${Floor_select}'"){$3="selected"};print}'
+      ;;
+    esac |
+    cat <(echo "_ 選択してください") - > ${tmp}-floor_select
+    
+    # 居室作成
+    # /home/hands/E-LIFE/TBL/SHISETSU/SHISETSU_TATEYA_FLOOR_UNIT_ROOM
+    # 1:施設ID    2:建屋ID      3:フロアID    4:ユニットID 5:居室
+    # 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+    # 11:ユーザID
+    cjoin0 key=1/3 <(echo "${shisetsu_key} ${Tateya_select} ${Floor_select}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+    awk '$5!="9"' |
+    self 5 5 |
+    LANG=C sort |
+    # 1:居室 2:居室
+    cat <(echo "_ 選択してください") - > ${tmp}-room_select
+  ;;
+esac
+#--------------------------------------------------------
+
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+case "${MODE}" in
+  kobetu_settei )
+    cat ${tmp}-result_html
+  ;;
+  room_search )
+    awk '/ROOM_SYOUSAI_start/,/ROOM_SYOUSAI_end/' ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI2.html |
+    mojihame -l"KOBETU_SELECT" - ${tmp}-room_user |
+    mojihame -l"DENWA_FROM_SELECT" - ${tmp}-room_seikyu_select |
+    calsed "###ROOM_NUMBER###" "${Room_select}" - |
+    calsed "###ROOM_NUMBER2###" "${Room_select}" - |
+    calsed "###DENWA_KAKIN_SEIKYU###" "${seikyusaki}" - |
+    calsed "###DENWA_KAKIN_SEIKYU_ID###" "${seikyusaki_id}" -
+  ;;
+  tateya | floor | tateya_2 | floor_2 )
+    # 取得するhtmlのパス設定
+    if [ "${MODE}" = "tateya" -o "${MODE}" = "floor" ] ; then
+      pass="MASTER_SEIKYUUSAKI_SETTEI2.html"
+    else
+      pass="MASTER_SEIKYUUSAKI_SETTEI_POPUP.html"
+    fi
+    # はめる
+    awk '/ajax_change_td_start/,/ajax_change_td_end/' ${html_dir}/${pass} |
+    mojihame -l"FLOOR_SELECT" - ${tmp}-floor_select |
+    mojihame -l"ROOM_SELECT" - ${tmp}-room_select
+#    echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+#    cat - ${tmp}-html
+  ;;
+esac |
+cat <(echo -e 'Content-Type: text/html; charset=UTF-8; \n\n') -
+# --------------------------------------------------------------
+
+#rm -f ${tmp}-*
+exit 0

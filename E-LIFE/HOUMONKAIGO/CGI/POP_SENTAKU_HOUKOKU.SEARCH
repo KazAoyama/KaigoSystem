@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# POP_SENTAKU_HOUKOKU.SEARCH
+# 計画書選択　検索用CGI
+#
+# Written by K.Aoyama :20140213
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+:> $tmp-disp_date
+
+if [ -s ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU_DATE ] ; then
+   cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU_DATE |
+   awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'     |
+   self 2 3                                      |
+   LANG=C sort -k1r                              |
+   rank                                          > $tmp-disp_date
+else
+#--------------------------------------------------------------
+# 基本ファイルの取得
+   cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSHI_HOUKOKU |
+#--------------------------------------------------------------
+# 利用者ID
+   awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'     |
+#--------------------------------------------------------------
+# 検索
+#--------------------------------------------------------------
+# 1:利用者ID 2:データID
+   self 1 2                 |
+   LANG=C sort -k1,2        >  ${tmp}-houkoku_base
+
+# リストファイルの取得
+   cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/HOUKOKULIST  |
+   LANG=C sort -k1,2        |
+   join0 key=1/2 ${tmp}-houkoku_base  |
+   getfirst 1 2             |
+# 1:採番 2:データID 3:日付
+   self 2 7               |
+   LANG=C sort -k1r       |
+   rank                     > $tmp-disp_date
+fi
+
+# 実施報告書のリストの最初の日付を抽出
+cat ${tmp}-disp_date
+
+
+## 終了
+rm -f $tmp-*
+exit 0

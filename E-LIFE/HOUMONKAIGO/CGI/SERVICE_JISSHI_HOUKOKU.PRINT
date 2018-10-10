@@ -1,0 +1,235 @@
+#!/bin/bash
+#
+# SERVICE_JISSHI_HOUKOKU.PRINT : 訪問介護計画書印刷
+#
+# Usage : SERVICE_JISSHI_HOUKOKU.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_houmonkaigo
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 検索結果
+  print)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+# マスタ設定
+# 元号
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2}'                        > $tmp-gengou_master
+
+# 介護度
+cat ${home_dir}/TBL/CONFIG/KAIGODO_MASTER           |
+awk '$4<="'$today'"&&$5>"'$today'"{print $1,$2}'    > $tmp-kaigodo_master
+
+# 実施状況
+echo "0" "計画通り実施"  > $tmp-jisshi_master
+echo "1" "計画通りに実施されていない" >> $tmp-jisshi_master
+echo "_" "　" >> $tmp-jisshi_master
+
+# 期待効果
+echo "0" "達成" > $tmp-kitai_master
+echo "1" "効果あり" >> $tmp-kitai_master
+echo "2" "効果あるも不十分" >> $tmp-kitai_master
+echo "3" "効果なし" >> $tmp-kitai_master
+echo "_" "　" >> $tmp-kitai_master
+
+# 支援変化
+echo "0" "変化なし" > $tmp-henka_master
+echo "1" "変化あり" >> $tmp-henka_master
+echo "_" "　" >> $tmp-henka_master
+
+# 本人意欲
+echo "0" "満足" > $tmp-iyoku_master
+echo "1" "普通" >> $tmp-iyoku_master
+echo "2" "不満" >> $tmp-iyoku_master
+echo "3" "不明" >> $tmp-iyoku_master
+echo "_" "　" >> $tmp-iyoku_master
+
+
+cp -p $tmp-listdata $work_dir/listdata_houmon
+
+# 報告書基本データ取得
+awk '$1=="k"' $tmp-listdata    |
+delf 1           > $tmp-listdata_houkoku
+
+# 報告書リストデータ取得
+awk '$1=="l"' $tmp-listdata    |
+delf 1                         |
+tee $work_dir/list0            |
+LANG=C sort -k2,2              |
+join1 key=2 $tmp-gengou_master |
+tee $work_dir/list1            |
+self 1 3/NF                    |
+LANG=C sort -k6,6              |
+join1 key=6 $tmp-kaigodo_master  |
+tee $work_dir/list2            |
+self 1/5 7/NF                  |
+LANG=C sort -k7,7              |
+join1 key=7 $tmp-jisshi_master |
+tee $work_dir/list3            |
+self 1/6 8/NF                  |
+LANG=C sort -k8,8              |
+join1 key=8 $tmp-kitai_master  |
+tee $work_dir/list4            |
+self 1/7 9/NF                  |
+LANG=C sort -k9,9              |
+join1 key=9 $tmp-henka_master  |
+tee $work_dir/list5            |
+self 1/8 10/NF                 |
+LANG=C sort -k12,12              |
+join1 key=12 $tmp-iyoku_master |
+tee $work_dir/list6            |
+self 1/11 13/NF                |
+LANG=C sort -k13,13              |
+join1 key=13 $tmp-iyoku_master |
+tee $work_dir/list7            |
+self 1/12 14                   |
+LANG=C sort -k2,2              > $tmp-houkokulist
+
+
+# 事業所マスタ、自事業所マスタ、従業員マスタなど
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata_houkoku)
+#--------------------------------------------------------
+
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER    |
+# 1:施設コード 2:施設名
+awk '$1=="'$shisetsu'"'                        |
+self 2                                             |
+getlast 1 1                    > ${tmp}-user_shisetsu
+shisetsu_name=$(cat ${tmp}-user_shisetsu)
+
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER    |
+awk '$1=="'$slServiceTeikyoSekininsha'"'             |
+self 2                                             |
+getlast 1 1    > ${tmp}-sekininsha
+sekininsha=$(self 1 ${tmp}-sekininsha)
+
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER |
+awk '$1=="'$slKyotakuKaigoShienJigyousho'"{print $3}' > $tmp-jigyousho_mst
+dispKyotakuKaigoShienJigyousho=$(self 1 $tmp-jigyousho_mst)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###HOUKOKUID### $HoukokuID
+###RIYOUSHA### $Riyousha
+###SLKYOTAKUKAIGOSHIENJIGYOUSHO### $dispKyotakuKaigoShienJigyousho
+###SLKAIGOSHIENSENMONIN### $slKaigoShienSenmonin
+###SLHOUMONKAIGOJIGYOUSHO### $shisetsu_name
+###SLSERVICETEIKYOSEKININSHA### $sekininsha
+###DOMAIN### ${domain}
+FIN
+
+# 事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO/JIGYOUSHO_MASTER      |
+# 1:事業所ID 2:事業所名 3:事業所タイプ
+awk '$46=="0" {print $1,$3,$4}'                     |
+# 居宅支援事業のみ
+awk '$3=="43"'                                      |
+LANG=C sort -k3,3                                   |
+join1 key=3 ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+# 1:事業所ID 2:事業所名 3:事業所タイプ 4:サービスタイプ 5:サービスタイプ名
+self 1 2 5                                          |
+LANG=C sort -k1,3                                   > ${tmp}-jigyousho_master
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_SERVICE_JISSHI_HOUKOKU.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -h###HOUKOKULIST### - $tmp-houkokulist |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+sed 's/。\n/｡\n/g'              |
+sed 's/。"/｡"/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-base_pdf.html
+
+cp $tmp-base_pdf.html $work_dir/base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-left 15 --margin-right 5 $tmp-base_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/SERVICE_JISSHI_HOUKOKU.pdf
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/SERVICE_JISSHI_HOUKOKU.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

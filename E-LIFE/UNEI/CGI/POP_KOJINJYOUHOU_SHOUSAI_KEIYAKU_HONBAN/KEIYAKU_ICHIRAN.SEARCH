@@ -1,0 +1,476 @@
+#!/bin/bash
+#
+# KEIYAKU_ICHIRAN.SEARCH
+# 契約情報一覧検索
+#
+# Written by Y.kashiyama  : 2014/03/12
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+data_dir="/DATA/E-LIFE"
+tbl_dir="${home_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+KeiyakukaishibiFrom=$(nameread "KeiyakukaishibiFrom" $namedata | sed 's/\///g')
+KeiyakukaishibiTo=$(nameread "KeiyakukaishibiTo" $namedata | sed 's/\///g')
+KeiyakuendbiFrom=$(nameread "KeiyakuendbiFrom" $namedata | sed 's/\///g')
+KeiyakuendbiTo=$(nameread "KeiyakuendbiTo" $namedata | sed 's/\///g')
+#--------------------------------------------------------------
+Shisetsu=$(nameread "Shisetsu" $namedata)
+JigyoushoFlag=$(echo "${Shisetsu}" | awk '{print substr($1,1,1)}')
+
+#--------------------------------------------------------------
+# キーワードの準備
+#--------------------------------------------------------------
+#if [ ! -z "${Keyword}" -a "${Keyword}" != "_" ] ; then
+#  echo "${Keyword}"     |
+#  zen 1                 > $tmp-keyword-zen
+#  cat $tmp-keyword-zen  |
+#  han 1                 > $tmp-keyword-han
+#else
+#  :
+#fi
+
+#if [ -s "$tmp-keyword-zen" ] ; then
+#  zen=$(awk '{print $1}' $tmp-keyword-zen)
+#else
+#  :
+#fi
+#if [ -s "$tmp-keyword-han" ] ; then
+#  han=$(awk '{print $1}' $tmp-keyword-han)
+#else
+#  :
+#fi
+
+#--------------------------------------------------------------
+# -----
+# 権限
+# -----
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${system_settei_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$7=="KEIYAKUJYOUHOU_ICHIRAN.CGI"{print $0}'              |
+LANG=C sort -u -k2,2n                                         |
+self 2                                                        > ${tmp}-keiyaku_kengen
+# 1:SHISETSU_ID
+
+#---------------------------------------------------
+# 元ネタ
+# ~/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKU
+#---------------------------------------------------
+self 1 3 ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER |
+# 1:入居者ID 2:入居者名カナ
+LANG=C sort                                    |
+
+cjoin1 key=1 - ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU |
+self 1 3/25 2                                         |
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者    25:入居者名カナ
+awk '$(NF-3)!="9"' |
+
+# 施設
+if [ -z "${Shisetsu}" -o "${Shisetsu}" = "_" -o "${Shisetsu}" = "0000" ]; then
+  # 権限
+  if [ "$(cat ${tmp}-keiyaku_kengen | head -1)" = "0000" ] ; then
+     cat -
+  else
+     cjoin0 key=3 ${tmp}-keiyaku_kengen -
+  fi
+# cat -
+else
+ awk '$3=="'"${Shisetsu}"'"'
+fi |
+# 建屋
+if [ -z "${Tateya}" -o "${Tateya}" = "_" ]; then
+  cat
+else
+  awk '$4=="'"${Tateya}"'"'
+fi |
+# フロア
+if [ -z "${Floor}" -o "${Floor}" = "_" ]; then
+  cat
+else
+  awk '$5=="'"${Floor}"'"'
+fi |
+# ユニット
+if [ -z "${Unit}" -o "${Unit}" = "_" ]; then
+  cat
+else
+  awk '$6=="'"${Unit}"'"'
+fi |
+# 居室
+if [ -z "${Kyoshitsu}" -o "${Kyoshitsu}" = "_" ]; then
+  cat
+else
+  awk '$7=="'"${Kyoshitsu}"'"'
+fi |
+# 入居者
+if [ -z "${Nyuukyosha}" -o "${Nyuukyosha}" = "_" ]; then
+  cat
+else
+  awk '$1=="'"${Nyuukyosha}"'"'
+fi |
+# 契約種類
+if [ -z "${Keiyaku}" -o "${Keiyaku}" = "_" ]; then
+  cat
+else
+  awk '$9=="'"${Keiyaku}"'"'
+fi |
+# 契約開始日From
+if [ -z "${KeiyakukaishibiFrom}" -o "${KeiyakukaishibiFrom}" = "_" ]; then
+  cat
+else
+  awk '"'${KeiyakukaishibiFrom}'"<=$12'
+fi |
+# 契約開始日To
+if [ -z "${KeiyakukaishibiTo}" -o "${KeiyakukaishibiTo}" = "_" ]; then
+  cat
+else
+  awk '$12<="'${KeiyakukaishibiTo}'"'
+fi |
+# 契約終了日From
+if [ -z "${KeiyakuendbiFrom}" -o "${KeiyakuendbiFrom}" = "_" ]; then
+  cat
+else
+  awk '"'${KeiyakuendbiFrom}'"<=$13'
+fi |
+# 契約終了日To
+if [ -z "${KeiyakuendbiTo}" -o "${KeiyakuendbiTo}" = "_" ]; then
+  cat
+else
+  awk '$13<="'${KeiyakuendbiTo}'"'
+fi |
+# 表示順
+# 01:居室番号 02:入居者名 03:契約開始日 04:契約終了日 05:契約種類
+# 1:昇順 2:降順
+case "${HyoujiJyun}" in
+"_")
+  case "${HyoujiShoukou}" in
+  "1")
+    LANG=C sort -k7,7
+  ;;
+  "2")
+    LANG=C sort -k7,7 -r
+  ;;
+  esac
+;;
+"01")
+  case "${HyoujiShoukou}" in
+  "1")
+    LANG=C sort -k7,7
+  ;;
+  "2")
+    LANG=C sort -k7,7 -r
+  ;;
+  esac
+;;
+"02")
+  case "${HyoujiShoukou}" in
+    "1")
+    LANG=C sort -k25,25
+  ;;
+    "2")
+    LANG=C sort -k25,25 -r
+  ;;
+  esac
+;;
+"03")
+  case "${HyoujiShoukou}" in
+  "1")
+    LANG=C sort -k12,12 -n
+  ;;
+  "2")
+    LANG=C sort -k12,12 -nr
+  ;;
+  esac
+;;
+"04")
+  case "${HyoujiShoukou}" in
+    "1")
+    LANG=C sort -k13,13 -n
+  ;;
+    "2")
+    LANG=C sort -k13,13 -nr
+  ;;
+  esac
+;;
+"05")
+  case "${HyoujiShoukou}" in
+    "1")
+    LANG=C sort -k9,9 -n
+  ;;
+    "2")
+    LANG=C sort -k9,9 -nr
+  ;;
+  esac
+;;
+esac |
+delf 25 |
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+if [ "${Shisetsu}" = "0000" ] ; then
+  cjoin1 key=3 <(cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | self 1 2)
+elif [ "${JigyoushoFlag}" = "1" ] ; then
+  cjoin1 key=3 <(self 1 2 ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER)
+else
+  cjoin1 key=3 <(self 1 2 ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON) 
+# 1:利用者(入居者)ID 2:契約ID     3:施設ID      4:施設名      5:建屋ID
+# 6:フロアID         7:ユニットID 8:居室ID      9:入居時年齢  10:契約種類ID
+# 11:契約日          12:引渡し日  13:契約開始日 14:契約終了日 15:退去理由
+# 16:退去理由詳細    17:備考      18:予備1      19:予備2      20:予備3
+# 21:予備4           22:予備5     23:削除フラグ 24:更新日     25:更新者
+fi |
+cjoin2 +@ key=1 <(self 1 2 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER)       |
+# 1:利用者(入居者)ID 2:利用者名      3:契約ID     4:施設ID      5:施設名
+# 6:建屋ID           7:フロアID      8:ユニットID 9:居室ID      10:入居時年齢
+# 11:契約種類ID      12:契約日       13:引渡し日  14:契約開始日 15:契約終了日
+# 16:退去理由        17:退去理由詳細 18:備考      19:予備1      20:予備2
+# 21:予備3           22:予備4        23:予備5     24:削除フラグ 25:更新日
+# 26:更新者
+cjoin1 key=11 <(self 1 2 ${tbl_dir}/KEIYAKU_MASTER/KEIYAKU_NAME) |
+# 1:利用者(入居者)ID 2:利用者名  3:契約ID        4:施設ID    5:施設名
+# 6:建屋ID           7:フロアID  8:ユニットID    9:居室ID    10:入居時年齢
+# 11:契約種類ID      12:契約名称 13:契約日       14:引渡し日 15:契約開始日
+# 16:契約終了日      17:退去理由 18:退去理由詳細 19:備考     20:予備1
+# 21:予備2           22:予備3    23:予備4        24:予備5    25:削除フラグ
+# 26:更新日          27:更新者
+cjoin2 +@ key=17 ${tbl_dir}/CONFIG/TAIKYO_RIYUU |
+# 1:利用者(入居者)ID 2:利用者名  3:契約ID      4:施設ID        5:施設名
+# 6:建屋ID           7:フロアID  8:ユニットID  9:居室ID        10:入居時年齢
+# 11:契約種類ID      12:契約名称 13:契約日     14:引渡し日     15:契約開始日
+# 16:契約終了日      17:退去理由 18:退去理由名 19:退去理由詳細 20:備考
+# 21:予備1           22:予備2    23:予備3      24:予備4        25:予備5
+# 26:削除フラグ      27:更新日   28:更新者
+self 1 3 4 2 5/NF > $tmp-totyu
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID      4:利用者名      5:施設名
+# 6:建屋ID           7:フロアID  8:ユニットID  9:居室ID        10:入居時年齢
+# 11:契約種類ID      12:契約名称 13:契約日     14:引渡し日     15:契約開始日
+# 16:契約終了日      17:退去理由 18:退去理由名 19:退去理由詳細 20:備考
+# 21:予備1           22:予備2    23:予備3      24:予備4        25:予備5
+# 26:削除フラグ      27:更新日   28:更新者
+
+#----------------------------
+# 標準賃料
+#----------------------------
+# 今日が有効なもの
+awk '$4<='"${today}"' && $5>='"${today}"'{print $1,$2,$3,$6}' ${tbl_dir}/RIYOURYOU_MASTER/KYOSHITSU_CHINRYOU |
+# 1:施設ID 2:建屋ID 3:居室ID 4:標準賃料
+LANG=C sort                 > $tmp-normal_chinryou
+
+#cp $tmp-* /home/hands/work/okuda
+#----------------------------
+# 特販名、特販内容、賃料
+#----------------------------
+
+# 契約金特販と通常特販
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKUKIN ] ; then
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKUKIN |
+  awk '$12!="_"&&$(NF-2)!="9"{print $1,$3,$2,$12}'            > $tmp-keiyakukin_tokuhan
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID 4:特販ID
+else
+  :
+fi
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_TOKUHAN ] ; then
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_TOKUHAN |
+  awk '$4!="_"&&$(NF-2)!="9"{print $1,$3,$2,$4}'            > $tmp-tsujyou_tokuhan
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID 4:特販ID
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_TOKUHAN |
+  awk '$4!="_"&&$(NF-2)!="9"{print $1,$3,$2,"<br>"$9}'     |
+  LANG=C sort -u       |
+  yarr num=3           |
+  awk '$4=substr($4,5){print $0}' |
+  sed 's/ <br>/<br>/g'                                      > $tmp-tsujyou_tokuhan_naiyou
+else
+  :
+fi
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU ] ; then
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+  awk '$9!="_"&&$(NF-2)!="9"{print $1,$3,$2,$9}'            > $tmp-riyouryou_tokuhan
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID 4:特販ID
+else
+  :
+fi
+
+if [ -s $tmp-keiyakukin_tokuhan -a -s $tmp-tsujyou_tokuhan ] ; then
+  cat $tmp-keiyakukin_tokuhan $tmp-tsujyou_tokuhan $tmp-riyouryou_tokuhan |
+  LANG=C sort -u
+elif [ -s $tmp-keiyakukin_tokuhan ] ; then
+  cat $tmp-keiyakukin_tokuhan $tmp-riyouryou_tokuhan |
+  LANG=C sort -u
+elif [ -s $tmp-tsujyou_tokuhan ] ; then
+  cat $tmp-tsujyou_tokuhan $tmp-riyouryou_tokuhan |
+  LANG=C sort -u
+else
+  cat $tmp-riyouryou_tokuhan |
+  LANG=C sort -u
+fi |
+cjoin1 key=3/4 <(self 1 2 3 ${tbl_dir}/RIYOURYOU_MASTER/TOKUHAN_SHUBETSU) -  > $tmp-tokuhandata
+# 1:利用者(入居者)ID 2:契約ID  3:施設ID 4:特販ID 5:特販名
+
+cat $tmp-tokuhandata |
+awk '{print $1,$2,$3,"<br>"$5}' |
+yarr num=3           |
+awk '$4=substr($4,5){print $0}' |
+sed 's/ <br>/<br>/g' > $tmp-tokuhannamedata
+# 1:利用者(入居者)ID 2:契約ID  3:施設ID 4:特販名
+# 特販名による絞込み
+if [ -z "${Tokuhan}" -o "${Tokuhan}" = "_" ]; then
+  cat $tmp-totyu |
+  self 1/3
+else
+  cat $tmp-tokuhandata |
+  awk '$4=="'${Tokuhan}'"{print $1,$2,$3}'
+fi |
+LANG=C sort |
+cjoin1 key=1/3 - $tmp-totyu > $tmp-totyu2
+
+
+if [ -s ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU ] ; then
+  awk '$4=="001"{print $0}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+  awk '{if($11~/[0-9]/){print $1,$3,$2,$9,$11}else{print $1,$3,$2,$9,$8}}' |
+#  self 1 3 2 9 11 ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+ # 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:値引き後金額
+  LANG=C sort       |
+  if [ -s $tmp-tokuhannamedata ] ; then
+    cjoin2 +@ key=1/3 $tmp-tokuhannamedata - 
+  else
+    awk '{print $0,"@"}' |
+    self 1/3 NF 4/NF-1
+  fi |
+  if [ -s $tmp-tsujyou_tokuhan_naiyou ] ; then
+    cjoin2 +@ key=1/3 $tmp-tsujyou_tokuhan_naiyou - 
+  else
+    awk '{print $0,"@"}' |
+    self 1/3 NF 4/NF-1
+  fi |
+# 1:利用者(入居者)ID 2:契約ID       3:施設ID 4:特販内容 5:特販名
+# 6:特販ID           7:値引き後金額
+  self 1/3 6 4 5 7  |
+
+#  cjoin2 +@ key=3/4 <(self 1 2 3 ${tbl_dir}/RIYOURYOU_MASTER/TOKUHAN_SHUBETSU) |
+# # 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:特販名
+# # 6:値引き後金額
+#  LANG=C sort |
+#  cjoin2 +@ key=1/4 <(self 1 3 2 4 9 ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU) |
+# # 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:特販内容
+# # 6:特販名           7:値引き後金額
+  LANG=C sort |
+  cjoin2 +@ key=1/3 - $tmp-totyu2 
+ # 1:利用者(入居者)ID 2:契約ID       3:施設ID        4:特販ID      5:特販内容
+ # 6:特販名           7:値引き後金額 8:利用者名      9:施設名      10:建屋ID
+ # 11:フロアID        12:ユニットID  13:居室ID       14:入居時年齢 15:契約種類ID
+ # 16:契約名称        17:契約日      18:引渡し日     19:契約開始日 20:契約終了日
+ # 21:退去理由        22:退去理由名  23:退去理由詳細 24:備考       25:予備1
+ # 26:予備2           27:予備3       28:予備4        29:予備5      30:削除フラグ
+ # 31:更新日          32:更新者
+else
+  cat $tmp-totyu2 |
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID      4:利用者名      5:施設名
+# 6:建屋ID           7:フロアID  8:ユニットID  9:居室ID        10:入居時年齢
+# 11:契約種類ID      12:契約名称 13:契約日     14:引渡し日     15:契約開始日
+# 16:契約終了日      17:退去理由 18:退去理由名 19:退去理由詳細 20:備考
+# 21:予備1           22:予備2    23:予備3      24:予備4        25:予備5
+# 26:削除フラグ      27:更新日   28:更新者
+  awk '{print $0,"@"}' |
+  self 1/3 NF NF NF NF 4/NF
+fi |
+
+self 3 10 13 1 2 8 9 11 12 14/32 4/7 |
+# 1:施設ID      2:建屋ID        3:居室ID      4:利用者(入居者)ID 5:契約ID
+# 6:利用者名    7:施設名        8:フロアID    9:ユニットID       10:入居時年齢
+# 11:契約種類ID 12:契約名称     13:契約日     14:引渡し日        15:契約開始日
+# 16:契約終了日 17:退去理由     18:退去理由名 19:退去理由詳細    20:備考
+# 21:予備1      22:予備2        23:予備3      24:予備4           25:予備5
+# 26:削除フラグ 27:更新日       28:更新者     29:特販ID          30:特販内容
+# 31:特販名     32:値引き後金額
+
+# 標準賃料くっつける
+if [ -s $tmp-normal_chinryou ] ; then
+  cjoin2 +"@" key=1/3 $tmp-normal_chinryou 
+ # 1:施設ID      2:建屋ID      3:居室ID        4:標準賃料    5:利用者(入居者)ID
+ # 6:契約ID      7:利用者名    8:施設名        9:フロアID    10:ユニットID
+ # 11:入居時年齢 12:契約種類ID 13:契約名称     14:契約日     15:引渡し日
+ # 16:契約開始日 17:契約終了日 18:退去理由     19:退去理由名 20:退去理由詳細
+ # 21:備考       22:予備1      23:予備2        24:予備3      25:予備4
+ # 26:予備5      27:削除フラグ 28:更新日       29:更新者     30:特販ID
+ # 31:特販内容   32:特販名     33:値引き後金額
+else
+ awk '{print $0,$1,$2,$3,"@"}' |
+ self NF-3/NF 4/NF-4
+fi |
+# 利用状況
+awk '{if($16<='"${today}"' && $17>='"${today}"'){$34="01" ;print}else if($16>'"${today}"'){$34="03" ;print}else{$34="02" ;print}}' |
+# 1:施設ID      2:建屋ID      3:居室ID        4:標準賃料    5:利用者(入居者)ID
+# 6:契約ID      7:利用者名    8:施設名        9:フロアID    10:ユニットID
+# 11:入居時年齢 12:契約種類ID 13:契約名称     14:契約日     15:引渡し日
+# 16:契約開始日 17:契約終了日 18:退去理由     19:退去理由名 20:退去理由詳細
+# 21:備考       22:予備1      23:予備2        24:予備3      25:予備4
+# 26:予備5      27:削除フラグ 28:更新日       29:更新者     30:特販ID
+# 31:特販内容   32:特販名     33:値引き後金額 34:利用状況
+
+## 特販名絞込み
+#if [ -z "${Tokuhan}" -o "${Tokuhan}" = "_" ]; then
+#  cat
+#else
+#  awk '$30=="'"${Tokuhan}"'"'
+#fi |
+# 利用状態
+if [ -z "${RiyouStatus}" -o "${RiyouStatus}" = "_" ]; then
+  cat
+else
+  awk '$34=="'"${RiyouStatus}"'"'
+fi |
+sed 's/###SPACE###/ /g' |
+self 1/NF               > $tmp-result 
+
+#cp $tmp-* /home/hands/work/okuda
+
+cat $tmp-result |
+
+# --------------------------
+## キーワード
+#if [ -z "${Keyword}" -o "${Keyword}" = "_" ]; then
+#  cat
+#else
+#  grep -ie ${zen} -ie ${han}
+#fi |
+#LANG=C sort  |
+
+
+delf 34
+
+
+
+# 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_ALERT_MASTER.SEARCH : 介護実績アラート設定表示.SEARCH
+#
+# Usage : KAIGOJISSEKI_ALERT_MASTER.SEARCH namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+kyoutsu_dir=${home_dir}/KYOUTSU/HTML
+apptbl_dir=${home_dir}/SHISETSU_KAIGOKIROKU/TBL
+test_tbl_dir=${home_dir}/TEST/TBL
+test_pompa_dir=${home_dir}/TEST/POMPA
+
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -n "${userid}" ];then
+  :
+else
+  userid="00000077"
+fi
+if [ -n "${password}" ];then
+  :
+else
+  password="aoyagi"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${file}\""
+fi
+
+# 初期表示の準備
+if [ -n ${unit} -a ${unit} != "_" ];then
+  :
+else
+  unit="1"
+fi
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# shisetsuのディレクトリがあるかどうか
+CHECK=$(ls ${pompa_dir}/KAIGOJISSEKI_ALERT/${shisetsu} | gyo)
+cat ${pompa_dir}/KAIGOJISSEKI_ALERT/DEFAULT/KAIGOJISSEKI_ALERT_MASTER_DEFAULT  > ${tmp}-default
+cat ${apptbl_dir}/RIYOSHA_SHOZOKU        |
+# 1:floor 2:unit 3:riyosha_id
+LANG=C sort -k2,2n                       |
+join0 key=2 <(echo ${unit})              |
+self 3                                   |
+yarr                                     |
+awk '{print "00",$0}'                    |
+ycat ${tmp}-default -                    |
+tarr num=12                              |
+self 13 2/12                             |
+LANG=C sort -k1,1n                       |
+join1 key=1 ${apptbl_dir}/RIYOSHA_MASTER > ${tmp}-shisetsu_data
+cat ${tmp}-default ${tmp}-shisetsu_data  > ${tmp}-base
+cp ${tmp}-base base
+# あったら施設のデータを使用、なかったらデフォルトのデータを使用
+case ${CHECK} in
+  0 )
+    cat ${tmp}-base > ${tmp}-search
+  ;;
+  * )
+    cat ${pompa_dir}/KAIGOJISSEKI_ALERT/${shisetsu}/${shisetsu}.KAIGOJISSEKI_ALERT_MASTER |
+    LANG=C sort -k1,1n                                                                    |
+    join1 key=1 ${apptbl_dir}/RIYOSHA_MASTER                                              |
+    up3 key=1 ${tmp}-base -                                                               |
+    getlast 1 1                                                > ${tmp}-search
+  ;;
+esac
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  cat ${apptbl_dir}/FLOOR_MASTER                               |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  awk '{print $0,"'${floor}'"}'                                |
+# 1:FLOOR_CODE 2:FLOOR_NAME 3:floor_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-floor_name
+else
+  cat ${apptbl_dir}/FLOOR_MASTER                              |
+  awk '{print $0,""}'                                      > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  cat ${apptbl_dir}/UNIT_MASTER                                |
+# 1:UNIT_CODE 2:UNIT_NAME
+  awk '{print $0,"'${unit}'"}'                                 |
+# 1:UNTI_CODE 2:ユニット名 3:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+  cat ${apptbl_dir}/UNIT_MASTER                               |
+  awk '$3=="1"{print $1,$2,""}'                                   > ${tmp}-unit_name
+fi
+
+cat ${tmp}-search
+
+rm -f ${tmp}-*
+exit 0
+

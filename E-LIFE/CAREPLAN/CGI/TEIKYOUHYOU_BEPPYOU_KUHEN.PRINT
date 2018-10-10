@@ -1,0 +1,373 @@
+#!/bin/bash
+#
+# TEIKYOUHYOU_BEPPYOU_KUHEN.PRINT : 利用票別表印刷
+#
+# Usage : TEIKYOUHYOU_BEPPYOU_KUHEN.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d%H%M%S).$$ ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_riyouhyou_beppyou
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-userlist                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 $tmp-userlist                             |
+LANG=C sort -k1,2                                  > $tmp-usernamelist
+cp $tmp-usernamelist $work_dir/usernamelist
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# 施設と従業員の紐付け
+# 1:施設ID 2:ユーザID 3: 4: 5:
+#cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+# 施設で絞込み + 特別所属（20140602）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU ${home_dir}/TBL/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+#cat ${home_dir}/TBL/CONFIG/USER_SHISETSU |
+# awk '$6=="1"'                                      |
+LANG=C sort -k1,1                                  > $tmp-caremanager_list
+
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"'                                      |
+tee $tmp-gengou_kihon                              |
+awk '{print $1,$2,substr($3,1,4)-1}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+echo "$taishouwareki" > $tmp-wareki
+cat $tmp-gengou_kihon                              |
+join0 key=1 $tmp-wareki                            > $tmp-wareki_jouhou
+displaywareki=$(self 1 $tmp-wareki_jouhou)
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+  # 検索結果
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+      : > $tmp-listdata
+    fi
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# テスト
+#--------------------------------------------------------------
+kyufuritsu=0.9
+
+#--------------------------------------------------------------
+# 介護度情報を取得
+#--------------------------------------------------------------
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && ${hdTaishouYear}=$curseirekiyear
+# 対象月
+[ -z "${hdTaishouMonth}" -o "${hdTaishouMonth}" = "_" ] && ${hdTaishouMonth}=$curmonth
+
+# 本日の日付
+curday=$(mdate ${hdTaishouYear}${hdTaishouMonth}"01" | self 1)
+
+# 今月の最初の日付
+firstday=$(mdate ${hdTaishouYear}${hdTaishouMonth}m | tateyoko | head -1)
+# 今月の最後の日付
+lastday=$(mdate ${hdTaishouYear}${hdTaishouMonth}m | tateyoko | tail -1)
+
+# 本日の日付
+#curday=$(mdate today | self 1)
+
+# 今月の最初の日付
+#firstday=$(mdate month | tateyoko | head -1)
+# 今月の最後の日付
+#lastday=$(mdate month | tateyoko | tail -1)
+
+# 介護保険情報
+# 1:利用者ID            2:介護度              3:保険者名                    4:認定年和暦              5:認定年
+# 6:認定月              7:認定日              8:認定年月日西暦              9:認定有効期間開始年和暦  10:認定有効期間開始年
+# 11:認定有効期間開始月 12:認定有効期間開始日 13:認定有効期間開始年月日西暦     14:認定有効期間終了年和暦 15:認定有効期間終了年
+# 16:認定有効期間終了月 17:認定有効期間終了日 18:認定有効期間終了年月日西暦
+self 1 3 5 14/28 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN   |
+#self 1 3 5 14/28 ${home_dir}/CAREPLAN/TMP/RIYOUSHA_KAIGOHOKEN   |
+join1 key=1 ${tmp}-riyoushaid   >     $tmp-riyousha_kaigohoken_master
+
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${curday}'"&&$18>="'${curday}'"'                  |
+# 1:利用者ID               2:介護度 3:保険者名 4:認定年月日 5:有効期間開始年月日
+# 6:認定有効期間終了年月日
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-cur_riyousha_kaigohoken
+
+# 月初めの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${firstday}'"&&$18>="'${firstday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-first_riyousha_kaigohoken
+
+# 月終わりの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${lastday}'"&&$18>="'${lastday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-last_riyousha_kaigohoken
+
+prekaigodo=$(self 2 $tmp-first_riyousha_kaigohoken)
+curkaigodo=$(self 2 $tmp-cur_riyousha_kaigohoken)
+postkaigodo=$(self 2 $tmp-last_riyousha_kaigohoken)
+
+if [ ${prekaigodo} -eq ${postkaigodo} ] ; then
+   preafterkbn="0"
+   kaigodo=${curkaigodo}
+   hokenja=$(self 3 $tmp-cur_riyousha_kaigohoken)
+elif [ ${prekaigodo} -gt ${postkaigodo}  ] ; then
+   preafterkbn="2"
+   kaigodo=${prekaigodo}
+   hokenja=$(self 3 $tmp-first_riyousha_kaigohoken)
+else
+   preafterkbn="1"
+   kaigodo=${postkaigodo}
+   hokenja=$(self 3 $tmp-last_riyousha_kaigohoken)
+fi
+
+
+#--------------------------------------------------------------
+# マスター取得
+#--------------------------------------------------------------
+# 介護度マスタを抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGODO_MASTER                  |
+awk '$4<="'$curday'"&&$5>"'$curday'"{print $1,$2,$3}'     |
+LANG=C sort -k1,1                                         > ${tmp}-base_kaigodo
+
+kaigokijungendogaku=$(awk '$1=="'${kaigodo}'"{gendogaku=$3;if("'${preafterkbn}'"!="0"){gendogaku=$3*1.0};print gendogaku}' ${tmp}-base_kaigodo | marume 1.0)
+youkaigo=$(awk '$1=="'${kaigodo}'"{print $2}' ${tmp}-base_kaigodo)
+
+cat ${tmp}-listdata |
+awk '$1=="l"'      |
+delf 1              > ${tmp}-listdata_list
+
+cat ${tmp}-listdata |
+awk '$1=="b"'      |
+delf 1              > ${tmp}-listdata_base
+
+cp ${tmp}-listdata_base $work_dir/listdata_base
+cp ${tmp}-listdata_list $work_dir/listdata_list
+
+numlist=$(gyo ${tmp}-listdata_list)
+cat ${tmp}-listdata_list |
+# 全体集計分のみリストから除く
+awk 'NR<'${numlist}' {print $0}'  |
+sed 's/ 0 / @ /g'  |
+sed 's/ (0) / @ /g' > ${tmp}-riyouhyoubeppyoudata
+
+goukei=$(awk 'NR=='${numlist}' {print $14}' ${tmp}-listdata_list)
+[ "$goukei" = "0" ] && goukei="@"
+kijuncho=$(awk 'NR=='${numlist}' {print $17}' ${tmp}-listdata_list)
+[ "$kijuncho" = "0" ] && kijuncho="@"
+kijunnai=$(awk 'NR=='${numlist}' {print $16}' ${tmp}-listdata_list)
+[ "$kijunnai" = "0" ] && kijunnai="@"
+total=$(awk 'NR=='${numlist}' {print $18}' ${tmp}-listdata_list)
+[ "$total" = "0" ] && total="@"
+hokenkyufu=$(awk 'NR=='${numlist}' {print $19}' ${tmp}-listdata_list)
+hokennairiyousha=$(awk 'NR=='${numlist}' {print $20}' ${tmp}-listdata_list)
+[ "$hokennairiyousha" = "0" ] && hokennairiyousha="@"
+hokengairiyousha=$(awk 'NR=='${numlist}' {print $21}' ${tmp}-listdata_list)
+[ "$hokengairiyousha" = "0" ] && hokengairiyousha="@"
+shuruicho=$(awk 'NR=='${numlist}' {print $22}' ${tmp}-listdata_list)
+[ "$shuruicho" = "0" ] && shuruicho="@"
+shuruinai=$(awk 'NR=='${numlist}' {print $23}' ${tmp}-listdata_list)
+[ "$shuruinai" = "0" ] && shuruinai="@"
+
+
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear="$(date +%Y)"
+[ -z "${hdTaishouMonth}" -o "${hdTaishouMonth}" = "_" ] && hdTaishouMonth="$(date +%m)"
+[ -z "$taishoumonth" -o "$taishoumonth" = "_" ] || {
+hdTaishouMonth=$taishoumonth
+}
+formatdate="'"${hdTaishouYear}"/"${hdTaishouMonth}"/1'"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${tmp}-listdata_base)
+#--------------------------------------------------------
+
+# 1:ユーザID 2:施設ID     3:建屋ID     4:フロアID 5:ユニットID
+# 6:詳細区分 7:管理者区分 8:専門員番号
+cat $tmp-caremanager_list |
+awk '$1=="'$CareManager'"' |
+LANG=C sort -k1,1         |
+# 1:ユーザID   2:ユーザ名 3:施設ID     4:建屋ID     5:フロアID
+# 6:ユニットID 7:詳細区分 8:管理者区分 9:専門員番号
+join1 key=1 $tmp-usernamelist |
+awk '{print $2"("$9")"}' > $tmp-caremanager_bangou
+
+caremanager_bangou=$(cat $tmp-caremanager_bangou)
+
+#printdate=$(mdate today | self 1)
+# 検索基準日を作成日に(2014/6/13)
+printdate=$hdkensakudate
+# 和暦変換（変更日）
+awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU |
+self 1/4 |
+awk '$3<="'$printdate'"&&"'$printdate'"<=$4' |
+awk '{print $2,"'$printdate'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-print_date
+
+headerPrintDate=$(cat $tmp-print_date)
+
+
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###TAISHOUMONTH###  ${formatdate}
+###GOUKEI###  ${goukei}
+###KIJUNCHO###  ${kijuncho}
+###KIJUNNAI###  ${kijunnai}
+###SHURUICHO### ${shuruicho}
+###SHURUINAI### ${shuruinai}
+###TOTAL###     ${total}
+###HOKENKYUFU###    ${hokenkyufu}
+###HOKENNAIRIYOUSHA###  ${hokennairiyousha}
+###HOKENGAIRIYOUSHA###  ${hokengairiyousha}
+###YOUKAIGO###           ${youkaigo}
+###HOKENJA###   ${hokenja}
+###KUBUNGENDOTANI###    ${kaigokijungendogaku}
+###BEPPYOUSAKUSEIDATE### ${headerPrintDate}
+###CAREMANAGER### ${CareManager}
+###CAREMANAGERBANGOU### ${caremanager_bangou}
+###RIYOUSHAID###  ${Riyoushaid}
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###RIYOUSHAMEI### $Riyoushamei
+###DOMAIN### $domain
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_TEIKYOUHYOU_BEPPYOU_KUHEN.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###RIYOUSHABEPPYOU### - ${tmp}-riyouhyoubeppyoudata |
+mojihame -l###TAISHOUWAREKI### - ${tmp}-gengou_master |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/@//g'                  |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-riyouhyobeppyou_kaigo_base_pdf.html
+
+#cat $tmp-riyouhyobeppyou_kaigo_base_pdf.html
+--------------------------------------------------------------
+cp $tmp-riyouhyobeppyou_kaigo_base_pdf.html $work_dir/riyouhyobeppyou_kaigo_base_pdf.html
+
+case "${MODE}" in
+ #一括印刷
+  allprint )
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 1 --margin-right 1 --margin-top 2 $tmp-riyouhyobeppyou_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/IKKATSU_GEKKAN/$USER_ID/${Riyoushaid}_C_${Jigyoushaid}_D_TEIKYOUHYOU_BEPPYOU_KUHEN.pdf
+  ;;
+
+ # 個別印刷
+  * )
+mkdir -p ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/TEIKYOUHYOU_BEPPYOU_KUHEN.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 1 --margin-right 1 --margin-top 2 $tmp-riyouhyobeppyou_kaigo_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/TEIKYOUHYOU_BEPPYOU_KUHEN.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${Riyoushaid}/TEIKYOUHYOU_BEPPYOU_KUHEN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+;;
+esac
+
+rm -f ${tmp}-*
+exit 0

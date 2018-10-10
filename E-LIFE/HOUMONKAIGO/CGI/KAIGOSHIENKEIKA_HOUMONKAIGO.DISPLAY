@@ -1,0 +1,385 @@
+#!/bin/bash
+#
+# KAIGOSHIENKEIKA_HOUMONKAIGO.DISPLAY : 介護支援経過表示
+#
+# Usage : KAIGOSHIENKEIKA_HOUMONKAIGO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+list_data=$2
+result_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_shien
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+# 施設で絞込み + 特別所属（20140602）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU ${home_dir}/TBL/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+# 施設従業員を抽出
+#cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+# 有効フラグが有効で、施設従業員で、かつ訪問介護の人
+awk '$(NF-2)!="9"&&$2=="'$shisetsu'"&&$6=="2"{print $1}' |
+LANG=C sort -k1,1                                  > $tmp-shisetsu_jyuugyouin
+
+awk '$(NF-2)!="9"{print $1,$2}' $tmp-user_mst      |
+LANG=C sort -k1,1                                  |
+join0 key=1 $tmp-shisetsu_jyuugyouin               > $tmp-kinyushalist
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)}'          > $tmp-gengou_master
+self 1 2 $tmp-gengou_master > $tmp-gengou_master2
+
+cat $tmp-gengou_master   |
+lcalc '$1,$2,$3-1'       |
+LANG=C sort -k3r,3r       > $tmp-gengou_mst
+
+# 入居者情報(仮)
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:性別 3:誕生日和暦   4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 2 4 5 6 7 8 14 15                             |
+LANG=C sort -k3,3                                  |
+tee $work_dir/KIHON_HOUMONKAIGO                    |
+# 1:利用者名 2:性別   3:誕生日和暦 4:和暦名       5:誕生日年
+# 6:誕生日月 7:誕生日 8:住所       9:携帯電話番号
+join1 key=3 $tmp-gengou_master2 -        |
+tee $work_dir/KIHON_HOUMONKAIGO2                    |
+# 1:利用者名 2:性別 3:和暦名       4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 1 2 4 5 6 7 8 9                            |
+awk '{if($2=="female"){$2="1"}else{$2="0"};print $1,$2,$3$4"年"$5"月"$6"日",$7,$8}'  > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    if [ "$(gyo ${list_data})" != 0 ] ; then
+      cat ${list_data}        > $tmp-listdata
+    else
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 検索結果
+  search)
+    if [ "$(gyo ${list_data})" != 0 ] ; then
+      cat ${list_data}        > $tmp-listdata
+    else
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    cat ${list_data} > $tmp-listdata
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# テスト
+
+cat $tmp-listdata   |
+awk '$1=="l"'       |
+delf 1              |
+delf 1 2            |
+# 記録日付も表示
+awk '{$8=substr($8,1,4)"年"int(substr($8,5,2))"月"int(substr($8,7,2))"日";print $0}' |
+sed 's/<br>/###KAIGYO###/g' |
+sed 's/"/”/g'   > $tmp-listdata2
+
+setSakuseiDate=$(awk '$1=="d"{print $2}' $tmp-listdata)
+
+
+# 申送り
+todayMonth="$(date +%Y%m)"
+lastdayMonth="$(mdate ${todayMonth}m/-1)"
+lastlastdayMonth="$(mdate ${todayMonth}m/-2)"
+dispLastdate=$(mdate ${todayMonth}m | tarr | tail -1)
+
+# 201502以前のみ
+if [ $todayMonth -gt 201501 ] ; then
+  todayMonth="999999"
+fi
+if [ $lastdayMonth -gt 201501 ] ; then
+  lastdayMonth="999999"
+fi
+if [ $lastlastdayMonth -gt 201501 ] ; then
+  lastlastdayMonth="999999"
+fi
+
+# 施設
+cat ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS    |
+# ２つある場合は契約日の遅い方を取るようにする
+LANG=C sort -k7,7                                         |
+awk '$6=="'${Riyoushaid}'"&&$7<="'$dispLastdate'"&&"'$dispLastdate'"<=$8{print $1,$2}' |
+tail -1 > $tmp-disp_shisetsu
+
+taishouShisetsu=$(self 1 $tmp-disp_shisetsu)
+taishouTateya=$(self 2 $tmp-disp_shisetsu)
+
+:> $tmp-kikan
+if [ "${taishouTateya}" = "02" ] ; then
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$todayMonth/$todayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$todayMonth/$todayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-firstmoushiokuri
+     if [ "$(gyo $tmp-firstmoushiokuri)" != "0" ] ; then
+       echo "$todayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastdayMonth/$lastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastdayMonth/$lastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-secondmoushiokuri
+     if [ "$(gyo $tmp-secondmoushiokuri)" != "0" ] ; then
+       echo "$lastdayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastlastdayMonth/$lastlastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastlastdayMonth/$lastlastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-thirdmoushiokuri
+     if [ "$(gyo $tmp-thirdmoushiokuri)" != "0" ] ; then
+       echo "$lastlastdayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+else
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$todayMonth/$todayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$todayMonth/$todayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-firstmoushiokuri
+     if [ "$(gyo $tmp-firstmoushiokuri)" != "0" ] ; then
+       echo "$todayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastdayMonth/$lastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastdayMonth/$lastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-secondmoushiokuri
+     if [ "$(gyo $tmp-secondmoushiokuri)" != "0" ] ; then
+       echo "$lastdayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+  if [ -s ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastlastdayMonth/$lastlastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR ] ; then
+     cat ${home_dir}/SHISETSU_KAIGOKIROKU/POMPA/KAIGOJISSEKI/$taishouShisetsu/$lastlastdayMonth/$lastlastdayMonth.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI_SENIOR |
+     awk '$1=="'${Riyoushaid}'"&&$9=="on"' > $tmp-thirdmoushiokuri
+     if [ "$(gyo $tmp-thirdmoushiokuri)" != "0" ] ; then
+       echo "$lastlastdayMonth" |
+       awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}' >> $tmp-kikan
+     fi
+  fi
+fi
+
+# 介護支援経過リスト（2014/12/16）
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KAIGOSHIENKEIKA_HOUMONKAIGO |
+awk '$(NF-2)!="9"'              |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'     |
+#--------------------------------------------------------------
+# 検索
+#--------------------------------------------------------------
+# 1:作成日（西暦） 2:作成日（和暦）
+#self 2                 |
+#awk '{print $1,substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}'   |
+# 発生日で抽出するようにする（2015/1/8）
+self 4                   |
+awk '{print substr($1,1,6),substr($1,1,4)"/"substr($1,5,2)}'   |
+# 申し送りの期間も反映
+cat - $tmp-kikan         |
+LANG=C sort -k1,1nr -u        |
+rank                        |
+awk '{if($2=="'${hdHasseiMonth}'"){print $0,"selected"}else{print $0,"@"}}'            > ${tmp}-keikaku
+
+cp $tmp-listdata2 $work_dir/listdata2
+
+: > ${tmp}-houmonkaigo_sakuseishaname
+if [ -s ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/HOUMONKAIGO_KEIKAKU ] ; then
+   cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/HOUMONKAIGO_KEIKAKU |
+   awk '$1=="'$Riyoushaid'"' |
+   LANG=C sort -k2,2         |
+   getlast 1 1               > $tmp-houmonkaigo_keikaku
+   KeikakuSakuseishaID=$(self 5 $tmp-houmonkaigo_keikaku)
+   cat ${tmp}-user_mst       |
+   awk '$1=="'$KeikakuSakuseishaID'"{print $2}' > ${tmp}-houmonkaigo_sakuseishaname
+fi
+
+# 月の最初を設定するようにする(2014/12/15)
+[ -z "$hdSakuseiDate" -o "$hdSakuseiDate" = "_" ] && {
+   hdSakuseiDate=${setSakuseiDate}
+#   hdSakuseiDate=$(date +%Y%m%d | self 1.1.6 | awk '{print $1"01"}')
+}
+
+
+[ -z "$hdSakuseiDate" -o "$hdSakuseiDate" = "_" ] || {
+dispSakuseiDate=$(echo $hdSakuseiDate | awk '$1!=""{print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+}
+
+
+echo "HOUMONKAIGO_MENU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHA### $Riyoushamei
+###SAKUSEIDATE### $dispSakuseiDate
+###HDSAKUSEIDATE### $hdSakuseiDate
+###HDKENSAKUSHISETSU### $hdKensakuShisetsu
+###SHISETSUID### $shisetsu
+###PASSWORD### $password
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/KAIGOSHIENKEIKA_HOUMONKAIGO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###CAREPLANSAKUSEISHA### - ${tmp}-houmonkaigo_sakuseishaname |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###GENGOU### - ${tmp}-gengou_mst |
+mojihame -l###KINYUSHALIST### - $tmp-kinyushalist |
+mojihame -l###KEIKALIST### - ${tmp}-keikaku |
+mojihame -h###KAIGOSHIENKEIKA### - $tmp-listdata2 |
+sed 's/###KAIGYO###/\\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/@/ /g' |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

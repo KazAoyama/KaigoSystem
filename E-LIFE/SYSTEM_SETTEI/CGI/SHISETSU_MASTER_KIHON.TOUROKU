@@ -1,0 +1,200 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KIHON.TOUROKU : 施設マスタ詳細　基本情報登録
+#
+# Written by S.Otsubo
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--------------------------------------------------------
+# 引数設定
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 本日のinputディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+
+# ------------------------------------------
+# 更新対象の設定
+cat << FIN > ${tmp}-taisyou
+SHISETSU_KIHON 8 9 1 1 10
+FIN
+# 1:テーブル名 2:削除フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# 6:列数
+
+# SHISETSU_KIHON
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザID
+# ------------------------------------------
+
+
+# ------------------------------------------
+# inputの値のチェック
+# (必須項目入力の件はjavascriptでチェック中)
+
+# 半角スペースは全角スペースへ
+# 改行コードは全角スペースへ
+SHISETSU_NAME_syusei="$(echo "${SHISETSU_NAME}" | tr " " "　" | sed 's/\\n/　/g')"
+SHISETSU_RYAKU_syusei="$(echo "${SHISETSU_RYAKU}" | tr " " "　" | sed 's/\\n/　/g')"
+SHISETSU_TEL_syusei="$(echo "${SHISETSU_TEL}" | tr " " "　" | sed 's/\\n/　/g')"
+SHISETSU_FAX_syusei="$(echo "${SHISETSU_FAX}" | tr " " "　" | sed 's/\\n/　/g')"
+SHISETSU_POST_syusei="$(echo "${SHISETSU_POST}" | tr " " "　" | sed 's/\\n/　/g')"
+SHISETSU_ADR_syusei="$(echo "${SHISETSU_ADR}" | tr " " "　" | sed 's/\\n/　/g')"
+
+# チェック用テーブル
+cat << FIN > ${tmp}-check
+${SHISETSU_NAME_syusei} 30 _ 施設名
+${SHISETSU_RYAKU_syusei} 15 _ 施設略称
+${SHISETSU_TEL_syusei} 17 1 施設電話番号
+${SHISETSU_POST_syusei} 8 1 施設郵便番号
+${SHISETSU_ADR_syusei} 50 _ 施設住所
+FIN
+# 1:チェック対象 2:制限文字数 3:全角半角制限 4:項目名称
+
+#${SHISETSU_FAX_syusei} 17 1 施設FAX番号
+
+# 文字数チェック
+self 1 2 4 ${tmp}-check |
+while read Check Mojisu Meisyou ; do
+  # チェックする
+  [ "${#Check}" -gt "${Mojisu}" ] && echo "${Meisyou}の文字数は${Mojisu}までです" > ${tmp}-err
+  [ "${#Check}" -eq 0 ] && echo "${Meisyou}は必須項目です" > ${tmp}-err
+  # エラーファイルあったら抜ける
+  [ -s ${tmp}-err ] && break;
+done
+# エラーあったら即エラー
+[ -s ${tmp}-err ] && error_exit "$(cat ${tmp}-err)"
+
+# 全角半角制限
+self 1 3 4 ${tmp}-check |
+while read Check Pattern Meisyou ; do
+  case "${Pattern}" in
+    # -----------
+    # 半角数字と半角ハイフンのみ
+    1 )
+      [[ "${Check}" =~ [^0-9-] ]] && echo "${Meisyou}は半角数字で入力してください" > ${tmp}-err
+    ;;
+    # -----------
+  esac
+  # エラーファイルあったら抜ける
+  [ -s ${tmp}-err ] && break;
+done
+# エラーあったら即エラー
+[ -s ${tmp}-err ] && error_exit "$(cat ${tmp}-err)"
+
+# 重複チェック
+# 施設名、施設略称が他に存在するか
+awk '$8!="9"&&$1!="'${shisetsu_key}'"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON | self 2 > ${tmp}-shisetsu_mei
+awk '$8!="9"&&$1!="'${shisetsu_key}'"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON | self 3 > ${tmp}-shisetsu_mei_ryaku
+grep "${SHISETSU_NAME_syusei}" ${tmp}-shisetsu_mei > ${tmp}-shisetsu_mei_err
+[ -s ${tmp}-shisetsu_mei_err ] && error_exit "施設名が重複しています"
+grep "${SHISETSU_RYAKU_syusei}" ${tmp}-shisetsu_mei_ryaku > ${tmp}-shisetsu_mei_err
+[ -s ${tmp}-shisetsu_mei_err ] && error_exit "施設略称が重複しています"
+# ------------------------------------------
+
+
+# ------------------------------------------
+# 更新データの作成
+
+# ロックファイル作成
+cat ${tmp}-taisyou |
+self 1 |
+while read File ; do
+  lockfile -1 -r 3 -l 10 ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  [ "${?}" != "0" ] && error_unlock "再度登録してください"
+done
+
+cat ${tmp}-taisyou |
+while read File d_flg u_field key_from key_to retu ; do
+  # inputの作成
+  echo "${shisetsu_key} ${SHISETSU_NAME_syusei} ${SHISETSU_RYAKU_syusei} ${SHISETSU_TEL_syusei} ${SHISETSU_FAX_syusei} ${SHISETSU_POST_syusei} ${SHISETSU_ADR_syusei} 1 ${sdaytime} ${userid}" > ${tmp}-input_${File}
+  
+  # pompaの作成
+  cat ${home_dir}/TBL/SHISETSU_MASTER/${File} ${tmp}-input_${File} |
+  LANG=C sort -k${key_from},${key_to} -k${u_field},${u_field} |
+  getlast ${key_from} ${key_to} > ${tmp}-pompa_${File}
+done
+
+# 列チェック
+cat ${tmp}-taisyou |
+self 1 6 |
+while read File retu_no; do
+  [ "$(retu ${tmp}-input_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-input_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-input_${File} | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+
+
+# 更新
+cat ${tmp}-taisyou |
+self 1 |
+while read Name ; do
+  # input
+  cp -p ${tmp}-input_${Name} ${input_dir}/${today}/$(basename ${0}).$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+  [ "${?}" != "0" ] && error_unlock "更新に失敗しました"
+  # pompa
+  cp -p ${tmp}-pompa_${Name} ${home_dir}/TBL/SHISETSU_MASTER/${Name}
+  [ "${?}" != "0" ] && error_unlock "更新に失敗しました"
+done
+
+
+# ロックファイル削除
+cat ${tmp}-taisyou |
+self 1 |
+while read File; do
+  rm ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+done
+# ------------------------------------------
+
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

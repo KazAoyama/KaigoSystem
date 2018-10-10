@@ -1,0 +1,67 @@
+#!/bin/bash -xv
+#
+# FUNCTION.LOCK_CHECK_V2
+# lockfileチェックCGI
+#
+# $1:table_list
+#
+# Written by R.suzuki 2015/09/17
+
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+#-------------------------------------------------------------
+# パラメーターの取得
+[ -z "$1" ] && exit 1
+table_list="$1"
+
+[ ! -s "$table_list" ] && exit 1
+
+#リトライ回数上限の取得（指定されていたら）
+retry_max=4
+if [ "$2" != "" -a "$2" != "_" ] ; then
+ retry_max="$2"
+fi
+
+#リトライ間隔の取得（指定されていたら）
+retry_interval=1
+if [ "$3" != ""  -a "$3" != "_" ] ; then
+ retry_interval="$3"
+fi
+
+time1=$(date +%Y%m%d%H%M%S.%N)
+
+
+#-------------------------------------------------------------
+# 対象テーブルのlockfileが全てない状態をまって、lockfileを作成
+lock_file_list=""
+
+cat $table_list |
+while read table base ;do
+
+  # tableに対応するディレクトリを作成
+  mkdir -p $tmplock_dir/$table
+
+#  #ロックファイルをスペース区切りで並べる 
+#  lock_file_list=" " $lock_file_list $tmplock_dir "/" $table "/" $base ".lock"
+
+: ;done
+
+#-------------------------------------------------------------
+time2=$(date +%Y%m%d%H%M%S.%N)
+
+#ロックファイルをスペース区切りで並べる
+lock_file_list=$(cat $table_list | awk '{print "'$tmplock_dir'/"$1"/"$2".lock"}' | LANG=C sort -u | tr "\n" " ")
+
+time2_2=$(date +%Y%m%d%H%M%S.%N)
+
+#ロック実行
+lockfile -$retry_interval -r $retry_max $lock_file_list
+
+time3=$(date +%Y%m%d%H%M%S.%N)
+
+#エラー終了
+[ $? -ne 0 ] && exit 1
+
+# 終了
+exit 0

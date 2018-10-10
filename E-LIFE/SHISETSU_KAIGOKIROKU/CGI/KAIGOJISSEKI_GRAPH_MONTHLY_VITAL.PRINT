@@ -1,0 +1,355 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.PRINT : 月間バイタルグラフ印刷
+#
+# Usage : KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.PRINT namefile datafile
+#
+# Written by j.aoyagi(HandsLab.inc)
+
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+domain="http://e-life.hands-lab.com"
+current_time="$(date "+%Y%m%d%H%M%S")"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+
+# 利用者名の取得
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+riyosha="$(cat $tmp-riyosha_master | join0 key=1 <(echo "${riyosha_name}") | self 2)"
+
+# フロアの取得
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 3                                                       |
+LANG=C sort -u -k1,1n                                        |
+awk '{print $1,$1"F"}'                                       > ${tmp}-floor_name
+floor_name="$(cat $tmp-floor_name | awk '$1=="'${floor}'"{print $2}')"
+
+# ユニットの取得
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+LANG=C sort -u -k1,1n                                        |
+join1 key=1 $tmp-unit_master                                 > $tmp-unit_name
+
+unit_name="$(cat $tmp-unit_name | awk '$1=="'${unit}'"{print $2}')"
+
+# 年月の取得
+if [ -n "${nengetsu}" -a "${nengetsu}" != "_" ];then
+  mdate -e ${this_month}m/-3                                |
+  tarr                                                      |
+  LANG=C sort -k1,1nr                                       |
+  awk '{print $0,"'${nengetsu}'"}'                          |
+  awk '{if($1==$3){print $1,"selected"}else{print $1,""}}'  |
+  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月",$2}' > ${tmp}-nengetsu
+else
+  mdate -e ${this_month}m/-3                                |
+  tarr                                                      |
+  LANG=C sort -k1,1nr                                       |
+  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-nengetsu
+fi
+
+nengetsu_mei="$(cat ${tmp}-nengetsu | awk '$1=="'${nengetsu}'"{print $2}')"
+
+# searchfileの処理
+if [ -e "${searchfile}" ];then
+  mdate ${nengetsu}m       |
+  tarr                     > $tmp-search_month
+  # 体温
+  if [ -n "${print_taion}" ];then
+    cat ${searchfile}      |
+    awk '$1=="taion"'      |
+    delf 1                 > ${tmp}-taion
+    # 体温の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="体温"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-taion_hyo
+    # 体温の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="体温"'       |
+    self 1                 > ${tmp}-taion_header
+
+cat <<-FIN > $tmp-taion_lavel
+{
+yaxis: 'yaxis',
+label: '体温',
+},
+FIN
+  else
+    :                     > ${tmp}-taion_hyo
+    :                     > ${tmp}-taion_header
+    :                     > $tmp-taion
+    :                     > $tmp-taion_lavel
+  fi
+  # 体重
+  if [ -n "${print_taijyu}" ];then
+    cat ${searchfile}      |
+    awk '$1=="taijyu"'     |
+    delf 1                 > ${tmp}-taijyu
+    # 体重の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="体重"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-taijyu_hyo
+    # 体重の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="体重"'       |
+    self 1                 > ${tmp}-taijyu_header
+  else
+    :                      > ${tmp}-taijyu_hyo
+    :                      > ${tmp}-taijyu_header
+    cat $tmp-search_month  |
+    tarr                                 |
+    awk '{print substr($1,7,2),"0"}'       |
+    awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+    yarr                                 |
+    sed 's/ /,/g'                        > $tmp-taijyu
+  fi
+
+  # 脈拍
+  if [ -n "${print_myakuhaku}" ];then
+    cat ${searchfile}      |
+    awk '$1=="myakuhaku"'     |
+    delf 1                 > ${tmp}-myakuhaku
+    # 脈拍の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="脈拍"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-myakuhaku_hyo
+    # 脈拍の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="脈拍"'       |
+    self 1                 > ${tmp}-myakuhaku_header
+cat <<-FIN > $tmp-myakuhaku_lavel
+{
+yaxis: 'yaxis',
+label: '脈拍',
+},
+
+FIN
+  else
+    :                     > ${tmp}-myakuhaku_hyo
+    :                     > ${tmp}-myakuhaku_header
+    :                     > $tmp-myakuhaku
+    :                     > $tmp-myakuhaku_lavel
+  fi
+
+  # 呼吸
+  if [ -n "${print_kokyu}" ];then
+    cat ${searchfile}      |
+    awk '$1=="kokyu"'     |
+    delf 1                 > ${tmp}-kokyu
+    # 呼吸の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="呼吸"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-kokyu_hyo
+    # 呼吸の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="呼吸"'       |
+    self 1                 > ${tmp}-kokyu_header
+cat <<-FIN > $tmp-kokyu_lavel
+{
+yaxis: 'yaxis',
+label: '呼吸',
+},
+FIN
+  else
+    :                     > ${tmp}-kokyu_hyo
+    :                     > ${tmp}-kokyu_header
+    :                     > $tmp-kokyu
+    :                     > $tmp-kokyu_lavel
+  fi
+
+  # 血圧
+  if [ -n "${print_ketsuatsu}" ];then
+    cat ${searchfile}      |
+    awk '$1=="ketsu"'     |
+    delf 1                 > ${tmp}-ketsu
+    # 血圧(上)の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="血圧(上)"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-ketsu_ue_hyo
+    # 血圧(上)の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="血圧(上)"'       |
+    self 1                 > ${tmp}-ketsu_ue_header
+    # 血圧(下)の表のデータ
+    cat ${searchfile}      |
+    awk '$1=="血圧(下)"'       |
+    delf 1                 |
+    tarr                   > ${tmp}-ketsu_shita_hyo
+    # 血圧(下)の表のヘッダー
+    cat ${searchfile}      |
+    awk '$1=="血圧(下)"'       |
+    self 1                 > ${tmp}-ketsu_shita_header
+cat <<-FIN > $tmp-ketsu_lavel
+{
+yaxis: 'y2axis',
+label: '血圧',
+color: 'red',
+renderer: $.jqplot.OHLCRenderer,
+rendererOptions: {
+wickColor: 'red',
+openColor: 'red',
+closeColor: 'red',
+lineWidth: 4.5,
+hlc:true,
+tickLength: 0,
+},}
+FIN
+  else
+    :                     > ${tmp}-ketsu_ue_hyo
+    :                     > ${tmp}-ketsu_shita_hyo
+    :                     > ${tmp}-ketsu_ue_header
+    :                     > ${tmp}-ketsu_shita_header
+    cat $tmp-search_month  |
+    awk '{print substr($1,7,2),"0","0"}'     |
+    awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2,$3"]"}' |
+    yarr                                  |
+    sed 's/ /,/g'                         > $tmp-ketsu
+    :                     > ${tmp}-ketsu_lavel
+  fi
+
+  # ヘッダー
+  cat ${searchfile}      |
+  awk '$1=="日付"'       |
+  tarr                   > ${tmp}-header
+  echo "###TAIJYU###" "$(cat ${tmp}-taijyu)" >> ${tmp}-calsed1
+  echo "###TAION###" "$(cat ${tmp}-taion)" >> ${tmp}-calsed1
+  echo "###MYAKUHAKU###" "$(cat ${tmp}-myakuhaku)" >> ${tmp}-calsed1
+  echo "###KOKYU###" "$(cat ${tmp}-kokyu)" >> ${tmp}-calsed1
+  echo "###KETSU###" "$(cat ${tmp}-ketsu)" >> ${tmp}-calsed1
+else
+  :                     > ${tmp}-header
+  echo ""               > ${tmp}-taijyu_hyo
+  :                     > ${tmp}-taijyu_header
+  :                     > ${tmp}-taion_hyo
+  :                     > ${tmp}-taion_header
+  :                     > ${tmp}-myakuhaku_hyo
+  :                     > ${tmp}-myakuhaku_header
+  :                     > ${tmp}-kokyu_hyo
+  :                     > ${tmp}-kokyu_header
+  :                     > ${tmp}-ketsu_ue_hyo
+  :                     > ${tmp}-ketsu_shita_hyo
+  :                     > ${tmp}-ketsu_ue_header
+  :                     > ${tmp}-ketsu_shita_header
+fi
+
+# 選択された項目だけグラフを印刷する
+SENTAKU_KOUMOKU=$(echo "${print_taion}" "${print_myakuhaku}" "${print_kokyu}" "${print_ketsuatsu}" |
+sed 's/ /,/g' | sed 's/,,*/,/g' | sed 's/^,//1' | sed 's/ //g')
+
+LAVEL=$(cat $tmp-taion_lavel $tmp-myakuhaku_lavel $tmp-kokyu_lavel $tmp-ketsu_lavel | yarr | sed 's/ //g')
+echo $LAVEL > laben
+INPUT_LAVEL=${LAVEL}
+echo "###INPUT_LABEL###" ${INPUT_LAVEL} >> $tmp-calsed1
+cat $tmp-calsed1 > calsef
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###FLOOR_NAME### ${floor_name}
+###UNIT_NAME### ${unit_name}
+###RIYOSHA_NAME### ${riyosha}
+###NENGETSU_MEI### ${nengetsu_mei}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###DOMAIN### ${domain}
+###KOUMOKU### ${SENTAKU_KOUMOKU}
+FIN
+
+cat  ${tmp}-calsed1 >  ${tmp}-calsed
+
+cat ${html_dir}/KAIGOJISSEKI_GRAPH_MONTHLY_VITAL_PRINT.html   |
+mojihame -l###HEADER### - ${tmp}-header |
+mojihame -l###TAIJYU_DATA### - ${tmp}-taijyu_hyo |
+mojihame -l###TAION_DATA### - ${tmp}-taion_hyo |
+mojihame -l###MYAKUHAKU_DATA### - ${tmp}-myakuhaku_hyo |
+mojihame -l###KOKYU_DATA### - ${tmp}-kokyu_hyo |
+mojihame -l###KETSU_UE_DATA### - ${tmp}-ketsu_ue_hyo |
+mojihame -l###KETSU_SHITA_DATA### - ${tmp}-ketsu_shita_hyo |
+mojihame -l###TAIJYU_HEADER### - ${tmp}-taijyu_header |
+mojihame -l###TAION_HEADER### - ${tmp}-taion_header |
+mojihame -l###MYAKUHAKU_HEADER### - ${tmp}-myakuhaku_header |
+mojihame -l###KOKYU_HEADER### - ${tmp}-kokyu_header |
+mojihame -l###KETSU_UE_HEADER### - ${tmp}-ketsu_ue_header |
+mojihame -l###KETSU_SHITA_HEADER### - ${tmp}-ketsu_shita_header |
+calsed -f ${tmp}-calsed -   > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.pdf
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${current_time}.KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

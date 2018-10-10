@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# RENRAKU_TSUIKA.SEARCH
+# 連絡事項　検索用CGI
+#
+# Written by K.Aoyama :20140114
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# 連絡ID
+[ -z "${RenrakuID}" -o "${RenrakuID}" = "_" ] && error_exit "IDが不明です。"
+
+# 多施設
+[ -z "${displayShisetsu}" -o "${displayShisetsu}" = "_" ] && displayShisetsu=${shisetsu}
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+RenrakuID
+hdTourokuDate
+hdTourokuTime
+RenrakuJikou
+RenrakuDetail
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+cat ${pompa_dir}/RENRAKU/$displayShisetsu/RENRAKU_JIKOU |
+# 1:施設         2:ID         3:登録日付 4:登録時間 5:連絡事項ヘッダ
+# 6:連絡事項詳細 7:有効フラグ 8:処理時間 9:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$2=="'$RenrakuID'"'     |
+delf 1 NF-3/NF  |
+# 1:ID 2:登録日付 3:連絡ヘッダー 4:連絡詳細 5:建屋
+tee $tmp-result             |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print $0}' > ${tmp}-renraku
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "連絡事項取得エラー"
+
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-renraku
+
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-renraku
+
+## 終了
+rm -f $tmp-*
+exit 0

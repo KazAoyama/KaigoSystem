@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_ICHIRAN.SEARCH
+# 基本情報一覧検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.ini &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+home_dir=/home/hands
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+tbl_dir="${home_dir}/E-LIFE/TBL"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# キーワードの準備
+#--------------------------------------------------------------
+Keyword=$(nameread  "Keyword"  $namedata)
+
+if [ ! -z "${Keyword}" -a "${Keyword}" != "_" ] ; then
+  echo "${Keyword}" |
+  zen 1                 > $tmp-keyword-zen
+  cat $tmp-keyword-zen  |
+  han 1                 > $tmp-keyword-han
+else
+  :
+fi
+
+if [ -s "$tmp-keyword-zen" ] ; then
+  zen=$(awk '{print $1}' $tmp-keyword-zen)
+else
+  :
+fi
+if [ -s "$tmp-keyword-han" ] ; then
+  han=$(awk '{print $1}' $tmp-keyword-han)
+else
+  :
+fi
+#--------------------------------------------------------------
+
+#------------------------------------------------------------
+# 検索対象者の絞込み
+#----------------------
+
+# 施設名の準備
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2 > $tmp-shisetsu_master
+# 建屋名の取得
+cat ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME |
+self 1 3 > $tmp-tateya_master
+# ユニット名
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME |
+self 1 2 > $tmp-unit_master
+
+# 事業所名の準備
+cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+# 1:グループ事業所ＩＤ 2:グループ事業所名 3:電話番号 4:住所   5:金融機関コード
+# 6:金融機関支店コード 7:口座区分         8:口座番号 9:口座名
+self 1 2 > $tmp-jigyousho_master
+
+cat $tmp-shisetsu_master $tmp-jigyousho_master |
+LANG=C sort -u > $tmp-shisetsu_jigyousho_master
+
+# 兼務施設情報
+cat ${pompa_dir}/JYUUGYOUIN/EXTRA_USER_SHISETSU |
+# 1:従業員ID   2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職
+awk '$(NF-2)!="9"{print $1,$2}'                 > $tmp-extra_shisetsu
+
+# 従業員施設マスタ
+cat ${pompa_dir}/JYUUGYOUIN/USER_SHISETSU |
+# 1:従業員ID   2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職
+
+if [ -s $tmp-extra_shisetsu ] ; then 
+  join2 key=1 $tmp-extra_shisetsu -         
+# 1:従業員ID   2:兼務施設ID 3:施設ID 4:建屋ID 5:フロア
+# 6:ユニットID 7:事業所詳細 8:役職
+else
+  awk '{print $0,"_"}' |
+  self 1 NF 2/NF-1
+fi |
+
+# 施設指定があった場合
+if [ ! -z "${Shisetsu}" -a "${Shisetsu}" != "_" -a "${Shisetsu}" != "0000" ] ; then
+  awk '{if($2=="'${Shisetsu}'"&&$(NF-2)!="9"){print $0}
+        else if($3=="'${Shisetsu}'"&&$(NF-2)!="9"){print $0}
+        }'
+else
+  cat -
+fi |
+
+# 従業員指定があった場合
+if [ ! -z "${Userid}" -a "${Userid}" != "_" ] ; then
+  awk '$1=="'${Userid}'"&&$(NF-2)!="9"{print $0}'
+else
+  cat -
+fi |
+self 1 3/8 2 > $tmp-jyuugyouin_data1
+# 1:従業員ID   2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職   8:兼務施設
+
+# 基本情報の取得
+cat ${pompa_dir}/JYUUGYOUIN/USER_KIHON |
+awk '$(NF-2)!="9"{print $0}'           |
+self 1/6  |
+# 1:従業員ID   2:従業員名 3:従業員名カナ 4:勤務期間FROM 5:勤務期間TO
+# 6:従業員番号
+join1 key=1 - $tmp-jyuugyouin_data1    |
+# 1:従業員ID    2:従業員名 3:従業員名カナ 4:勤務期間FROM 5:勤務期間TO
+# 6:従業員番号  7:施設ID   8:建屋ID       9:フロア       10:ユニットID
+# 11:事業所詳細 12:役職    13:兼務施設
+
+# 退職者を表示するフラグ
+if [ ! -z "${TaikyoshaHyouji}" -a "${TaikyoshaHyouji}" = "1" ] ; then
+  awk '{print $1,$2,$7,$8,$9,$10,$NF,$4,$5,$6}'
+else
+  awk '$5>"'${today}'"{print $1,$2,$7,$8,$9,$10,$NF,$4,$5,$6}'
+fi |
+# 1:従業員ID   2:従業員名     3:施設ID     4:建屋ID 5:フロア
+# 6:ユニットID 7:勤務期間FROM 8:勤務期間TO 9:従業員番号
+
+# 兼務施設名の取得
+LANG=C sort -k7,7 |
+join2 +"@" key=7 $tmp-shisetsu_jigyousho_master - |
+#delf 7 |
+
+# ユニット名の取得
+LANG=C sort -k6,6 |
+join2 +"@" key=6 $tmp-unit_master - |
+
+# 建屋名の取得
+LANG=C sort -k4,4  |
+join2 +"@" key=4 $tmp-tateya_master - |
+
+# 施設名の取得
+LANG=C sort -k3,3 |
+join1 +"ng" key=3 $tmp-shisetsu_master - >$tmp-shisetu  2>$tmp-noshisetsu
+
+cat $tmp-noshisetsu |
+join2 +"@" key=3 $tmp-jigyousho_master - |
+cat $tmp-shisetu -  |
+
+# 1:従業員ID      2:従業員名    3:施設ID      4:施設名     5:建屋ID
+# 6:建屋名        7:フロア      8:ユニットID  9:ユニット名 10:兼務施設ID
+# 11:勤務期間FROM 12:勤務期間TO 13:従業員番号
+
+# --------------------------
+# キーワード
+if [ -z "${Keyword}" -o "${Keyword}" = "_" ]; then
+  cat
+else
+  grep -ie ${zen} -ie ${han}
+fi |
+LANG=C sort  
+#--------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

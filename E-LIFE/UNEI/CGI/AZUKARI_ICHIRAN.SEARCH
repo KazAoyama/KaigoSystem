@@ -1,0 +1,267 @@
+#!/bin/bash
+#
+# AZUKARI_ICHIRAN.SEARCH
+#
+# Usage : AZUKARI_ICHIRAN.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/AZUKARI_TOUROKU"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL/AZUKARI_TOUROKU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 日付
+cal_azukari_hiduke=$(echo $hd_azukari_hiduke | sed 's/-//g')
+cal_azukari_hiduke_to=$(echo $hd_azukari_hiduke_to | sed 's/-//g')
+
+cal_watashita_hiduke=$(echo $watashita_hiduke | sed 's/-//g')
+cal_watashita_hiduke_to=$(echo $watashita_hiduke_to | sed 's/-//g')
+
+if [ "${hd_azukari_hiduke}" = "_" ];then
+  status_date="00000000"
+else
+  status_date=${cal_azukari_hiduke}
+fi
+if [ "${hd_azukari_hiduke_to}" = "_" ];then
+  status_date_to="99999999"
+else
+  status_date_to=${cal_azukari_hiduke_to}
+fi
+
+# searchfileの処理
+cat ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2                          > $tmp-riyosha_kihon
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "01")                                     |
+awk '$9==1'                                                  |
+tee ${work}/status |
+awk '$7<="'${status_date_to}'" && $8>="'${status_date}'"'   > $tmp-riyosha_status
+
+# 日付から検索する月を決める
+echo ${cal_watashita_hiduke} ${cal_watashita_hiduke_to}            |
+tarr                                                         |
+awk '{print substr($1,1,6)}'                                 > $tmp-kensaku_yyyymm
+cp $tmp-kensaku_yyyymm ${work}/sc_monthhh
+if [ "$(awk '$1=="_"' $tmp-kensaku_yyyymm | gyo)" -ne 0 ];then
+  ls ${pompa_dir}/${shisetsu}/*.AZUKARI_TOUROKU |
+  tarr |
+  awk '{print substr($1,52,6)}' > $tmp-gyo_month
+  if [ "$(gyo $tmp-gyo_month)" = 1 ];then
+    awk '{print $1,$1}' $tmp-gyo_month |
+    tarr                               > $tmp-kensaku_yyyymm_
+    mv $tmp-kensaku_yyyymm_ $tmp-kensaku_yyyymm
+  else
+    cat $tmp-gyo_month                 > $tmp-kensaku_yyyymm_
+    mv $tmp-kensaku_yyyymm_ $tmp-kensaku_yyyymm
+  fi
+else
+  :
+fi
+
+FROM_MONTH=$(awk 'NR==1' $tmp-kensaku_yyyymm)
+TO_MONTH=$(awk 'NR==2' $tmp-kensaku_yyyymm)
+
+SA_MONTH=$(yarr $tmp-kensaku_yyyymm | lcalc '$2-$1')
+
+mdate -e ${TO_MONTH}m/-${SA_MONTH}     > $tmp-month_list
+
+# POMPAデータ呼出
+# 対応の種類によって呼び出すファイルを決める
+if [ "${cal_azukari_hiduke}" = "_" ];then
+  sc_azukari_hiduke="00000000"
+else
+  sc_azukari_hiduke="${cal_azukari_hiduke}"
+fi
+if [ "${cal_azukari_hiduke_to}" = "_" ];then
+  sc_azukari_hiduke_to="99999999"
+else
+  sc_azukari_hiduke_to="${cal_azukari_hiduke_to}"
+fi
+
+if [ "${cal_watashita_hiduke}" = "_" ];then
+  sc_watashita_hiduke="00000000"
+else
+  sc_watashita_hiduke="${cal_azukari_hiduke}"
+fi
+if [ "${cal_watashita_hiduke_to}" = "_" ];then
+  sc_watashita_hiduke_to="99999999"
+else
+  sc_watashita_hiduke_to="${cal_azukari_hiduke_to}"
+fi
+
+case ${TAIOU} in
+  0 )
+    for month in $(yarr $tmp-month_list);do
+      cat ${pompa_dir}/${shisetsu}/${month}.AZUKARI_TOUROKU
+    done                                  |
+    cat ${pompa_dir}/${shisetsu}/AZUKARI_TOUROKU - |
+    awk '$4=="_" || $4<="'${sc_azukari_hiduke_to}'" && $4>="'${sc_azukari_hiduke}'"' |
+    awk '$11=="@" || $11<="'${sc_watashita_hiduke_to}'" && $11>="'${sc_watashita_hiduke}'"'
+  ;;
+  1 )
+    cat ${pompa_dir}/${shisetsu}/AZUKARI_TOUROKU |
+    awk '$4=="_" || $4<="'${sc_azukari_hiduke_to}'" && $4>="'${sc_azukari_hiduke}'"' |
+    awk '$11=="@" || $11<="'${sc_watashita_hiduke_to}'" && $11>="'${sc_watashita_hiduke}'"'
+  ;;
+  2 )
+    for month in $(yarr $tmp-month_list);do
+      cat ${pompa_dir}/${shisetsu}/${month}.AZUKARI_TOUROKU
+    done                                           |
+    awk '$4=="_" || $4<="'${sc_azukari_hiduke_to}'" && $4>="'${sc_azukari_hiduke}'"' |
+    awk '$11=="@" || $11<="'${sc_watashita_hiduke_to}'" && $11>="'${sc_watashita_hiduke}'"'
+  ;;
+esac                                      > $tmp-base_data
+# 1:対応       2:利用者ID    3:預り項目    4:預り日付   5:預り時間
+# 6:預り対応者 7:預り数量    8:お渡し数量@ 9:誰にお渡し 10:備考
+# 11:渡した日  12:渡した時間 13:対応者     14:データID  15:有効フラグ
+# 16:処理日時
+
+# 預り項目で絞込み
+cat $tmp-base_data                                                |
+awk '$15!=9'                                                      |
+tee ${work}/totyuu |
+# 1:対応       2:利用者ID    3:預り項目    4:預り日付   5:預り時間
+# 6:預り対応者 7:預り数量    8:お渡し数量@ 9:誰にお渡し 10:備考
+# 11:渡した日  12:渡した時間 13:対応者     14:データID  15:有効フラグ
+# 16:処理日時
+if [ "${KOUMOKU}" = 0 ];then
+  cat -
+else
+  awk '$3=="'${KOUMOKU}'"'
+fi                                                                > $tmp-second_data
+# 1:対応       2:利用者ID    3:預り項目    4:預り日付   5:預り時間
+# 6:預り対応者 7:預り数量    8:お渡し数量@ 9:誰にお渡し 10:備考
+# 11:渡した日  12:渡した時間 13:対応者     14:データID  15:有効フラグ
+# 16:処理日時
+
+# 項目のマスタ準備
+cat ${tbl_dir}/${shisetsu}/AZUKARI_KOUMOKU  |
+awk '$4!=9'                                 |
+LANG=C sort -k1,1                           |
+self 1 2                                    > $tmp-koumoku_master
+
+# 従業員マスタ準備
+awk '$(NF-2)!=9' ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON                   |
+self 1 2                                                          > $tmp-user_kihon
+
+# 対象者で絞込み
+cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+if [ "${FLOOR}" = 0 ];then
+  cat -
+else
+  awk '$3=="'${FLOOR}'"'
+fi                                                                |
+self 6                                                            |
+LANG=C sort -k1,1                                                 |
+if [ "${NYUKYOSHA}" = 0 ];then
+  cat
+else
+  join0 key=1 <(echo $NYUKYOSHA)
+fi                                                                > $tmp-taishosha_list
+
+# 入居者名と居室の準備
+self 6 5 $tmp-riyosha_status                                      |
+LANG=C sort -k1,1                                                 |
+join1 key=1 $tmp-riyosha_kihon                                    > $tmp-namae_room
+# 1:利用者ID 2:入居者名 3:居室
+
+LANG=C sort -k2,2 $tmp-second_data                                |
+join0 key=2 $tmp-taishosha_list                                   |
+# 1:対応       2:利用者ID    3:預り項目    4:預り日付   5:預り時間
+# 6:預り対応者 7:預り数量    8:お渡し数量@ 9:誰にお渡し 10:備考
+# 11:渡した日  12:渡した時間 13:対応者     14:データID  15:有効フラグ
+# 16:処理日時
+join1 key=2 $tmp-namae_room                                       |
+# 1:対応        2:利用者ID    3:入居者名   4:居室        5:預り項目
+# 6:預り日付    7:預り時間    8:預り対応者 9:預り数量    10:お渡し数量@
+# 11:誰にお渡し 12:備考       13:渡した日  14:渡した時間 15:対応者
+# 16:データID   17:有効フラグ 18:処理日時
+self 2 4 3 1 5 6 7 9 8 13 14 10 11 15 12 16                       |
+# 1:利用者ID    2:居室        3:入居者名    4:対応       5:預り項目
+# 6:預り日付    7:預り時間    8:預り数量    9:預り対応者 10:渡した日
+# 11:渡した時間 12:お渡し数量 13:誰にお渡し 14:対応者    15:備考
+# 16:データID
+
+# 項目名付与
+LANG=C sort -k5,5                                                 |
+join1 key=5 $tmp-koumoku_master                                   |
+delf 5                                                            |
+# 1:利用者ID    2:居室        3:入居者名    4:対応       5:預り項目
+# 6:預り日付    7:預り時間    8:預り数量    9:預り対応者 10:渡した日
+# 11:渡した時間 12:お渡し数量 13:誰にお渡し 14:対応者    15:備考
+# 16:データID
+tee ${work}/kobuta |
+
+# 日にちの整形
+awk '{print $1,$2,$3,$4,$5,substr($6,1,4)"<br>"substr($6,5,2)"/"substr($6,7,2),$7,$8,$9,substr($10,1,4)"<br>"substr($10,5,2)"/"substr($10,7,2),$11,$12,$13,$14,$15,$16}' |
+awk '{if($10~/@/){$10="@"};print}'                                |
+
+# 従業員名付与
+cjoin1 key=9 $tmp-user_kihon                                      |
+delf 9                                                            |
+cjoin2 key=14 $tmp-user_kihon                                     |
+delf 14                                                           |
+
+# 状態
+awk '{if($4==2){$4="済"}else{$4="未"};print}'                     |
+
+# sort
+if [ "${FLOOR_SORT}" = "1" ];then
+  LANG=C sort -k2,2n -k6,6r -k7,7r -k10,10r -k11,11r
+else
+  LANG=C sort -k2,2nr -k6,6r -k7,7r -k10,10r -k11,11r
+fi
+
+
+
+
+rm -f ${tmp}-*
+exit 0
+

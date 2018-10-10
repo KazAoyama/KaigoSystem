@@ -1,0 +1,207 @@
+#!/bin/bash
+#
+# WEEKPLAN_KAIGO.DISPLAY : サービス計画表表示
+#
+# Usage : WEEKPLAN_KAIGO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+#rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_weekplan
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,$3,$4}'                   > $tmp-gengou_master
+cat $tmp-gengou_master                             |
+awk '{print $1,$2,substr($3,1,4)-1}'               > $tmp-gengou_list
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名
+# 4:誕生日年 5:誕生日月   6:誕生日 7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+# 展開情報ボタン可、不可制御
+tenkaibuttondisabled=""
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+  init )
+     : > $tmp-listdata
+     : > $tmp-tenkaidata
+  ;;
+
+  # 検索結果
+  search)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+      tenkaibuttondisabled="disabled"
+    else
+      : > $tmp-listdata
+    fi
+    : > $tmp-tenkaidata
+
+    cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+    awk '$2=="'${hdTaishouYear}'"&&$3=="'${taishoumonth}'" {print $4}'   > ${tmp}-spotservice
+    service_spot=$(cat ${tmp}-spotservice)
+  ;;
+
+  # 展開情報反映
+  tenkai)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-tenkaidata
+      tenkaibuttondisabled="disabled"
+    else
+      : > $tmp-tenkaidata
+    fi
+    : > $tmp-listdata
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    : > $tmp-listdata
+    : > $tmp-tenkaidata
+    tenkaibuttondisabled="disabled"
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+cat ${tmp}-listdata  > ${tmp}-weekplandata
+
+
+cp ${tmp}-tenkaidata ${work_dir}/tenkaidata
+
+cat ${tmp}-tenkaidata ${tmp}-weekplandata |
+awk '$1=="d"'       |
+delf 1               > ${tmp}-assessmentdata
+
+cat ${tmp}-tenkaidata  ${tmp}-weekplandata |
+awk '$1=="w"'       |
+delf 1               > ${tmp}-tenkaijouhoudata
+
+
+cp ${tmp}-weekplandata ${work_dir}/weekplandata
+
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear="$(date +%Y)"
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth="$(date +%m)"
+formatdate="'"${hdTaishouYear}"/"${taishoumonth}"/1'"
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###TAISHOUMONTH###  ${formatdate}
+###DISABLED###  ${tenkaibuttondisabled}
+###NOWEEKSERVICE###  ${service_spot}
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/WEEKPLAN_KAIGO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###TENKAIDATA### - ${tmp}-tenkaijouhoudata |
+mojihame -l###ASSESSMENTDAILY### - ${tmp}-assessmentdata    |
+mojihame -l###GENGOUMASTER### - $tmp-gengou_list                  |
+tee $work_dir/weekkaigo        |
+#sed 's/###KAIGYO###/\n/g'     |
+sed 's/\\n/　/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

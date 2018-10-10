@@ -1,0 +1,230 @@
+#!/bin/bash
+#
+# MASTER_POPUP_KYOSHITSU.TOUROKU : 居室登録　ポップアップ
+#
+# Written by S.Otsubo
+
+# 画面と直接やりとり
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+#rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    |
+sed 's/null//g'                > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+sdaytime=$(date +%Y%m%d%H%M%S)
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo -e 'Content-type:text/plain; \n\n' |
+  cat - <(echo "${message}")
+#  echo "message ${message}"
+#  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新対象の設定
+cat << FIN > ${tmp}-taisyou
+SHISETSU_TATEYA_FLOOR_UNIT_ROOM 9 10 1 5 11
+FIN
+# 1:テーブル名 2:削除フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# 6:列数
+
+# SHISETSU_TATEYA_FLOOR_UNIT_ROOM
+# 1:施設ID    2:建屋ID      3:フロア      4:ユニット   5:居室
+# 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザID
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 本日のinputディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+# ------------------------------------------
+# inputの値のチェック
+
+# 半角スペースを全角スペースに変換
+# 改行コードを全角スペースに変換
+Kyoshitsu_syusei="$(echo "${Kyoshitsu}" | tr " " "　" | sed 's/\\n/　/g')"
+Teiin_syusei="$(echo "${Teiin}" | tr " " "　" | sed 's/\\n/　/g')"
+Kyoshitsu1_syusei="$(echo "${Kyoshitsu1}" | tr " " "　" | sed 's/\\n/　/g')"
+Kyoshitsu2_syusei="$(echo "${Kyoshitsu2}" | tr " " "　" | sed 's/\\n/　/g')"
+
+# 必須項目
+# 居室番号と定員
+[ "${Kyoshitsu_syusei}" == "_" -o "${Kyoshitsu_syusei}" == "" ] && error_exit "居室番号は必須項目です"
+[ "${Teiin_syusei}" == "_" -o "${Teiin_syusei}" == "" ] && error_exit "定員は必須項目です"
+
+# 半角だったり文字数だったりチェック
+# -
+# チェックリスト作成
+cat << FIN > ${tmp}-check_list
+居室番号 ${Kyoshitsu_syusei} 0 _ _
+定員 ${Teiin_syusei} 1 0 _
+居室タイプ1 ${Kyoshitsu1_syusei} _ 0 10
+居室タイプ2 ${Kyoshitsu2_syusei} _ 0 10
+FIN
+# 1:項目名 2:チェック対象 3:チェック種別 4:最小文字数 5:最大文字数
+# -
+# チェック
+: > ${tmp}-err
+cat ${tmp}-check_list |
+while read Name Taisyou Check_type min_moji max_moji ; do
+  # 文字種別制限
+  case "${Check_type}" in
+    # -------------------
+    # 半角英数字
+    0 )
+      [[ "${Taisyou}" =~ [^0-9a-zA-Z] ]] && echo "${Name}は半角英数字で入力してください" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+    ;;
+    # -------------------
+    # -------------------
+    # 半角数字
+    1 )
+      [[ "${Taisyou}" =~ [^0-9] ]] && echo "${Name}は半角数字で入力してください" > ${tmp}-err
+      [ -s ${tmp}-err ] && break;
+    ;;
+    # -------------------
+  esac
+  # 文字数制限
+  # -
+  # 最小
+  if [ "${min_moji}" != "_" ] ; then
+    [ "${#Taisyou}" -lt "${min_moji}" ] && echo "${Name}は${min_moji}文字以上入力してください" > ${tmp}-err
+    [ -s ${tmp}-err ] && break;
+  fi
+  # -
+  # 最大
+  if [ "${max_moji}" != "_" ] ; then
+    [ "${max_moji}" -lt "${#Taisyou}" ] && echo "${Name}は${max_moji}文字以下で入力してください" > ${tmp}-err
+    [ -s ${tmp}-err ] && break;
+  fi
+done
+[ -s ${tmp}-err ] && error_exit "$(cat ${tmp}-err)" || rm ${tmp}-err
+
+# 重複チェック
+# 施設建屋フロアで同じ居室番号がないか
+# -
+# 施設建屋フロアを取得
+awk '$9!="9"' ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+# 1:施設ID    2:建屋ID      3:フロア      4:ユニット   5:居室
+# 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザID
+cjoin0 key=1/3 <(echo "${shisetsu_key} ${Tateya_select} ${Floor_select}") |
+self 5 |
+# 1:居室
+LANG=C sort -u |
+# 入力されたものとあてる
+cjoin0 key=1 <(echo "${Kyoshitsu}") - > ${tmp}-kyoshitsu_check_result
+# もしファイルの中身があったら重複
+[ -s ${tmp}-kyoshitsu_check_result ] && error_exit "居室番号が同じ施設・建屋・フロア内で重複しています"
+# ------------------------------------------
+
+# ------------------------------------------
+# 更新データの作成
+
+# ロックファイル作成
+cat ${tmp}-taisyou |
+self 1 |
+while read File ; do
+  lockfile -1 -r 3 -l 10 ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "再度登録してください"
+
+# データの作成
+
+# input
+echo "${shisetsu_key} ${Tateya_select} ${Floor_select} ${Unit_select} ${Kyoshitsu} \
+      ${Teiin} ${Kyoshitsu1} ${Kyoshitsu2} 1 ${sdaytime} ${userid}" |
+self 1/NF > ${tmp}-input_SHISETSU_TATEYA_FLOOR_UNIT_ROOM
+# 1:施設ID    2:建屋ID      3:フロア      4:ユニット   5:居室
+# 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+# 11:ユーザID
+
+# pompa
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM ${tmp}-input_SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+LANG=C sort -k1,5 -k10,10 |
+getlast 1 5 > ${tmp}-pompa_SHISETSU_TATEYA_FLOOR_UNIT_ROOM
+
+# 列チェック
+cat  ${tmp}-taisyou |
+self 1 6 |
+while read File retu_no; do
+  [ "$(retu ${tmp}-input_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-input_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-input_${File} | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+
+
+# 更新
+cat ${tmp}-taisyou |
+self 1 |
+while read Name ; do
+  # input
+  cp -p ${tmp}-input_${Name} ${input_dir}/${today}/$(basename ${0}).$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  # pompa
+  cp -p ${tmp}-pompa_${Name} ${home_dir}/TBL/SHISETSU_MASTER/${Name}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "更新に失敗しました"
+
+
+# ロックファイル削除
+cat ${tmp}-taisyou |
+self 1 |
+while read File; do
+  rm ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+done
+# ------------------------------------------
+
+# ここまできたらokかえす
+echo -e 'Content-type:text/plain; \n\n' |
+cat - <(echo "result ok")
+
+rm -f ${tmp}-*
+exit 0

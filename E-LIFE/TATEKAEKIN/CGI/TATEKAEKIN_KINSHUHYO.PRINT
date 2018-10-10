@@ -1,0 +1,135 @@
+#!/bin/bash
+#
+# TATEKAEKIN_KINSHUHYO.PRINT : 月間バイタルグラフ印刷
+#
+# Usage : TATEKAEKIN_KINSHUHYO.PRINT namefile datafile
+#
+# Written by j.aoyagi(HandsLab.inc)
+
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+domain="http://e-life.hands-lab.com"
+current_time="$(date "+%Y%m%d%H%M%S")"
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 施設名
+shisetsu_name=$(cat /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+join1 key=1 <(echo ${shisetsu})                    |
+self 2)
+
+# 建屋
+if [ "${tateya}" = 1 ];then
+  tateya_name=$(echo "シニア")
+else
+  tateya_name=$(echo "ケア")
+fi
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_date}" = "_" -o -z "${hd_date}" ];then
+  hd_date=$(date +%Y%m%d)
+  text_date=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}')
+else
+  :
+fi
+
+# searchfileの処理
+if [ -e "${searchfile}" ];then
+  # 10000
+  cat ${searchfile}   |
+   # 1:日付 2:万 3:五千 4:千 5:五百 6:百 7:五十 8:十 9:五 10:一 11:登録日時
+  self 2/10 > ${tmp}-search
+else
+  : > ${tmp}-search
+fi
+
+######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###TEXT_DATE### ${text_date}
+###HD_DATE### ${hd_date}
+###TATEYA### ${tateya}
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###DOMAIN### ${domain}
+###SHISETSU_NAME### ${shisetsu_name}
+###TATEYA_NAME### ${tateya_name}
+FIN
+
+
+cat  ${tmp}-calsed1 >  ${tmp}-calsed
+
+cat ${html_dir}/TATEKAEKIN_KINSHUBETSUHYO_PRINT.html   |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-search |
+calsed -f ${tmp}-calsed -   > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.TATEKAEKIN_KINSHUHYO.pdf
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/TATEKAEKIN/DOWNLOAD/${current_time}.TATEKAEKIN_KINSHUHYO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

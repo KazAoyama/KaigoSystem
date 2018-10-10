@@ -1,0 +1,70 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_ICHIRAN.SEARCH
+# 基本情報一覧検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/KYOUTSU/CGI/KYOUTSU.ini &> /dev/null
+source  /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.ini &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+#--------------------------------------------------------------
+#ゴミtmpの消去
+rm -f $tmp-*
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+home_dir=/home/hands
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#------------------------------------------------------------
+# 検索対象者の絞込み
+#----------------------
+
+# 従業員基本データの取得
+awk '$(NF-2)!=9' ${pompa_dir}/JYUUGYOUIN/USER_KIHON |
+awk '$1=="'${JYUUGYOUINID}'"{print "KIHON",$0}' > $tmp-kihon
+# 1:従業員ID 2:従業員名 3:従業員名カナ 4:勤務期間FROM 5:勤務期間TO
+# 6:ID       7:PASS
+
+# 従業員所属施設データ
+cat ${pompa_dir}/JYUUGYOUIN/USER_SHISETSU |
+awk '$1=="'${JYUUGYOUINID}'"&&$(NF-2)!="9"{print "SHISETSU",$0}' > $tmp-shisetsu
+# 1:従業員ID   2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職   8:介護支援専門員番号
+
+# 兼務施設データの取得
+cat ${pompa_dir}/JYUUGYOUIN/EXTRA_USER_SHISETSU |
+awk '$1=="'${JYUUGYOUINID}'"&&$(NF-2)!="9"{print "KENMU",$0}' > $tmp-kenmu_shisetsu
+# 1:従業員ID   2:施設ID 3:建屋ID 4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職   8:介護支援専門員番号
+
+if [ -s $tmp-kenmu_shisetsu ] ; then
+  cat $tmp-kihon $tmp-shisetsu $tmp-kenmu_shisetsu 
+else
+  cat $tmp-kihon $tmp-shisetsu
+fi
+
+## 終了
+rm -f $tmp-*
+exit 0

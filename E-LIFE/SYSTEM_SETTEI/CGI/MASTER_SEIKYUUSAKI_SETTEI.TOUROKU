@@ -1,0 +1,610 @@
+#!/bin/bash
+#
+# MASTER_SEIKYUUSAKI_SETTEI.TOUROKU : 支払先設定登録
+#
+# Written by S.Otsubo
+
+# 履歴のかたちで持つので、更新のさいはTOの日付を入れる
+# 請求開始月を変更してから人を選択して始めて内容が更新されるので「請求開始月が変わったかフラグ」がtrueのものだけinput作成する
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d%H%M%S) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+#  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/${File}.LOCK
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# パラメータの取得
+
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+eval $(name-source $tmp-name)
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# ディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+[ -e ${tbl_dir}/SEIKYUSAKI_SETTEI ] || mkdir ${tbl_dir}/SEIKYUSAKI_SETTEI
+[ -e ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu} ] || mkdir ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+#--------------------------------------------------------------
+
+# ------------------------------------------
+# 更新対象の設定
+cat << FIN | grep -v "#" | self 1/NF > ${tmp}-taisyou
+SEIKYUSAKI_SETTEI.${Shisetsu} 5 7 1 4 8 
+DENWAKAKIN_SETTEI.${Shisetsu} 8 9 1 6 10
+FIN
+# 1:テーブル名 2:削除フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# 6:列数
+
+# 請求先
+# 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+# 6:削除フラグ 7:更新時間 8:更新者
+# -
+# 電話課金請求先
+# 1:施設ID 2:建屋ID         3:フロア     4:部屋番号 5:請求FROM
+# 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+# ------------------------------------------
+
+
+# ------------------------------------------
+# 値のチェック
+# -
+# 請求先が複数になることはありえない
+
+# --------------------------------------------
+# チェック対象ととのえる(請求関連input収集)
+awk '$1~/^seikyu_/ || $1~/_changed/' $tmp-name |
+# 1:name 2:name内容
+# -
+# フラグを振る fromなら3 変更したかフラグなら1 それ以外(支払対象IDしかない)なら2
+awk '{if($1~/from_year/)
+        {$3="3"}
+      else if($1~/from_month/)
+        {$3="4"}
+      else if($1~/changed/)
+        {$3="1"}
+      else
+        {$3="2"};
+      print}' -                                |
+# 1:name 2:name内容 3:フラグ
+# -
+# yarrの準備(changed,fromを消して支払対象IDと同じnameにする)
+sed -e 's/_from / /g'                          \
+    -e 's/_changed / /g'                       \
+    -e 's/_from_month/ /g'                     \
+    -e 's/_from_year/ /g' -                    |
+# フラグでソートして横に並べる
+self 1 3 2                                     |
+# 1:name 2:フラグ 3:name内容
+LANG=C sort                                    |
+delf 2                                         |
+# 1:name 2:name内容
+yarr num=1                                     |
+# 1:name 2:変更したかフラグ 3:支払対象者ID 4:請求FROM
+# -
+# nameを更新するid名に変更する
+sed -e 's/^seikyu_//g'                         |
+# 1:支払項目ID(電話課金はdenwakakin) 2:変更したかフラグ 3:支払対象者ID 4:請求FROM
+# -
+# 更新対象は「請求開始月が変わったかフラグ」がtrueのもののみ
+cjoin0 key=2 <(echo "true") -                  |
+# 1:name 2:変更したかフラグ 3:支払対象者ID 4:請求FROMyear 5:請求FROMmonth
+delf 2                                         |
+# 1:name 2:支払対象者ID 3:請求FROMyear 4:請求FROMmonth
+LANG=C sort                                    |
+awk '{print $1,$2,$3$4}'                       > ${tmp}-seikyu_settei_kihon
+# 1:name 2:支払対象者ID 3:請求FROM
+# --------------------------------------------
+
+# --------------------------------------------
+# 最新の確定状況が仮確定だった場合、更新=>確定解除=>更新が入るとおかしくなるのでエラー
+
+kakutei_flg="$(LANG=C sort -k1,2 -k5,5 ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+                    getlast 1 2   |
+                    awk '$4!="9"' |
+                    tail -1       |
+                    self 3        )"
+[ "${kakutei_flg}" = 1 ] && error_exit "請求処理で仮確定中時は変更ができません。\n仮確定解除か当月確定後に設定をしてください。"
+# --------------------------------------------
+
+# --------------------------------------------
+# 請求FROMが年月でなかったらエラー
+
+awk --re-interval '$3!~/^[0-9]{6}$/' ${tmp}-seikyu_settei_kihon > ${tmp}-seikyu_from_err
+# 1:name 2:支払対象者ID 3:請求FROM
+[ -s ${tmp}-seikyu_from_err ] && error_exit "請求開始月の値が不正です。\nもし設定を解除する場合、解除開始月を入力し設定なしにして登録してください"
+# --------------------------------------------
+
+# --------------------------------------------
+# 確定年月以前を設定しようとしたらエラー
+
+kakutei_nengetsu="$(LANG=C sort -k1,2 -k5,5 ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+                    getlast 1 2   |
+                    awk '$4!="9"' |
+                    tail -1       |
+                    self 2        )"
+awk '$3<="'${kakutei_nengetsu}'"' ${tmp}-seikyu_settei_kihon > ${tmp}-kakutei_err
+[ -s ${tmp}-kakutei_err ] && error_exit "請求確定年月以前を設定することはできません"
+# --------------------------------------------
+
+# --------------------------------------------
+# 請求先に設定された人のIDは全て同一かどうか
+# 電話課金は除外
+grep -v "denwakakin" ${tmp}-seikyu_settei_kihon |
+self 2                                          |
+LANG=C sort -u                                  |
+# 設定なしのアンスコは除外
+grep -v "_"                                     > ${tmp}-douitu_check
+# 1:請求先入居者ID
+# -
+# チェックファイルがあるときだけチェックする
+if [ -s ${tmp}-douitu_check ] ; then
+  [ "$(gyo ${tmp}-douitu_check)" != "1" ] && error_exit "請求先に設定できる人は一人までです"
+fi
+# --------------------------------------------
+
+#####選択できる人は必ず設定期間内に施設にいて、その期間内に口座があいている人なので細かいチェックはしない
+#####複数ある契約期間と口座の相関関係はないのでチェックしない
+# ------------------------------------------
+
+
+# ------------------------------------------
+# 更新データの作成
+
+# --------------------------
+# 電話課金ファイル作成
+
+# 更新データがあったら処理にはいる
+# -
+# ${tmp}-seikyu_settei_kihon
+# 1:name 2:支払対象者ID 3:請求FROM
+is_denwa_koushin="$(grep denwakakin ${tmp}-seikyu_settei_kihon)"
+if [ -n "${is_denwa_koushin}" ] ; then
+  ### input
+  # 編集不可の施設と部屋番号から建屋とフロア取得する(建屋とフロアの値は変更できる検索条件のため)
+  cjoin0 key=1 <(echo "${Shisetsu}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  # 1:施設      2:建屋        3:フロア      4:ユニット   5:居室
+  # 6:居室定員  7:居室タイプ1 8:居室タイプ2 9:削除フラグ 10:更新日時
+  # 11:ユーザID
+  cjoin0 key=5 <(echo "${hensyu_room}" ) - |
+  awk '$9!="9"' -                          > ${tmp}-shisetsu
+  set_tateya="$(self 2 ${tmp}-shisetsu)"
+  set_floor="$(self 3 ${tmp}-shisetsu)"
+
+  seikyu_denwakakin_from="${seikyu_denwakakin_from_year}${seikyu_denwakakin_from_month}"
+  
+  # 新しいinput
+  echo "${Shisetsu} ${set_tateya} ${set_floor} ${hensyu_room} ${seikyu_denwakakin_from} \
+         999912 ${seikyu_denwakakin} 1 ${cur_time} ${userid}" |
+  self 1/NF                                                   > ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+  # 1:施設ID 2:建屋ID         3:フロアID   4:部屋番号 5:請求FROM
+  # 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+  
+  # 古いレコードにTOの月入れる
+  # -
+  # ファイルがあるときだけ実行
+  if [ -s ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} ] ; then
+
+    # 過去レコードTOの年月設定
+    # inputのFROM(seikyu_denwakakin_from)の前月がはいる
+    old_to="$(mdate ${seikyu_denwakakin_from}m/-1)"
+
+####################################################################################################ここついか
+
+    # 最終行のFROMの値と確定年月の大小関係で分岐
+    #   最終行FROM<=確定年月
+    #     true :最後の行を消す
+    #     false:最後の行を消す
+    #           2行～(最後の行-1を消す、最後の行-1のTOに新しいFROM-1を入れた行を追加)
+    #           1行(最後の行のTOに新しいFROM-1を入れた行を追加)
+
+    last_from="$(cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+                 awk '$8!="9"' |
+                 LANG=C sort   |
+                 getlast 1 4   |
+                 self 5        )"
+
+    if [ "${last_from}" -le "${kakutei_nengetsu}" ] ; then
+      # 最後の行を消す、最後の行のTOに新しいFROM-1を入れた行を追加
+
+      # キーが同じものの最終レコードをとってくる
+      cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+      # 1:施設ID 2:建屋ID         3:フロアID   4:部屋番号 5:請求FROM
+      # 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+      awk '$8!="9"' -                                     |
+      LANG=C sort                                         |
+      getlast 1 4                                         |
+      tee ${tmp}-denwa_sakujyobun_1                       |
+      # toと更新時間など書き換え
+      awk '{$6="'${old_to}'";
+            $9="'${cur_time}'";
+            $10="'${userid}'";
+            print}' -                                     >> ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+
+      # 削除レコードのさくせい
+      awk '{$8="9";
+            $9="'${cur_time}'";
+            $10="'${userid}'";
+            print}' ${tmp}-denwa_sakujyobun_1             >> ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+    else
+      # 最後の行を消す
+
+      # キーが同じものの最終レコードをとってくる
+      cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+      # 1:施設ID 2:建屋ID         3:フロアID   4:部屋番号 5:請求FROM
+      # 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+      awk '$8!="9"' -                                     |
+      LANG=C sort                                         |
+      getlast 1 4                                         > ${tmp}-denwa_sakujyobun_1
+
+      # 削除レコードのさくせい
+      awk '{$8="9";
+            $9="'${cur_time}'";
+            $10="'${userid}'";
+            print}' ${tmp}-denwa_sakujyobun_1             >> ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+
+      # ここからは2行以上あるときにやる
+      settei_gyo="$(cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+                    awk '$8!="9"' - |
+                    gyo             )"
+      if [ 1 -lt "${settei_gyo}" ] ; then
+        # 最後-1のTO
+        hikaku_to="$(cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+                     awk '$8!="9"' - |
+                     LANG=C sort     |
+                     tail -2         |
+                     head -1         |
+                     self 4          )"
+
+        # 最後-1行のTO!=新しいFROM-1ならば、最後-1行のTOを書き換える処理を入れる
+        if [ "${hikaku_to}" != "${old_to}" ] ; then
+          # 最後-1の行をを消し、最後-1のTOに新しいFROM-1を入れる
+
+          # キーが同じものの最終行-1をとってくる
+          cjoin0 key=4 <(echo "${hensyu_room}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} |
+          # 1:施設ID 2:建屋ID         3:フロアID   4:部屋番号 5:請求FROM
+          # 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+          awk '$8!="9"' -               |
+          LANG=C sort                   |
+          tail -2                       |
+          head -1                       |
+          tee ${tmp}-denwa_sakujyobun_2 |
+          # toと更新時間など書き換え
+          awk '{$6="'${old_to}'";
+                $9="'${cur_time}'";
+                $10="'${userid}'";
+                print}' -               >> ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+
+          # 削除レコードのさくせい
+          awk '{$8="9";
+                $9="'${cur_time}'";
+                $10="'${userid}'";
+                print}' ${tmp}-denwa_sakujyobun_2 >> ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+        fi
+      fi
+    fi
+
+    ###### ここでもinputのcheckやってます
+    # inputで入ってきたFROMが請求完了した月より前だとエラー
+    LANG=C sort -k1,2 -k5,5 ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+    # 1:施設ID 2:請求確定月 3:削除フラグ 4:更新時間 5:更新者
+    getlast 1 1                             |
+    awk '$4!="9"'                           |
+    tail -1                                 |
+    self 2                                  > ${tmp}-seikyu_kakutei
+    [ "${seikyu_denwakakin_from}" -le "$(cat ${tmp}-seikyu_kakutei)" ] && echo "err" > ${tmp}-from_check_err
+    [ -s ${tmp}-from_check_err ] && error_exit "電話課金の請求開始月が不正です"
+  fi
+  ###
+
+  # 削除ぶんの処理
+  cat ${tmp}-denwa_sakujyobun* |
+  LANG=C sort                  > ${tmp}-denwa_sakujyobun
+  
+  ### pompa
+  # TOを入れたレコードを抜き、新しいレコードをいれる
+  if [ -s ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} ] ; then
+    cjoin0 +ng key=1/10 ${tmp}-denwa_sakujyobun ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/DENWAKAKIN_SETTEI.${Shisetsu} 2>&1 1> /dev/null |
+    cat -  ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu} |
+    LANG=C sort -k1,6
+  else
+    cat ${tmp}-input_DENWAKAKIN_SETTEI.${Shisetsu}
+  fi                                                  > ${tmp}-pompa_DENWAKAKIN_SETTEI.${Shisetsu}
+  # 1:施設ID 2:建屋ID         3:フロアID   4:部屋番号 5:請求FROM
+  # 6:請求TO 7:請求先入居者ID 8:削除フラグ 9:更新時間 10:更新者
+  ###
+else
+  # 更新対象から外す
+  grep -v "DENWAKAKIN_SETTEI" ${tmp}-taisyou > ${tmp}-taisyou.new
+  mv ${tmp}-taisyou.new ${tmp}-taisyou
+fi
+
+# --------------------------
+
+# --------------------------
+# 請求先設定ファイルの作成
+
+# 更新データがあったら処理にはいる
+# -
+# ${tmp}-seikyu_settei_kihon
+# 1:name 2:支払対象者ID 3:請求FROM
+grep -v denwakakin ${tmp}-seikyu_settei_kihon > ${tmp}-is_seikyu_koushin
+if [ -s ${tmp}-is_seikyu_koushin ] ; then
+  ### input
+  # チェックで使用したファイルから作成
+  # -
+  # ${tmp}-seikyu_settei_kihon
+  # 1:name 2:支払対象者ID 3:請求FROM
+  # -
+  # inputファイル初期化
+  : > ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+  
+  # 繰り返し処理で新しいinputを作成する
+  grep -v "denwakakin" ${tmp}-seikyu_settei_kihon |
+  while read KoumokuId SeikyuId SeikyuFrom ; do
+    echo "${kobetu_settei} ${KoumokuId} ${SeikyuFrom} 999912 ${SeikyuId} \
+          1 ${cur_time} ${userid}"                                       |
+    self 1/NF                                                            >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+    # 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+    # 6:削除フラグ 7:更新時間 8:更新者
+  done
+
+  # 繰り返し処理で古いレコードにTOの月を入れる
+  # -
+  # ファイルあるときのみ
+  if [ -s ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} ] ; then
+    grep -v "denwakakin" ${tmp}-seikyu_settei_kihon |
+    while read KoumokuId SeikyuId SeikyuFrom ; do
+
+##############################################################################################ここついかこれから
+
+      # 最終行のFROMの値と確定年月の大小関係で分岐
+      #   最終行FROM<=確定年月
+      #     true :最後の行を消す、
+      #           2行～(最後の行-1を消す、最後の行-1のTOに新しいFROM-1を入れた行を追加)
+      #           1行(最後の行のTOに新しいFROM-1を入れた行を追加)
+      #     false:最後の行を消す
+      
+      last_from="$(cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+                   awk '$6!="9"' |
+                   LANG=C sort   |
+                   getlast 1 2   |
+                   self 3        )"
+      if [ "${last_from}" -le "${kakutei_nengetsu}" ] ; then
+        # 最後の行を消す、最後の行のTOに新しいFROM-1を入れた行を追加
+      
+        # 最終行TOの年月設定
+        # inputのFROM(SeikyuFrom)の前月がはいる
+        seikyu_old_to="$(mdate ${SeikyuFrom}m/-1)"
+      
+        # キーが同じものの最終行をとってくる
+        cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+        # 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+        # 6:削除フラグ 7:更新時間 8:更新者
+        awk '$6!="9"' -                                         |
+        LANG=C sort                                             |
+        getlast 1 2                                             |
+        tee ${tmp}-seikyu_sakujyo_${kobetu_settei}_${KoumokuId} |
+        # toと更新時間など書き換え
+        awk '{$4="'${seikyu_old_to}'";
+              $7="'${cur_time}'";
+              $8="'${userid}'";
+              print}' -                                         >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+      
+        # 削除レコードのさくせい
+        awk '{$6="9";
+              $7="'${cur_time}'";
+              $8="'${userid}'";
+              print}' ${tmp}-seikyu_sakujyo_${kobetu_settei}_${KoumokuId} >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+      
+      else
+        # 最後の行を消す
+      
+        # キーが同じものの最終行をとってくる
+        cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+        # 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+        # 6:削除フラグ 7:更新時間 8:更新者
+        awk '$6!="9"' - |
+        LANG=C sort     |
+        getlast 1 2     > ${tmp}-seikyu_sakujyo_${kobetu_settei}_${KoumokuId}
+      
+        # 削除レコードのさくせい
+        awk '{$6="9";
+              $7="'${cur_time}'";
+              $8="'${userid}'";
+              print}' ${tmp}-seikyu_sakujyo_${kobetu_settei}_${KoumokuId} >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+      
+        # ここからは2行以上あるときにやる
+        settei_gyo="$(cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+                      awk '$6!="9"' - |
+                      gyo             )"
+        if [ 1 -lt "${settei_gyo}" ] ; then
+          # TOの年月設定
+          # inputのFROM(SeikyuFrom)の前月がはいる
+          seikyu_old_to="$(mdate ${SeikyuFrom}m/-1)"
+      
+          # 最後-1のTO
+          hikaku_to="$(cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+                       awk '$6!="9"' - |
+                       LANG=C sort     |
+                       tail -2         |
+                       head -1         |
+                       self 4          )"
+        
+          # 最後-1行のTO!=新しいFROM-1ならば、最後-1行のTOを書き換える処理を入れる
+          if [ "${hikaku_to}" != "${seikyu_old_to}" ] ; then
+            # 最後-1の行をを消し、最後-1のTOに新しいFROM-1を入れる
+          
+            # キーが同じものの最終行-1をとってくる
+            cjoin0 key=1/2 <(echo "${kobetu_settei} ${KoumokuId}") ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} |
+            # 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+            # 6:削除フラグ 7:更新時間 8:更新者
+            awk '$6!="9"' -                                           |
+            LANG=C sort                                               |
+            tail -2                                                   |
+            head -1                                                   |
+            tee ${tmp}-seikyu_sakujyo_2_${kobetu_settei}_${KoumokuId} |
+            # toと更新時間など書き換え
+            awk '{$4="'${seikyu_old_to}'";
+                  $7="'${cur_time}'";
+                  $8="'${userid}'";
+                  print}' -                                           >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+      
+            # 削除レコードのさくせい
+            awk '{$6="9";
+                  $7="'${cur_time}'";
+                  $8="'${userid}'";
+                  print}' ${tmp}-seikyu_sakujyo_2_${kobetu_settei}_${KoumokuId} >> ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+          fi
+        fi
+      fi
+
+      ###### ここでもinputのcheckやってます
+      # inputで入ってきたFROMが請求完了した月より前だとエラー
+      LANG=C sort -k1,2 -k5,5 ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+      # 1:施設ID 2:請求確定月 3:削除フラグ 4:更新時間 5:更新者
+      getlast 1 1                           |
+      awk '$4!="9"'                         |
+      LANG=C sort                           |
+      self 2                                > ${tmp}-seikyu_kakutei
+      if [ "${SeikyuFrom}" -le "$(cat ${tmp}-seikyu_kakutei)" ] ; then
+        echo "${Shisetsu} ${KoumokuId}"                               |
+        cjoin0 key=1/2 - ${tbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+        awk '$8!="9"'                                                 |
+        self 3                                                        > ${tmp}-seikyu_from_check_err
+      fi
+      [ -s ${tmp}-seikyu_from_check_err ] && break;
+    done
+    # FROMチェックのエラー処理
+    [ -s ${tmp}-seikyu_from_check_err ] && error_exit "月額利用料($(cat ${tmp}-seikyu_from_check_err))の請求開始月が不正です"
+
+    # 削除するレコード
+    cat ${tmp}-seikyu_sakujyo_* |
+    LANG=C sort                 > ${tmp}-seikyu_sakujyo
+  fi
+  ###
+  
+  ### pompa
+  # TOを入れたレコードを抜き、新しいレコードをいれる
+  if [ -s ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} ] ; then
+    cjoin0 +ng key=1/8 ${tmp}-seikyu_sakujyo ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/SEIKYUSAKI_SETTEI.${Shisetsu} 2>&1 1> /dev/null |
+    cat - ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu} |
+    LANG=C sort -k1,4
+  else
+    cat ${tmp}-input_SEIKYUSAKI_SETTEI.${Shisetsu}
+  fi                                                 > ${tmp}-pompa_SEIKYUSAKI_SETTEI.${Shisetsu}
+  # 1:利用者ID   2:項目ID   3:請求FROM 4:請求TO 5:請求先入居者ID
+  # 6:削除フラグ 7:更新時間 8:更新者
+  ###
+else
+  # 更新対象から外す
+  grep -v "SEIKYUSAKI_SETTEI" ${tmp}-taisyou > ${tmp}-taisyou.new
+  mv ${tmp}-taisyou.new ${tmp}-taisyou
+fi
+
+# --------------------------
+
+# --------------------------
+# ありえないと思うけどもし更新対象がなくなったらここで処理おしまい
+
+if [ ! -s ${tmp}-taisyou ] ; then
+  error_exit "更新対象がありません"
+fi
+# --------------------------
+
+# ロックファイル作成
+cat ${tmp}-taisyou |
+self 1 |
+while read File ; do
+  lockfile -1 -r 3 -l 10 ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/${File}.LOCK
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "再度登録してください"
+
+# 列チェック
+cat ${tmp}-taisyou |
+self 1 6 |
+while read File retu_no; do
+  # input
+  [ "$(retu ${tmp}-input_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-input_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-input_${File} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+  # pompa
+  [ "$(retu ${tmp}-pompa_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-pompa_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-pompa_${File} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err* ] && error_unlock "列数エラー"
+
+
+# 更新
+cat ${tmp}-taisyou |
+self 1 |
+while read Name ; do
+  # input
+  cp -p ${tmp}-input_${Name} ${input_dir}/${today}/$(basename ${0}).${Name}.$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+  # pompa
+  cp -p ${tmp}-pompa_${Name} ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/${Name}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_unlock "更新に失敗しました"
+
+
+# ロックファイル削除
+cat ${tmp}-taisyou |
+self 1 |
+while read File; do
+  rm ${tbl_dir}/SEIKYUSAKI_SETTEI/${Shisetsu}/${File}.LOCK
+done
+# ------------------------------------------
+
+
+# ここまできたら画面にかえす
+cat << FIN > ${tmp}-alert
+<script type="text/javascript">alert("登録が完了しました");</script>
+FIN
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-alert
+
+#rm -f ${tmp}-*
+
+exit 0

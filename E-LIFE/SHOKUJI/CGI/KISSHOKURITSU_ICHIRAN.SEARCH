@@ -1,0 +1,422 @@
+#!/bin/bash
+#
+# SHOKUJI_SHUUKEI.SEARCH
+# 食事集計検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+riyousha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+mkdir -p ${pompa_dir}/${Shisetsu}/STAFF/${TaishouNengetsu}
+touch 
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+Shisetsu=$(nameread "Shisetsu" ${namedata})
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread "shisetsu" ${namedata})"
+Tateya=$(nameread "Tateya" ${namedata})
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア　#TODO 従業員マスタからの処理
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="01"
+# 表示期間
+  TaishouYear="$(nameread "TaishouYear" ${namedata})"
+  TaishouMonth="$(nameread "TaishouMonth" ${namedata} | maezero 1.2)"
+  TaishouNengetsu="$(echo "${TaishouYear}""${TaishouMonth}")"
+
+#------------------------------------------------------------
+# データ
+#----------------------
+# 日付の取得
+# 対象年月日のデータ
+mdate -a "${TaishouNengetsu}"m |
+delf 3                         > $tmp-days
+#1:年月日 2:曜日(数字)
+
+: > $tmp-kisshokudata_result
+cat /DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/*/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA > $tmp-shokuji_jisseki_data
+
+cat /home/hands/E-LIFE/SHOKUJI/POMPA/*/SHOKUJI_MENU  |
+LANG=C sort -k4,4 -k1,1                              |
+awk '$18=="1"{print $4$1}'                     > $tmp-shokuji_menu
+# 1:施設ID＋食事ID
+
+# 一日ごとに入居者数と対象者数と食数と喫食率を出す
+#cat $tmp-days  |
+#while read DAY NUM ; do
+for DAY in $(cat $tmp-days | self 1) ; do
+
+# 今日より前の日付だったら
+  if [ "${DAY}" -le "${today}" ] ;then
+    #-----------
+    # 入居者数
+    #-----------
+    # 施設利用者テーブルより取得
+    # 1:施設ID   2:建屋ID   3:フロアID 4:ユニットID 5:部屋番号
+    # 6:利用者ID 7:from日付 8:to日付
+    if [ -z "${Tateya}" -o "${Tateya}" = "_" ] ; then
+      awk '$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS 
+    else
+      awk '$2=="'${Tateya}'"&&$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS 
+    fi |
+    awk '$7<="'$DAY'"&&"'$DAY'"<=$8'                |
+    tee $tmp-nyuukyosha_all_${DAY}                  |
+    self 1 6                                        |
+    LANG=C sort -u                                  |
+    awk '{print "'${DAY}'",$1,"1"}'                 |
+    sm2 1 2 3 3                                     > $tmp-nyuukyosha_${DAY}
+    # 1:年月日  2:施設ID  3:人数
+  
+    # 0人の施設があった場合対応
+    cat /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR   |
+    awk '$1!~/^1/&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print "'$DAY'",$1}' |
+    LANG=C sort -u                                  |
+    cjoin1 +ng key=1/2 $tmp-nyuukyosha_${DAY} -     > $tmp-nyuukyosha_ok 2>$tmp-nyuukyosha_nashi
+  
+   if [ -s $tmp-nyuukyosha_nashi ] ; then
+    cat $tmp-nyuukyosha_nashi          |
+    awk '{print $0,"0"}'               |
+    cat - $tmp-nyuukyosha_${DAY}       |
+    LANG=C sort -u
+   else
+    cat $tmp-nyuukyosha_${DAY}
+   fi > $tmp-nyuukyosha_suu_${DAY}
+  
+    #------------
+    # 対象者数
+    #------------
+    # 入院外泊されている方、セカンド利用の方を抽出し入居者数から引く
+    # 契約情報
+    # 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+    # 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+    # 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+    # 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+    # 21:予備5           22:削除フラグ 23:更新日     24:更新者
+    if [ -z "${Tateya}" -o "${Tateya}" = "_" ] ; then
+      awk '$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKU
+    else
+      awk '$4=="'${Tateya}'"&&$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKU
+    fi |
+  #  awk '$12<="'$DAY'"&&"'$DAY'"<=$13{print $3,$1,$2}'  |
+    tee $tmp-keiyaku_tee |
+    self 3 1 2  |
+    # 1:施設ID 2:利用者(入居者)ID 3:契約ID 
+    LANG=C sort -u                                      > $tmp-keiyaku_data_${DAY}
+  
+  # 体験入居
+    cat $tmp-keiyaku_tee |
+    awk '$9=="001"&&$12<="'$DAY'"&&"'$DAY'"<=$13'      |
+    self 3 1             |
+    LANG=C sort -u       > $tmp-taikennyuukyo_before_${DAY}
+    # 1:施設ID 2:利用者(入居者)ID
+  
+    if [ -s $tmp-taikennyuukyo_before_${DAY} ] ; then
+      cat $tmp-nyuukyosha_all_${DAY} |
+      self 1 6                       |
+      LANG=C sort -u                 |
+      cjoin1 key=1/2 $tmp-taikennyuukyo_before_${DAY} - > $tmp-taikennyuukyo_${DAY}
+    else
+      :
+    fi
+      
+  # セカンド特販データを作成
+    : >  $tmp-riyouryou_data_${DAY} 
+    # 月額利用料
+    # 1:利用者(入居者)ID 2:施設ID        3:契約ID      4:利用料種別ID 5:番号
+    # 6:起算開始日       7:起算終了日    8:金額        9:特販ID       10:値引額
+    # 11:値引き後金額    12:特販期間FROM 13:特販期間TO 14:予備1       15:予備2
+    # 16:予備3           17:予備4        18:予備5      19:削除フラグ  20:更新時間
+    # 21:更新者
+    awk '$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+    awk '$6<="'$DAY'"&&"'$DAY'"<=$7&&$9=="015"&&$12<="'$DAY'"&&"'$DAY'"<=$13{print $2,$1,$3}' |
+    LANG=C sort -u   >> $tmp-riyouryou_data_${DAY}
+    # 1:施設ID 2:利用者(入居者)ID 3:契約ID
+  
+    # 契約金
+    # 1:利用者(入居者)ID 2:施設ID      3:契約ID    4:契約金種別ID  5:番号
+    # 6:償却開始日       7:償却終了日  8:金額      9:償却回数      10:非返却金額
+    # 11:算出方法        12:特販ID     13:値引額   14:値引き後金額 15:特販期間FROM
+    # 16:特販期間TO      17:予備1      18:予備2    19:予備3        20:予備4
+    # 21:予備5           22:削除フラグ 23:更新時間 24:更新者
+    awk '$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKUKIN |
+    awk '$6<="'$DAY'"&&"'$DAY'"<=$7&&$12=="015"&&$15<="'$DAY'"&&"'$DAY'"<=$16{print $2,$1,$3}' |
+    LANG=C sort -u   >> $tmp-riyouryou_data_${DAY}
+  
+    # 通常特販
+  # 1:利用者(入居者)ID 2:施設ID  3:契約ID 4:特販種別ID 5:番号
+  # 6:値引金額         7:開始日  8:終了日 9:内容       10:予備1
+  # 11:予備2           12:予備3  13:予備4 14:予備5     15:削除フラグ
+  # 16:更新日          17:更新者
+    awk '$(NF-2)!="9"' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_TOKUHAN  |
+    awk '$7<="'$DAY'"&&"'$DAY'"<=$8&&$4=="015"{print $2,$1,$3}'     |
+    LANG=C sort -u  >> $tmp-riyouryou_data_${DAY}
+  
+  
+    if [ -s $tmp-riyouryou_data_${DAY} -a -s $tmp-keiyaku_data_${DAY} ] ; then
+      # 契約情報(該当建屋か判定済み)とjoinして残ったものだけ後で利用
+      cat $tmp-riyouryou_data_${DAY} |
+      LANG=C sort -u |
+      cjoin1 key=1/3 $tmp-keiyaku_data_${DAY} -  > $tmp-second_riyousha_${DAY}
+      # 1:施設ID 2:利用者(入居者)ID 3:契約ID
+    else
+      :
+    fi
+  
+    # 入院外泊者
+    # 1:利用者(入居者)ID 2:入院外泊ID  3:施設      4:建屋     5:居室
+    # 6:種別             7:期間FROM    8:期間TO    9:出発時間 10:帰宅時間
+    # 11:入院外泊先      12:備考       13:欠食登録 14:予備１  15:予備２
+    # 16:予備３          17:削除フラグ 18:更新者   19:更新日時
+  
+    cat /DATA/E-LIFE/UNEI/NYUUINGAIHAKU/*/${Tateya}/RIYOUSHA_NYUUINGAIHAKU > $tmp-riyousha_nyuuingaihaku_all
+  
+    if [ -s $tmp-riyousha_nyuuingaihaku_all ] ; then
+      cat $tmp-riyousha_nyuuingaihaku_all       |
+      awk '$(NF-2)!="9"&&$7<="'$DAY'"&&"'$DAY'"<=$8{print $3,$1}'            |
+      LANG=C sort -u  > $tmp-nyuuingaihaku_riyousha_before_${DAY}
+      # 1:施設 2:利用者(入居者)ID
+    else
+      :
+    fi
+  
+    if [ -s $tmp-nyuuingaihaku_riyousha_before_${DAY} ] ; then
+      cat $tmp-nyuukyosha_all_${DAY} |
+      self 1 6                       |
+      LANG=C sort -u                 |
+      cjoin1 key=1/2 $tmp-nyuuingaihaku_riyousha_before_${DAY} - > $tmp-nyuuingaihaku_riyousha_${DAY}
+    else
+      :
+    fi
+  
+  
+    if [ -s $tmp-second_riyousha_${DAY} ] ; then 
+      cat $tmp-second_riyousha_${DAY}          |
+      self 1 2                                 |
+      if [ -s $tmp-nyuuingaihaku_riyousha_${DAY} ] ; then
+        cat - $tmp-nyuuingaihaku_riyousha_${DAY} 
+      else
+        cat -
+      fi |
+      if [ -s $tmp-taikennyuukyo_${DAY} ] ; then
+        cat - $tmp-taikennyuukyo_${DAY}
+      else
+        cat -
+      fi |
+      LANG=C sort -u                           |
+      tee $tmp-jyogai_riyousha_${DAY}                 |
+      awk '{print "'${DAY}'",$1,"-1"}'         |
+       sm2 1 2 3 3                             | 
+       # 1:年月日  2:施設ID  3:カウントしない人数(マイナスで人数)
+       cat $tmp-nyuukyosha_suu_${DAY} -         
+    elif [ -s $tmp-nyuuingaihaku_riyousha_${DAY} ] ; then
+      cat $tmp-nyuuingaihaku_riyousha_${DAY}   | 
+      if [ -s $tmp-taikennyuukyo_${DAY} ] ; then
+        cat - $tmp-taikennyuukyo_${DAY}
+      else
+        cat -
+      fi |
+      LANG=C sort -u                           |
+      tee $tmp-jyogai_riyousha_${DAY}                 |
+      awk '{print "'${DAY}'",$1,"-1"}'         |
+      sm2 1 2 3 3                              | 
+    # 1:年月日  2:施設ID  3:カウントしない人数(マイナスで人数)
+      cat $tmp-nyuukyosha_suu_${DAY} -         
+    elif [ -s $tmp-taikennyuukyo_${DAY} ] ; then
+      cat $tmp-taikennyuukyo_${DAY}            |
+      LANG=C sort -u                           |
+      tee $tmp-jyogai_riyousha_${DAY}                 |
+      awk '{print "'${DAY}'",$1,"-1"}'         |
+      sm2 1 2 3 3                              |
+    # 1:年月日  2:施設ID  3:カウントしない人数(マイナスで人数)
+      cat $tmp-nyuukyosha_suu_${DAY} -
+    else
+      cat $tmp-nyuukyosha_suu_${DAY}   
+    fi  |
+    LANG=C sort                                |
+    sm2 1 2 3 3                                > $tmp-taishou_ninsu_${DAY}
+    # 1:年月日  2:施設ID 3:人数
+  
+    #-----------
+    # 食事数
+    #----------
+   
+    if [ -s $tmp-shokuji_jisseki_data ] ; then
+
+      # 母数から抜いた対象者の食事実績ははずす
+      if [ -s $tmp-jyogai_riyousha_${DAY} ] ; then
+        cat $tmp-jyogai_riyousha_${DAY} |
+        self 2 1                 |
+        LANG=C sort              |
+        join1 +ng key=1/2 - $tmp-shokuji_jisseki_data >/dev/null 2>$tmp-shokuji_data_moto
+      else
+        cat $tmp-shokuji_jisseki_data >$tmp-shokuji_data_moto
+      fi
+
+      cat $tmp-shokuji_data_moto |
+      # 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+      # 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+      # 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+      # 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+      # 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+      # 26:削除フラグ 27:更新時間              28:更新者
+  
+#      # 入居者ゲストフラグが1(入居者)で、食事種類が01メインの食事数
+#      awk '$3=="'${Tateya}'"&&$5=="1"&&$6=="'${DAY}'"&&$7!="4"&&$11=="01"&&$(NF-2)!="9"{print $6,$2,$7,$17}' |
+#      # 1:日付 2:施設ID 3:食事（朝昼夜おやつ他） 4:数量
+
+      # 入居者ゲストフラグが1(入居者)で、対象日のデータ
+      awk '$3=="'${Tateya}'"&&$5=="1"&&$6=="'${DAY}'"&&$(NF-2)!="9"{print $2$9,$6,$2,$7,$17}' |
+      # 1:施設Id+食事メニューId 2:日付 3:施設Id 4:食事（朝昼夜おやつ他） 5:数量
+      # 食事メニューから抽出した喫食率計算対象のものに絞る
+      LANG=C sort |
+      cjoin1 key=1 $tmp-shokuji_menu - |
+      delf 1      |
+
+      LANG=C sort |
+      sm2 1 3 4 4 > $tmp-shokuji_suu_${DAY}
+      # 1:日付 2:施設ID 3:食事（朝昼夜おやつ他） 4:数量
+    else
+      :
+    fi
+  
+    if [ ! -s $tmp-shokuji_suu_${DAY} ] ; then
+      cat $tmp-nyuukyosha_suu_${DAY} |
+      self 1 2                       |
+      awk '{print $0,"1","0"}'       > $tmp-shokuji_suu_${DAY}
+    else
+      :
+    fi
+    #-------------------
+    # 入居者数・対象者数・食事数をくっつける
+    #-------------------
+    if [ -s $tmp-nyuukyosha_suu_${DAY} -a -s $tmp-taishou_ninsu_${DAY} ] ; then
+      loopj num=1/2 $tmp-nyuukyosha_suu_${DAY} $tmp-taishou_ninsu_${DAY} |
+      awk '{print $0,"1"}' > $tmp-ninsuu_${DAY}_asa
+    else
+      cat $tmp-nyuukyosha_suu_${DAY} |
+      awk '{print $0,$NF,"1"}'       > $tmp-ninsuu_${DAY}_hiru
+    fi
+  
+      cat $tmp-ninsuu_${DAY}_asa |
+      delf NF                    |
+      awk '{print $0,"2"}' > $tmp-ninsuu_${DAY}_hiru
+  
+      cat $tmp-ninsuu_${DAY}_asa |
+      delf NF                    |
+      awk '{print $0,"3"}' > $tmp-ninsuu_${DAY}_yoru
+  
+      cat $tmp-ninsuu_${DAY}*    |
+      self 1 2 NF 3 4            |
+      LANG=C sort                > $tmp-ninsuu_${DAY}_all
+    # 1:日付 2:施設ID 3:食事（朝昼夜）4:入居者数 5:対象者人数
+  
+  
+      loopj num=1/3 $tmp-ninsuu_${DAY}_all $tmp-shokuji_suu_${DAY} > $tmp-ninsuu_shokuji_${DAY}
+    # 1:日付 2:施設ID 3:食事（朝昼夜）4:入居者数 5:対象者人数 6:食事数量
+  
+  #    cat $tmp-ninsuu_shokuji_${DAY}_before   |
+  #    awk '{print "@",$2,"計",$4,$5,$6}'      |
+  #    sm2 1 3 4 6                             |
+  #    cat $tmp-ninsuu_shokuji_${DAY}_before - > $tmp-ninsuu_shokuji_${DAY} 
+  
+  
+    #-------------------
+    # 喫食率
+    #-------------------
+      # 目標すうち
+      awk '$2=="'${Tateya}'"&&$5<="'${DAY}'"&&$6>="'${DAY}'"&&$(NF-2)!="9"' /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU |
+      self 1 3 4          > $tmp-mokuhyou_${DAY}
+  # 1:施設ID 2:食事 3:目標％
+  
+      cat $tmp-ninsuu_shokuji_${DAY} |
+      lcalc '$6 / $5 * 100'          |
+      marume 1.1      > $tmp-kisshokuritsu_${DAY}
+  
+      ycat $tmp-ninsuu_shokuji_${DAY} $tmp-kisshokuritsu_${DAY} |
+      cjoin2 +"0" key=2/3 $tmp-mokuhyou_${DAY} -                 > $tmp-${DAY}_kisshokudata_result
+      # 1:日付       2:施設ID   3:食事（朝昼夜） 4:目標 5:入居者数
+      # 6:対象者人数 7:食事数量 8:喫食率
+      cat $tmp-${DAY}_kisshokudata_result                |
+      awk '{print $0,$NF"%",$4<=$NF?"gold":"@"}'         |
+      self 1/3 5/NF-3 NF-1 NF                    >> $tmp-kisshokudata_result
+      # 1:日付     2:施設ID 3:食事（朝昼夜 4:入居者数 5:対象者人数
+      # 6:食事数量 7:喫食率 8:色
+
+  # 日付が今日より後だったら、対象者数～喫食率まで全て0
+  else
+
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+  awk '$1!~/^1/&&$(NF-2)!="9"{print $1}'          > $tmp-shisetsu
+  # 1:施設ID
+    for i in $(seq 1 3) ; do
+     cat $tmp-shisetsu |
+     awk '{print "'${DAY}'",$1,"'${i}'","0","0","0","0.0%","@"}' >> $tmp-kisshokudata_result
+      # 1:日付     2:施設ID 3:食事（朝昼夜 4:入居者数 5:対象者人数
+      # 6:食事数量 7:喫食率 8:色
+    done
+  fi
+done
+
+  # 合計行
+   cat $tmp-kisshokudata_result         |
+   awk '{print "計",$2,$3,$4,$5,$6}'    |
+  # 1:"計"     2:施設ID  3:@  4:入居者数 5:対象者人数
+  # 6:食事数量
+   LANG=C sort                          |
+   sm2 1 3 4 6                          > $tmp-goukei
+
+  # 合計喫食率計算用目標数値
+  awk '$2=="'${Tateya}'"&&$5<="'${TaishouNengetsu}'""31"&&$6>="'${TaishouNengetsu}'""01"&&$(NF-2)!="9"' /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU      |
+  LANG=C sort             |
+  self 1 3 4              |
+  getlast 1 2             > $tmp-mokuhyou
+ 
+  cat $tmp-goukei         |
+  lcalc '$6 / $5 * 100'   |
+  marume 1.1              > $tmp-goukei_kisshokuritsu
+   
+  ycat $tmp-goukei $tmp-goukei_kisshokuritsu |
+  cjoin2 +"0" key=2/3 $tmp-mokuhyou -        |
+  awk '{print $0,$NF"%",$4<=$NF?"gold":"@"}' |
+  self 1/3 5/NF-3 NF-1 NF                    |       
+
+   cat $tmp-kisshokudata_result - |
+   LANG=C sort                    | comma 4 5 6 > $tmp-data
+
+#cp $tmp-* /home/hands/work/okuda
+
+cat $tmp-data
+  # 1:日付 2:施設ID 3:食事（朝昼夜）4:入居者数 5:対象者人数 6:食事数量 7:喫食率
+  # 8:色
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,112 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_IKKATSU.DISPLAY : 介護実績一括登録.DISPLAY
+#
+# Usage : KAIGOJISSEKI_IKKATSU.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# eval
+eval $(name-source ${namefile})
+
+#--------------------------------------------------------------
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+awk '$(NF-2)!=9' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME        |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2 3                                                   > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9==1'                                                  |
+awk '$7<="'${hd_sakuseibi}'" && $8>="'${hd_sakuseibi}'"'                   > $tmp-riyosha_status
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 利用者名の取得
+cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+awk '$3=="'${floor}'" && $4=="'${unit}'" && $6!="'${riyosha_name}'"'  |
+self 6 5                                                           |
+# 1:利用者ID 2:居室
+LANG=C sort -k1,1                                                |
+join1 key=1 $tmp-riyosha_master                                   |
+# 1:利用者ID 2:利用者名 3:かな 4:居室
+LANG=C sort -k4,4                                      |
+awk '{print $1,$4"　"$2}'        > ${tmp}-riyosha_name
+
+cat ${searchfile}                                                 |
+yarr                                                              |
+sed 's/ /+++/g'                                                   > $tmp-search_id
+search_id=$(cat $tmp-search_id)
+
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###SEARCH_ID### ${search_id}
+###FLOOR### ${floor}
+###UNIT### ${unit}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+# HTMLの作成
+cat ${html_dir}/KAIGOJISSEKI_IKKATSU_TOUROKU.html   |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-riyosha_name |
+#mojihame -l###moushiokuri_koumoku### - ${tmp}-moushiokuri_koumoku |
+calsed -f ${tmp}-calsed - 
+
+rm -f ${tmp}-*
+exit 0
+

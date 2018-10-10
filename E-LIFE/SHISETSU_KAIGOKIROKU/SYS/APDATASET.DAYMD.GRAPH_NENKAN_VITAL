@@ -1,0 +1,155 @@
+#!/bin/bash
+#
+# APDATASET.DAYMD.GRAPH_NENKAN_VITAL　(年間バイタルグラフのPOMPA更新)
+#
+# Usage:APDATASET.DAYMD.GRAPH_NENKAN_VITAL
+#
+# Written By Aoyagi (HandsLab .Inc) :
+#
+
+# 設定ファイ読込 #########################################################################
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#}}}Functions#############################################################################
+upcnt "$HOSTNAME $(basename ${0}) START $(date +%Y%m%d%H%M%S)"
+
+
+# エラー終了  ############################################################################
+function error_exit {
+  touch ${semaphore_dir}/$(basename ${0}).${HOSTNAME}.ERROR.${today}
+  rm -f ${tmp}-*
+  exit 1
+}
+
+
+# 起動時に入力がない場合当日を変数todayに設定
+[ -n "$(echo "${1}" | awk --re-interval '$1 ~ /[0-9]{8}/')" ] && today="${1}" || today="$(date "+%Y%m%d")"
+
+
+# 変数・ディレクトリ設定 #################################################################
+yesterday=$(mdate $today/-1)
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+input_dir="${app_dir}/INPUT"
+tmp="/var/tmp/${$}"
+semaphore_dir="${home_dir}/SEMAPHORE"
+meisai_dir="${app_dir}/MEISAI"
+rireki_dir="${app_dir}/RIREKI"
+kanri_dir="${app_dir}/KANRI"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+
+today_day=$(echo ${today} | self 1.7.2)
+if [ ${today_day} -ge 6 ];then
+ kongetu=$(echo ${today} | self 1.1.6)
+else
+ kari_getu=$(echo ${today} | self 1.1.6)
+ kongetu=$(mdate ${kari_getu}m/-1)
+fi
+
+
+# 前日までのINPUTデータで更新する月を決める #####################################################
+find ${input_dir}/${yesterday} -maxdepth 1 -type f -name "KAIGOJISSEKI_*" > ${tmp}-yesterday_input_data
+[ ${?} -eq 0 ] || error_exit
+
+# INPUTディレクトリにファイルがあればINPUTデータを呼び出す
+if [ "$(gyo ${tmp}-yesterday_input_data)" -ne 0 ];then
+  # リストを読み込んでまわす
+  cat ${tmp}-yesterday_input_data                |
+  while read inputdata ;do
+    cat ${inputdata}
+  done
+else
+  :
+fi                                               > ${tmp}-input
+cat ${tmp}-input                                 |
+self 2                                           |
+awk '{print substr($1,1,6)}'                     |
+LANG=C sort -k1,1n                               |
+uniq                                             > ${tmp}-input_month
+
+# POMPAを更新 #####################################################
+target_file="${pompa_dir}/KAIGOJISSEKI_GRAPH"
+lock_file="${target_file}.LOCK"
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました。"
+
+cat ${tmp}-input_month               |
+while read month ;do
+    cat ${pompa_dir}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL  |
+    # 1:riyosha 2:nengetsu 3:taion 4:ketsu_ue 5:ketsu_shita 6:myakuhaku 7:kokyu 8:sat 9:taijyu 10:time 11:shoyotime 12:biko 13:tourokuday 13:ID
+    sed 's/_/0/g'                                                  |
+    LANG=C sort -k1,1n                                             > ${tmp}-original
+
+    # 体温
+    cat ${tmp}-original                                            |
+    self 1 3                                                       |
+    # 1:riyosha 2:taion
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-taion
+
+    # 血圧上
+    cat ${tmp}-original                                            |
+    self 1 4                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-ketsu_ue
+
+    # 血圧下
+    cat ${tmp}-original                                            |
+    self 1 5                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-ketsu_shita
+
+    # 脈拍
+    cat ${tmp}-original                                            |
+    self 1 6                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-myakuhaku
+
+    # 呼吸
+    cat ${tmp}-original                                            |
+    self 1 7                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-kokyu
+
+    # sat
+    cat ${tmp}-original                                            |
+    self 1 8                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-sat
+
+    # 体重
+    cat ${tmp}-original                                            |
+    self 1 9                                                       |
+    # 1:riyosha 2:ketsu_ue
+    LANG=C sort -k1,1n -k2,2n                                      |
+    getlast 1 1                                                    > ${tmp}-taijyu
+
+    cat ${tmp}-original                                            |
+    # 1:riyosha 2:nengetsu 3:taion 4:ketsu_ue 5:ketsu_shita 6:myakuhaku 7:kokyu 8:sat 9:taijyu 10:time 11:shoyotime 12:biko 13:tourokuday 13:ID
+    self 1                                                         |
+    loopj num=1 ${tmp}-taion ${tmp}-ketsu_ue ${tmp}-ketsu_shita ${tmp}-myakuhaku ${tmp}-kokyu ${tmp}-sat ${tmp}-taijyu |
+    awk '{print $1,"'${month}'",$2,$3,$4,$5,$6,$7,$8}'             > ${tmp}-month_data
+    # 1:利用者ID 2:年月 3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+    mv ${tmp}-month_data ${pompa_dir}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL_MONTHLY
+done
+
+# ロックを解除
+rm -f ${lock_file}
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 終了 ######################################################################
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,292 @@
+#!/bin/bash
+#
+# FB_SAKUSEI.DISPLAY :　ファームバンキング作成
+#
+# Written by aoyagi
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/FB_SAKUSEI.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+search_result=${3}
+make_result=${4}
+
+# 変数
+eval $(name-source ${namefile})
+if [ \( ! -n "${MODE}" \) -o \( "${MODE}" = "_" \) ] ; then
+  MODE="init"
+fi
+this_year="$(date +%Y)"
+if [ -n $year -a $year != "_" ];then
+  :
+else
+  year=$this_year
+fi
+this_month="$(date +%Y%m)"
+last_month=$(mdate ${this_month}m/-1 | awk '{print substr($1,5,2)}')
+if [ -n $month -a $month != "_" ];then
+  :
+else
+  month=$last_month
+fi
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+if [ -z ${make_result} ];then
+  FILE_NAME="null"
+else
+  if [ "${MODE}" = "excel" -o "${MODE}" = "checklist" ];then
+    file=$(cat ${make_result})
+    FILE_NAME="\"/E-LIFE/KEIRI/DOWNLOAD/${file}\""
+  else
+    FILE_NAME="null"
+  fi
+fi
+
+
+#-----------------------------------------------------------
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# テーブル作成
+
+# 年月テーブル(当月確定ファイルがある年を取得)
+awk '$4!="9"' ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+cjoin0 key=3 <(echo "2")    |
+self 2.1.4                  |
+self 1 1                    |
+LANG=C sort -u              |
+awk '{if($1=="'${year}'")
+        {$3="selected"};
+      print}' -             > ${tmp}-year_select
+[ ! -s ${tmp}-year_select ] && echo "$(date +%Y) $(date +%Y)" > ${tmp}-year_select
+seq -w 1 12                |
+tarr                       |
+self 1 1                   |
+awk '{if($1=="'${month}'")
+        {$3="selected"};
+      print}' -            > ${tmp}-month_select
+
+# 引き落とし日(固定なのかもしれないので27日入れておく)
+HIKIOTOSHI_DATE="27"
+#-----------------------------------------------------------
+
+# 委託者番号
+awk '$(NF-2)!=9' /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_FACT  | self 3 3 > $tmp-shisetsu_itaku
+awk '$(NF-2)!=9' /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_ITAKUSHABANGOU  | self 2 2 > $tmp-jigyosho_itaku
+cat $tmp-shisetsu_itaku $tmp-jigyosho_itaku |
+LANG=C sort -u     |
+awk '{print $0,"'${itakushaNo}'"}' |
+awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}' > $tmp-itakushaNo
+
+
+#-----------------------------------------------------------
+# MODEによる処理分岐
+cat <<- FIN > $tmp-RYAKUGO
+0001 AOⅡ
+0002 UT
+0003 CM
+0004 AZ
+0005 AO
+0006 SD
+1004 YK
+1005 BJ
+_ 施設外
+FIN
+
+case "${MODE}" in
+  init )
+    : > ${tmp}-disp_data
+    : > $tmp-output_shisetsu
+  ;;
+  kensaku  | excel | checklist | riyosha_sort | kouza_sort)
+    if [ ! -s ${search_result} ] ; then
+	cat <<- FIN > ${tmp}-alert
+	<script>
+	  alert('選択された条件のファームバンキングデータがありません。');
+	</script>
+	FIN
+      : > ${tmp}-disp_data
+      : > $tmp-output_shisetsu
+    else
+      cp -p ${search_result} ${tmp}-disp_data
+      # 1:行の色         2:居室番号   3:入居者ID        4:入居者名          5:処理月
+      # 6:請求ステータス 7:金額税込み 8:更新時間        9:金融機関コード    10:金融機関名
+      # 11:支店コード    12:支店名    13:口座種類       14:口座番号         15:名義人
+      # 16:請求先        17:備考      18:FB作成disabled 19:チェックボックス
+
+      cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo} |
+      awk '$5=="_"' |
+      self 3 | LANG=C sort -u > $tmp-totiaezu_shisestu
+
+      awk '$2=="'${itakushaNo}'"&&$(NF-2)!=9{print $1}' /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_ITAKUSHABANGOU |
+      cat $tmp-totiaezu_shisestu -   |
+      LANG=C sort                    |
+      join1 key=1 $tmp-RYAKUGO      |
+      self 2 > $tmp-output_shisetsu
+    fi
+  ;;
+
+  make_data )
+    # FB作成結果ファイル${make_result}
+    # 1:OK/NG 2:FBファイル名/エラーメッセージ
+
+    # 結果に応じて分岐
+    result="$(self 1 ${make_result})"
+    if [ "${result}" = "ok" ] ; then
+      # ok=ファイル名が入っている
+      filename="$(self 2 ${make_result})"
+	cat <<- FIN > ${tmp}-fb_txt_out
+	  <html>
+	    <head>
+	      <meta charset="UTF-8">
+	        <script type="text/javascript" language="Javascript">
+                  alert('作成が完了しました');
+	          window.open("/E-LIFE/KEIRI/DOWNLOAD/${filename}","dl_txt");
+                  search_func('kensaku');
+	        </script>
+	      </meta>
+	    </head>
+	  </html>
+	FIN
+    else
+      # ng=エラーメッセージが入っている
+	cat <<- FIN > ${tmp}-alert
+	<script>
+	  alert('$(self 2 ${make_result})');
+	</script>
+	FIN
+    fi
+  
+    # サーチ結果ファイル
+    if [ ! -s ${search_result} ] ; then
+      : > ${tmp}-disp_data
+      : > $tmp-output_shisetsu
+    else
+      cp -p ${search_result} ${tmp}-disp_data
+      cat ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo} |
+      self 3 | LANG=C sort -u > $tmp-totiaezu_shisestu
+
+      awk '$2=="'${itakushaNo}'"&&$(NF-2)!=9{print $1}' /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_ITAKUSHABANGOU |
+      cat $tmp-totiaezu_shisestu -   |
+      LANG=C sort                  |
+      join1 key=1 $tmp-RYAKUGO     |
+      self 2 > $tmp-output_shisetsu
+    fi
+  ;;
+esac
+#-----------------------------------------------------------
+echo "施設を選択"                              |
+cat - $tmp-output_shisetsu                     > $tmp-output_Shisetsu
+#-----------------------------------------------------------
+# calsed
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE4### active
+###LI_NYUUKYOSHASEIKYU8### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###SELECT_SHISETSU### $select_shisetsu
+###HIKIOTOSHI_DATE### ${HIKIOTOSHI_DATE}
+###FILE_NAME### ${FILE_NAME}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+#-----------------------------------------------------------
+
+#-----------------------------------------------------------
+# html作成
+
+cat ${html_dir}/FB_SAKUSEI1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/FB_SAKUSEI2.html   |
+if [ "${MODE}" = "make_data" ] ; then
+  cat - ${tmp}-fb_txt_out
+else
+  cat -
+fi |
+if [ -e ${tmp}-alert ] ; then
+  cat - ${tmp}-alert
+else
+  cat -
+fi |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###USER__NAME### - ${tmp}-usermei                |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu  |
+mojihame -l"OUTPUT_SHISETSU" - ${tmp}-output_Shisetsu       |
+mojihame -l"shisetsu_select" - ${tmp}-shisetsu_select       |
+mojihame -l"itakusha_select" - ${tmp}-itakushaNo            |
+mojihame -l"year_select" - ${tmp}-year_select               |
+mojihame -l"month_select" - ${tmp}-month_select             |
+mojihame -l"disp_data" - ${tmp}-disp_data                   |
+calsed -f ${tmp}-calsed - 
+#-----------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0
+

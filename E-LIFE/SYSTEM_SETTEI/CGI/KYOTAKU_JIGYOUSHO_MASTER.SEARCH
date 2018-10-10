@@ -1,0 +1,197 @@
+#!/bin/bash
+#
+# KYOTAKU_JIGYOUSHO_MASTER.DISPLAY
+# 居宅訪問サービス事業所　表示用CGI
+#
+# Written by K.Aoyama :20131227
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER |
+LANG=C sort -k4,4                         |
+join1 key=4 ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE - |
+# 1:事業所ID                               2:事業者番号                  3:事業者名称                    4:サービス事業者タイプ            5:サービスグループ
+# 6:サービス事業者タイプ名                 7:事業者区分                  8:指定基準事業所区分            9:地域区分                        10:生活保護指定
+# 11:割引率                                12:施設等の区分               13:特別地域加算                 14:特定事業>所加算                15:中山間地域などの小規模事業所（地域）
+# 16:中山間地域などの小規模事業所（規模>） 17:日中の身体介護20分未満体制 18:サービス提供責任者体制の減算 19:同一建物に居住する利用者の減算 20:介護職員処遇改善加算
+# 21:緊急時訪問看護加>算                   22:特別管理体制               23:ターミナルケア体制           24:サービス提供体制強化加算       25:時間延長サービス体制
+# 26:個別機能訓練体制                      27:入浴介助体制               28:職員の欠員によ>る減算        29:栄養改善体制                   30:口腔機能向上体制
+# 31:若年性認知症利用（入所）者受入加算    32:機能訓練指導体制           33:夜間勤務条件基準             34:送迎体制                       35:ユニット型個室の有無
+# 36:ユニット型順個室の有無                37:従来型個室の有無           38:多床室の有無                 39:療養食加算                     40:ユニットケア体制
+# 41:看護体制加算                          42:夜勤職員配置加算           43:緊急短期入所体制確>保加算    44:運動機能向上加算               45:事業所評価加算（申出）の有無
+# 46:生活機能向上グループ活>動加算         47:24時間通報体制加算
+#--------------------------------------------------------------
+self 1 3 6           |
+# 1:事業所ID 2:事業者名称 3:サービス事業者タイプ名
+LANG=C sort -k1,1  > ${tmp}-jigyousha_master
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "事業者マスタ取得エラー"
+
+
+#--------------------------------------------------------------
+# 居宅事業者テーブルから取得
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER    |
+awk '$11!="9"'                                            |
+# 1:居宅事業所ID     2:居宅事業所名 3:電話番号  4:住所   5:口座金融機関
+# 6:口座金融機関支店 7:口座種類     8:口座番号  9:口座名 10:郵便番号
+# 11:有効フラグ      12:処理時刻    13:ユーザID
+LANG=C sort -k1,1                                         |
+delf NF-2/NF                                              >  $tmp-kyotaku_jigyousho_master
+
+# 居宅委託者テーブルから取得
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_ITAKUSHABANGOU    |
+awk '$11!="9"'                                            |
+# 1:居宅事業所ID 2:委託者番号 3:空き１     4:空き２   5:空き３
+# 6:空き４       7:空き５     8:有効フラグ 9:処理時刻 10:ユーザID
+LANG=C sort -k1,1                                         |
+self 1 2                                              >  $tmp-kyotaku_jigyousho_itakushabangou
+
+#--------------------------------------------------------------
+# 居宅事業所サービステーブルから取得
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER   |
+# 1:居宅事業所ID 2:事業所ID 3:サービスタイプ 4:有効フラグ 5:処理時刻
+# 6:ユーザID
+awk '$4!="9"'                                            |
+LANG=C sort -k1,2                                         |
+delf NF-2/NF                                             >  $tmp-kyotaku_jigyousho_service
+
+cp $tmp-kyotaku_jigyousho_service $work_dir/kyotaku_jigyousho_service
+
+cat $tmp-kyotaku_jigyousho_service                        |
+sm2 +count 1 1 2 NF                                      |
+rank                                                      |
+self 2 3 1                                                |
+LANG=C sort -k1,1                                         >  $tmp-kyotaku_service_num
+
+cp $tmp-kyotaku_service_num $work_dir/kyotaku_service_num
+
+cp ${tmp}-jigyousha_master $work_dir/jigyousha_master
+
+cp $tmp-kyotaku_jigyousho_master $work_dir/kyotaku_jigyousho_master
+
+cat $tmp-kyotaku_jigyousho_master                         |
+tee $tmp-chouhyou-output                                  |
+join1 key=1 - $tmp-kyotaku_jigyousho_service              |
+# 1:居宅事業所ID     2:居宅事業所名    3:電話番号 4:住所   5:口座金融機関
+# 6:口座金融機関支店 7:口座種類        8:口座番号 9:口座名 10:郵便番号
+# 11:事業所ID        12:サービスタイプ
+tee $tmp-chouhyou_list                                  |
+LANG=C sort -k11,11                                         |
+join1 key=11 ${tmp}-jigyousha_master -                     |
+# 1:居宅事業所ID     2:居宅事業所名          3:電話番号        4:住所   5:口座金融機関
+# 6:口座金融機関支店 7:口座種類              8:口座番号        9:口座名 10:事業所ID
+# 11:#事業者名称     12:サービス事業者タイプ 13:サービスタイプ
+LANG=C sort -k1,1                                         |
+join1 key=1 $tmp-kyotaku_service_num -                    |
+# 1:居宅事業所ID    2:サービス数   3:順番             4:居宅事業所名 5:電話番号
+# 6:住所            7:口座金融機関 8:口座金融機関支店 9:口座種類     10:口座番号
+# 11:口座名         12:郵便番号    13:事業所ID        14:事業者名称  15:サービス事業者タイプ
+# 16:サービスタイプ
+self 3 1 2 4/NF                                           |
+# 1:順番            2:居宅事業所ID 3:サービス数       4:居宅事業所名 5:電話番号
+# 6:住所            7:口座金融機関 8:口座金融機関支店 9:口座種類     10:口座番号
+# 11:口座名         12:郵便番号    13:事業所ID        14:事業者名称  15:サービス事業者タイプ
+# 16:サービスタイプ
+self 1/6 14 15                                            |
+# 1:順番 2:居宅事業所ID 3:サービス数             4:居宅事業所名 5:電話番号
+# 6:住所 7:事業者名称   8:サービス事業者タイプ名
+rank ref=1                                                |
+tee $work_dir/tmptmp1                                     |
+awk '{if($1!="1"){$10="<tr　class=\"hoverjigyousho\">";}else{$10="　";};print $0}' |
+LANG=C sort -k2,2 -k1,1                                   |
+delf 1                                                    |
+# 1:順番 2:居宅事業所ID 3:サービス数             4:居宅事業所名 5:電話番号
+# 6:住所 7:事業者名称   8:サービス事業者タイプ名 9:改行先頭
+self 1/4 6 5 9 7 8                                        |
+awk '{print "ml",$0}'                  > $tmp-kyotaku_output
+
+cp $tmp-kyotaku_output $work_dir/kyotaku_output
+
+# 居宅レコード情報変更（ＩＤがセットされている場合）時の処理
+: > $tmp-chouhyou_out
+: > $tmp-chouhyou_list_out
+: > $tmp-itakusha_out
+[ -z "${KyotakuJigyoushoID}" -o "${KyotakuJigyoushoID}" = "_" ] || {
+cat <<- FIN > $tmp-header
+KyotakuJigyoushoID
+jigroupname
+telno
+address
+slKinyuKikan
+slKinyuShiten
+KouzaShurui
+KouzaNumber
+KouzaName
+postno
+FIN
+  cat ${tmp}-header |
+  yarr              > ${tmp}-header_yoko
+
+  cat $tmp-chouhyou-output                                |
+  awk '$1=="'${KyotakuJigyoushoID}'"'                     |
+  cat ${tmp}-header_yoko -                                |
+  tateyoko                                                |
+  awk '{print "tt",$0}'                   > $tmp-chouhyou_out
+  cat $tmp-chouhyou_list                                  |
+  awk '$1=="'${KyotakuJigyoushoID}'"{print "tl", $11,$12}' > $tmp-chouhyou_list_out
+
+cat <<- FIN > $tmp-header_itakusha
+ItakushaBangou
+FIN
+  cat ${tmp}-header_itakusha |
+  yarr              > ${tmp}-header_itakusha_yoko
+
+  cat $tmp-kyotaku_jigyousho_itakushabangou               |
+  awk '$1=="'${KyotakuJigyoushoID}'"'                     |
+  self 2                                                  |
+  cat ${tmp}-header_itakusha_yoko -                        |
+  tateyoko                                                |
+  awk '{print "tt",$0}'                   > $tmp-itakusha_out
+
+} 
+# 出力
+cat ${tmp}-chouhyou_out $tmp-itakusha_out $tmp-chouhyou_list_out ${tmp}-kyotaku_output
+
+
+## 終了
+rm -f $tmp-*
+exit 0

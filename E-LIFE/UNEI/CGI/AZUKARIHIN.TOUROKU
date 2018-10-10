@@ -1,0 +1,177 @@
+#!/bin/bash
+#
+# AZUKARIHIN.TOUROKU :
+#
+# Usage : AZUKARIHIN.TOUROKU
+#
+# Written by aoyagi
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/AZUKARIHIN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+cp $namedata ${work}/namefile
+
+# デフォルト値セット
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+if [ ${MODE} = "delete" ];then
+  FLAG="9"
+else
+  FLAG="1"
+fi
+
+if [ $MODE = "new_touroku" ];then
+  if [ -e ${idkanri_dir}/AZUKARIHIN ];then
+    ShuseiId=$(getno -s 1 ${idkanri_dir}/AZUKARIHIN)
+    echo $ShuseiId > $tmp-new_num
+    mv $tmp-new_num ${idkanri_dir}/AZUKARIHIN
+  else
+    ShuseiId="000001"
+    echo $ShuseiId > $tmp-new_num
+    mv $tmp-new_num ${idkanri_dir}/AZUKARIHIN
+  fi
+else
+  :
+fi
+# データ作成
+echo "$ShuseiId $input_azukari_date $input_azukari_time $input_riyosha_floor $input_riyosha_room $input_riyosha_id $input_azukari_select $input_number $input_uketsuke_select $input_return_date $input_return_time $input_restraunt_select $input_biko $FLAG $sdaytime $userid" > $tmp-koushin_input
+# 1:入退出管理id 2:預り日            3:預り時間 4:フロア      5:居室
+# 6:入居者id     7:預り項目番号      8:数量     9:対応者      10:戻り日
+# 11:戻り時間    12:フロント担当者id 13:備考    14:有効フラグ 15:更新時間
+# 16:userid
+
+if [ $input_return_date != "_" ];then
+  cat $tmp-koushin_input
+else
+  :
+fi > $tmp-koushin_monthly_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+AZUKARIHIN AZUKARIHIN
+FIN
+
+input_detail_dir=AZUKARIHIN/${shisetsu}
+month=$(echo $input_azukari_date | awk '{print substr($1,1,4)substr($1,6,2)}')
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+koushin AZUKARIHIN_MI_SHORI 1 15 16 ${pompa_dir}/AZUKARIHIN/${shisetsu} ${input_dir}
+koushin_monthly AZUKARIHIN_MONTH 1 15 16 ${pompa_dir}/AZUKARIHIN/${shisetsu}/$month ${input_dir}
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 3 -l 10 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_exit "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  cat ${pompa_dir_name}/${file_name} |
+  awk '{if($1=="'${ShuseiId}'"){$(NF-2)=9};print}' |
+  cat - $tmp-${input_name}_input |
+  LANG=C sort -k1,1 -k15,15 |
+  getlast 1 1                |
+  if [ $file_name = "AZUKARIHIN_MI_SHORI" ];then
+    awk '$10=="_"'
+  else
+    cat -
+  fi                          > $tmp-pompa_new
+  mv -f $tmp-pompa_new ${pompa_dir_name}/${file_name}
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+done
+#--------------------------------------------------------------
+# 列数チェック
+[ $(retu $tmp-pompa_new) -ne 15 ] && : > $tmp-err
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

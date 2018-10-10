@@ -1,0 +1,266 @@
+#!/bin/bash
+#
+# TATEKAEKIN_MASTER.TOUROKU : 介護実績マスタ登録用CGI
+#
+# Usage : TATEKAEKIN_MASTER.TOUROKU ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+kyoutsu_dir=${home_dir}/KYOUTSU/HTML
+apptbl_dir=${home_dir}/TATEKAEKIN/TBL
+test_tbl_dir=${home_dir}/TEST/TBL
+test_pompa_dir=${home_dir}/TEST/POMPA
+current_time="$(date "+%Y%m%d%H%M%S")"
+work="/home/hands/E-LIFE/SYSTEM_SETTEI/WORK"
+
+namefile=${1}
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+cp ${tmp}-name namefile
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+mkdir ${apptbl_dir}/${shisetsu}/BKUP
+# 処理を分岐してデータを整形
+case ${where} in
+  # 入金項目
+  NYUKIN_KOUMOKU )
+    echo ${NYUKIN_ID}      |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-nyukin_id
+    echo ${NYUKIN_KOUMOKU} |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-nyukin_koumoku
+    echo ${NYUKIN_NUMBER}  |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-nyukin_number
+
+    ycat $tmp-nyukin_id $tmp-nyukin_koumoku $tmp-nyukin_number |
+    awk '{print $0,"'${current_time}'","'${userid}'"}'         > $tmp-nyukin_moto
+
+    # 追加があったら後で処理
+    awk '$1!="new"' $tmp-nyukin_moto                           > $tmp-nyukin
+
+    awk '$1=="new"' $tmp-nyukin_moto                           > $tmp-tuika_nyukin
+    if [ "$(gyo $tmp-tuika_nyukin)" = 0 ];then
+      :
+    else
+      # idを取得
+      NEW_COMER=$(gyo $tmp-tuika_nyukin)
+      cat ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU |
+      tail -n1 | self 1                            > $tmp-last_id
+      getno -s ${NEW_COMER} $tmp-last_id           > $tmp-new_id
+      ycat $tmp-new_id $tmp-tuika_nyukin           |
+      delf 2                                       > $tmp-new_face
+    fi
+    cp $tmp-nyukin ${work}/nyukin
+    # 一応バックアップ
+    cp -p ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU ${apptbl_dir}/${shisetsu}/BKUP/NYUKIN_KOUMOKU.${userid}.${current_time}
+    # データ更新
+    lock_file=${apptbl_dir}/${shisetsu}/TATEKAEKIN_MASTER.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    if [ -e ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU ];then
+      cat $tmp-nyukin | LANG=C sort -k1,1                        > $tmp-nyukin_sort
+      # 削除された行があったら非表示に変更する
+      cat ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU               |
+      LANG=C sort -k1,1                                          |
+      join1 +ng key=1 $tmp-nyukin_sort         2> $tmp-nyukin_del  > $tmp-nyukin_nokosu
+cp $tmp-nyukin_del ${work}/deldel
+cp $tmp-nyukin_nokosu ${work}/nokosu
+      cat $tmp-nyukin_del                                        |
+      awk '{$3="0";$4="'${current_time}'";$5="'${userid}'";print}' > $tmp-nyukin_del2
+      cat $tmp-nyukin_nokosu                                     |
+      self 1 2 3 4 5                                             |
+      cat - $tmp-nyukin_del2                                     |
+      LANG=C sort -k1,1n                                         |
+      cat ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU -             |
+tee ${work}/buta |
+      LANG=C sort -k1,1n -k4,4n                                  |
+      getlast 1 1                                                > $tmp-nyukin_new
+      if [ -e $tmp-new_face ];then
+        cat $tmp-nyukin_new $tmp-new_face
+      else
+        cat $tmp-nyukin_new
+      fi                                                         > $tmp-nyukin_new_new
+      mv $tmp-nyukin_new_new ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU
+    else
+      if [ -e $tmp-new_face ];then
+        cat $tmp-nyukin $tmp-new_face
+      else
+        cat $tmp-nyukin
+      fi                                                         > $tmp-nyukin_new_new
+      cp -p ${tmp}-nyukin_new_new ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU
+    fi
+    # ロック解除
+    rm -f ${lock_file}
+    unset lock_file
+    cat ${tmp}-nyukin
+  ;;
+  # 出金項目
+  SHUKKIN_KOUMOKU )
+    echo ${SHUKKIN_ID}      |
+    sed 's/,/ /g'           |
+    tarr                    > ${tmp}-shukkin_id
+    echo ${SHUKKIN_KOUMOKU} |
+    sed 's/,/ /g'           |
+    tarr                    > ${tmp}-shukkin_koumoku
+    echo ${SHUKKIN_NUMBER}  |
+    sed 's/,/ /g'           |
+    tarr                    > ${tmp}-shukkin_number
+
+    ycat $tmp-shukkin_id $tmp-shukkin_koumoku $tmp-shukkin_number |
+    awk '{print $0,"'${current_time}'","'${userid}'"}'            > $tmp-shukkin_moto
+
+    # 追加があったら後で処理
+    awk '$1!="new"' $tmp-shukkin_moto                             > $tmp-shukkin
+    awk '$1=="new"' $tmp-shukkin_moto                             > $tmp-tuika_shukkin
+    if [ "$(gyo $tmp-tuika_shukkin)" = 0 ];then
+      :
+    else
+      # idを取得
+      NEW_SOMER=$(gyo $tmp-tuika_shukkin)
+      cat ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU  |
+      tail -n1 | self 1                              > $tmp-last_sid
+      getno -s ${NEW_SOMER} $tmp-last_sid            > $tmp-new_sid
+      ycat $tmp-new_sid $tmp-tuika_shukkin           |
+      delf 2                                         > $tmp-new_Sace
+    fi
+
+    # 一応バックアップ
+    cp -p ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU ${apptbl_dir}/${shisetsu}/BKUP/SHUKKIN_KOUMOKU.${userid}.${current_time}
+    # データ更新
+    lock_file=${apptbl_dir}/${shisetsu}/TATEKAEKIN_MASTER.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    if [ -e ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU ];then
+      cat $tmp-shukkin | LANG=C sort -k1,1                   > $tmp-shukkin_sort
+      # 削除された行があったら非表示にする
+      cat ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU          |
+      LANG=C sort -k1,1                                      |
+      join1 +ng key=1 $tmp-shukkin_sort    2> $tmp-shukkin_del    > $tmp-shukkin_nokosu
+
+      cat $tmp-shukkin_del                                   |
+      awk '{$3="0";$4="'${current_time}'";$5="'${userid}'";print}' > $tmp-shukkin_del2
+      cat $tmp-shukkin_nokosu                                |
+      self 1 2 3 4 5                                         |
+      cat - $tmp-shukkin_del2                                |
+      LANG=C sort -k1,1n -k4,4n                              |
+      getlast 1 1                                            > $tmp-shukkin_new
+      if [ -e $tmp-new_Sace ];then
+        cat $tmp-shukkin_new $tmp-new_Sace
+      else
+        cat $tmp-shukkin_new
+      fi                                                     > $tmp-shukkin_new_new
+      mv $tmp-shukkin_new_new ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU
+    else
+      if [ -e $tmp-new_Sace ];then
+        cat $tmp-shukkin $tmp-new_Sace
+      else
+        cat $tmp-shukkin
+      fi                                                     > $tmp-shukkin_new_new
+      cp -p $tmp-shukkin_new_new ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU
+    fi
+    # ロック解除
+    rm -f ${lock_file}
+    unset lock_file
+    cat ${tmp}-shukkin
+  ;;
+  # 立替対象
+  TATEKAE_TAISHO )
+    echo ${TATEKAE_ID}     |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-taisho_id
+    echo ${TATEKAE_TAISHO} |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-taisho_koumoku
+    echo ${TATEKAE_NUMBER} |
+    sed 's/,/ /g'          |
+    tarr                   > ${tmp}-taisho_number
+
+    ycat $tmp-taisho_id $tmp-taisho_koumoku $tmp-taisho_number  |
+    awk '{print $0,"'${current_time}'","'${userid}'"}'          > $tmp-taisho_moto
+
+    # 追加があったら別に処理
+    awk '$1!="new"' $tmp-taisho_moto                            > $tmp-taisho
+    awk '$1=="new"' $tmp-taisho_moto                            > $tmp-tuika_taisho
+    if [ "$(gyo $tmp-tuika_taisho)" = 0 ];then
+      :
+    else
+      # idを取得
+      NEW_TOMER="$(gyo $tmp-tuika_taisho)"
+      cat ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO              |
+      tail -n1 | self 1                                         > $tmp-last_tid
+      getno -s ${NEW_TOMER} $tmp-last_tid                       > $tmp-new_tid
+      ycat $tmp-new_tid $tmp-tuika_taisho                       |
+      delf 2                                                    > $tmp-new_tace
+    fi
+
+    # 一応バックアップ
+    cp -p ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO ${apptbl_dir}/${shisetsu}/BKUP/TATEKAE_TAISHO.${userid}.${current_time}
+    # データ更新
+    lock_file=${apptbl_dir}/${shisetsu}/TATEKAEKIN_MASTER.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    if [ -e ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO ];then
+      # 削除された行があったら非表示にする
+      cat $tmp-taisho | LANG=C sort -k1,1                       > $tmp-taisho_sort
+      cat ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO              |
+      LANG=C sort -k1,1                                         |
+      join1 +ng key=1 $tmp-taisho_sort     2> $tmp-taisho_del        > $tmp-taisho_nokosu
+      cat $tmp-taisho_del                                       |
+      awk '{$3="0";$4="'${current_time}'";$5="'${userid}'";print}'  > $tmp-taisho_del2
+      cat $tmp-taisho_nokosu                                    |
+      self 1 2 3 4 5                                            |
+      cat - $tmp-taisho_del2                                    |
+      LANG=C sort -k1,1n -k4,4n                                 |
+      getlast 1 1                                               > $tmp-taisho_new
+      if [ -e $tmp-new_tace ];then
+        cat $tmp-taisho_new $tmp-new_tace
+      else
+        cat $tmp-taisho_new
+      fi                                                        > $tmp-taisho_new_new
+      mv $tmp-taisho_new_new ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO
+    else
+      if [ -e $tmp-new_tace ];then
+        cat $tmp-taisho $tmp-new_tace
+      else
+        cat $tmp-taisho
+      fi                                                        > $tmp-taisho_new_new
+      mv $tmp-taisho_new_new ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO
+    fi
+
+    # ロック解除
+    rm -f ${lock_file}
+    unset lock_file
+    cat ${tmp}-taisho
+  ;;
+esac                                        > ${tmp}-input_data
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+# INPUTに保存
+# ディレクトリ作成
+mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-input_data ${input_dir}/${today}/TATEKAEKIN_MASTER.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+cat ${tmp}-input_data
+# 終了
+rm -f $tmp-*
+
+exit 0

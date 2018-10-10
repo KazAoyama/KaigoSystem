@@ -1,0 +1,151 @@
+#!/bin/bash
+#
+# SHIEN_KEIKAKU2.DISPLAY
+# 支援計画票１　表示用CGI
+#
+# Written by K.Aoyama :20131208
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "${hdIkkatsuKijunDate}" -o "${hdIkkatsuKijunDate}" = "_" ] ; then
+  if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" ] ; then
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+  fi
+else
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    awk '$2<="'${hdIkkatsuKijunDate}'"'                          |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+fi
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明で>
+す"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+MokuhyouOneday
+MokuhyouOneyear
+Houshin
+Kaizen
+Iken
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_KEIKAKU2 |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+# 過去履歴よりデータを取得する場合（2014/08/11)）
+if [ -z "${hdKakoTaishouDate}" -o "${hdKakoTaishouDate}" = "_" ]; then 
+if [ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'
+fi
+else
+  awk '$2=="'${hdKakoTaishouDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+tee $tmp-result             |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1 2 NF-2/NF                |
+#--------------------------------------------------------------
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-shien2_base
+
+cp -p $tmp-result $work_dir/result_shien2
+
+# 課題リストデータ取得用対象日付
+awk '{print $2}' $tmp-result > $tmp-taishoudate
+
+cp -p $tmp-taishoudate $work_dir/taishoudate_shien
+
+#--------------------------------------------------------------
+# 課題リストデータファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                     |
+# "が入るとjson上おかしくなる
+sed 's/"//g'                |
+#--------------------------------------------------------------
+awk '{print "l",$0}'        > ${tmp}-shien2_mokuhyou
+
+
+# ケアプランデータを表示
+cat ${tmp}-shien2_base ${tmp}-shien2_mokuhyou
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>基本情報一覧</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap.css">
+
+    <link rel="stylesheet" type="text/css" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/font.css">
+    <link href='/css/fullcalendar.css' rel='stylesheet' />
+    <link href='/css/fullcalendar.print.css' rel='stylesheet' media='print' />
+    <link rel="stylesheet" href="/css/jquery-ui.css" />
+    <script src='/js/jquery-1.9.1.min.js'></script>
+    <script src='/js/jquery-ui-1.10.2.custom.min.js'></script>
+    <script src="/js/jquery-ui.js"></script>
+    <script src='/js/fullcalendar.js'></script>
+    <script src="/js/jquery.tablefix.js"></script>
+    <script>
+
+    window.onunload = function(){};
+    history.forward();
+    var message="";
+    this.window.name='oyawindow';
+  
+	$(document).ready(function() {
+
+      $(".send").click(function() {
+          $("button").each(function() {
+            $(this).attr("disabled", true);
+          });
+        });
+
+
+
+       $("#search").click(function(){
+          $("#MODE").attr({value:"search"});
+          var form = $("#KENSAKU_FORM");
+          form.attr({
+                target: "_top",
+                method: "post",
+                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+          });
+                form.submit();
+        });
+
+       $("#print").click(function(){
+          var koumoku = $('#KENSAKU_FORM [name=HyoujiKoumoku]:checked').val();
+          var koumoku = koumoku + "_print"
+          $("#MODE").attr({value:koumoku});
+          var form = $("#KENSAKU_FORM");
+          form.attr({
+                target: "hidden_frame",
+                method: "post",
+                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+          });
+                form.submit();
+        });
+
+
+// 20150830del QR Suzuki  ↓
+//       $("#qrprint").click(function(){
+//          var koumoku = $('#KENSAKU_FORM [name=HyoujiKoumoku]:checked').val()
+//          var koumoku = "qr_print"
+//          $("#MODE").attr({value:koumoku});
+//          var form = $("#KENSAKU_FORM");
+//          form.attr({
+//                target: "hidden_frame",
+//                method: "post",
+//                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+//          });
+//                form.submit();
+//        });
+//
+//       $("#qrcsv").click(function(){
+//          var koumoku = $('#KENSAKU_FORM [name=HyoujiKoumoku]:checked').val();//
+//          var koumoku = "qr_csv"
+//          $("#MODE").attr({value:koumoku});
+//          var form = $("#KENSAKU_FORM");
+//          form.attr({
+//                target: "hidden_frame",
+//                method: "post",
+//                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+//          });
+//                form.submit();
+//        });
+//
+// 20150830del QR Suzuki  ↑
+
+
+// 20150830add QR Suzuki  ↓
+
+
+       //QR印刷ボックスのクリックイベント（リスト表示）
+       $("#qrlist").click(function(){
+
+          //施設選択判定（全て、施設外、はNG）
+          if($("#Shisetsu option:selected").val() == "_" || $("#Shisetsu option:selected").val() == "00" ){
+             alert("「QR印刷」では施設名に「全て」、「施設外」は指定できません。");
+             $('#Shisetsu').focus();
+             return false;
+          }
+
+          //退去者は対象外
+          if($("#TaikyoshaHyouji option:selected").val() !="0"  ){
+             alert("「QR印刷」では検索対象に退去者を含めることはできません。");
+             $('#TaikyoshaHyouji').focus();
+             return false;
+          }
+
+
+
+
+          $("#MODE").attr({value:"qr_search"});
+          var form = $("#KENSAKU_FORM");
+          form.attr({
+                target: "_top",
+//                target: "hidden_frame",
+                method: "post",
+                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+          });
+          form.submit();
+       });
+
+       //全選択チェックボックスのクリックイベント
+       $("#qr_select_all").click(function(){
+        
+         //全選択チェックがされてたら全入居者にチェック
+         if($("#qr_select_all").prop("checked") == true ){
+           $(".qr_select").prop("checked",true);
+         }else{
+           $(".qr_select").prop("checked",false);
+         }
+
+       });
+
+       //QR印刷実行ボタン
+       $("#qrprint").click(function(){
+
+
+          //印刷開始位置の数字をチェック
+          var wnum = parseInt( $("#PrintPos").val());
+
+          //数値判定、範囲判定
+          if( isNaN(wnum) == true || wnum < 1  ||  wnum > 70 ){
+             alert("印刷開始位置には1～70の数字を指定してください。");
+             $('#PrintPos').focus();
+             return false;
+          }
+
+          var select_num = 0;
+
+          var qr_nyukyosha_Arr = new Array();
+
+          //一覧から選択状態の入居者を取得
+          $("#kojinjyouhou_qrcode tr").each(function () {
+ 
+            //チェック判定
+            if ($(this).children(".ListQrinsatsu").children(".qr_select").prop("checked") == true ){
+              qr_nyukyosha_Arr.push($(this).prop("id"));
+  
+              select_num = select_num + 1;
+            }
+
+          });
+
+          if(select_num < 1 ){
+             alert("QRコードを印刷するご入居者を選択してください。");
+             return false;
+          }
+
+          //選択した入居者のデータを送信用hiddenにセット
+          $( "#qr_nyukyosha_array").val(qr_nyukyosha_Arr);
+
+          $("#MODE").attr({value:"qr_print"});
+          var form = $("#KENSAKU_FORM");
+          form.attr({
+                target: "hidden_frame",
+                method: "post",
+                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+          });
+                form.submit();
+
+        });
+
+
+// 20150830add QR Suzuki  ↑
+
+       $("#clear").click(function(){
+          $("#MODE").attr({value:"init"});
+          var form = $("#KENSAKU_FORM");
+          form.attr({
+                target: "_top",
+                method: "post",
+                action: "KIHONJYOUHOU_ICHIRAN.CGI"
+          });
+                form.submit();
+        });
+
+		$.datepicker.setDefaults({
+			changeYear:true,
+			changeMonth:true,
+			yearRange:"c-130:c+1",
+			dateFormat: 'yy/mm/dd',
+	        dayNamesShort: ['日','月','火','水','木','金','土'],
+            dayNamesMin: ['日','月','火','水','木','金','土']
+        });
+
+		$(function(){
+			$("#KeiyakukaishibiFrom").datepicker();
+			$("#KeiyakukaishibiTo").datepicker();
+            });
+
+
+		function convert_wareki(year, setting){
+		    var result;
+		    if(setting === false){
+		        return year;
+		    } else if (year > 1988) {
+		        result = year - 1988;
+		        result = '平成 ' + result;
+		        return result;
+		    } else if (year > 1925) {
+		        result = year - 1925;
+		        result = '昭和 ' + result;
+		        return result;
+		    } else if (year > 1911) {
+		        result = y - 1911;
+		        result = '大正 ' + result;
+		        return result;
+		    } else if (year > 1867) {
+		        result = year - 1867;
+		        result = '明治 ' + result;
+		        return result;
+		    }
+		}
+
+$(function() {
+    var radio = $("input[name='HyoujiKoumoku']:checked").val();
+
+    if(radio=="mimoto"){
+      $('#kojinjyouhou_mimotohikiukenin_header').tablefix({height:390, width:1110,fixRows:1})
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+//        window.open("KOJINJYOUHOU_SHOUSAI_KIHON.CGI","shousai_kihon","width=1000,height=700,resizable=yes,scrollbars=yes");
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+       document.KENSAKU_FORM.target = "shousai_kihon";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KIHON.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    }
+
+// <<<<<<<<<<Aoyama Added (2015/09/04)
+    if(radio=="kihon"){
+      $('#kojinjyouhou_shousai_kihon_header').tablefix({height:390, width:1110,fixRows:1})
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+       document.KENSAKU_FORM.target = "shousai_kihon";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KIHON.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="fullkeiyaku") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_keiyaku";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KEIYAKU.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="riyouryou") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_riyouryou";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_RIYOURYOU.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="renrakusaki") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_riyouryou";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="kaigohoken") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_riyouryou";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="koza") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_riyouryou";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KOUZA.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else if (radio=="keiyakukin") {
+      $(".kojin").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+      $(".kojin").click(function(){
+        window.name="oyawindow";
+         var riyoushaid=  $(this).attr("id");
+         var shisetsutateya=  $(this).attr("name");
+         var kyoshitsu=  $(this).attr("value");
+         var shisetsuid= $(this).data('shisetsu');
+         var shisetsumei= $(this).data('shisetsumei');
+         var tateyaid= $(this).data('tateya');
+         var tateyamei= $(this).data('tateyamei');
+         var nyukyoshamei= $(this).data('nyukyoshamei');
+         var floor= $(this).data('floor');
+         var unitid= $(this).data('unit');
+         var unitmei= $(this).data('unitmei');
+         $("#MODE").attr({value:"init"});
+         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUID]").val(shisetsuid);
+         $("#KENSAKU_FORM [name=NYUUKYOSHISETSUNAME]").val(shisetsumei);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYAID]").val(tateyaid);
+         $("#KENSAKU_FORM [name=NYUUKYOTATEYANAME]").val(tateyamei);
+         $("#KENSAKU_FORM [name=NYUUKYOFLOOR]").val(floor);
+         $("#KENSAKU_FORM [name=UNITID]").val(unitid);
+         $("#KENSAKU_FORM [name=UNITNAME]").val(unitmei);
+         $("#KENSAKU_FORM [name=NYUUKYOKYOSHITSU]").val(kyoshitsu);
+         $("#KENSAKU_FORM [name=RIYOUSHANAME]").val(nyukyoshamei);
+       document.KENSAKU_FORM.target = "shousai_keiyaku";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KEIYAKU.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+       });
+    } else {
+    }
+    
+// >>>>>>>>>>Aoyama Added (2015/09/04)
+
+  });
+
+
+//      $(".kojin").hover(function(){
+//         this.style.backgroundColor = "lightblue";},
+//         function(){
+//         this.style.backgroundColor = "white";
+//    });
+
+//      $(".kojin").click(function(){
+//        window.open("KOJINJYOUHOU_SHOUSAI_KIHON.CGI","shousai_kihon","width=1000,height=700,resizable=yes,scrollbars=yes");
+//        window.name="oyawindow";
+//         var riyoushaid=  $(this).attr("id");
+//         var shisetsutateya=  $(this).attr("name");
+//         var kyoshitsu=  $(this).attr("value");
+//         $("#MODE").attr({value:"init"});
+//         $("#KENSAKU_FORM [name=RIYOUSHAID]").val(riyoushaid);
+//         $("#KENSAKU_FORM [name=RIYOUSHA_SHISETSUTATEYA]").val(shisetsutateya);
+//         $("#KENSAKU_FORM [name=RIYOUSHA_KYOSHITSU]").val(kyoshitsu);
+//       document.KENSAKU_FORM.target = "shousai_kihon";
+//       document.KENSAKU_FORM.method = "post";
+//       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KIHON.CGI";
+//       document.KENSAKU_FORM.submit();
+//        return false;
+//    });
+
+//20150830add QR Suzuki  ↓
+
+      //入居者の行の上にカーソル合わせたら反転表示
+      $(".kojin_qr").hover(function(){
+         this.style.backgroundColor = "lightblue";},
+         function(){
+         this.style.backgroundColor = "white";
+      });
+
+      //入居者の行(チェックボックス除く)をクリックしたときのイベント
+      $(".kojin_qr_click").click(function(){
+
+        //行をクリックしたらチェックボックスの状態を現在と逆の設定にする
+
+        if($(this).parent(".kojin_qr").children(".ListQrinsatsu").children(".qr_select").prop("checked") == true){
+            $(this).parent(".kojin_qr").children(".ListQrinsatsu").children(".qr_select").prop("checked",false);
+        }else{
+            $(this).parent(".kojin_qr").children(".ListQrinsatsu").children(".qr_select").prop("checked",true);
+        }
+
+      });
+
+
+
+//20150830add QR Suzuki  ↑
+
+      $("#shinki").click(function(){
+//  window.open("KOJINJYOUHOU_SHOUSAI_KIHON_SHINKI.CGI","shousai_shinki","width=1000,height=700,resizable=yes,scrollbars=yes");
+        window.name="oyawindow";
+         $("#MODE").attr({value:"init"});
+       document.KENSAKU_FORM.target = "shousai_kihon";
+       document.KENSAKU_FORM.method = "post";
+       document.KENSAKU_FORM.action = "KOJINJYOUHOU_SHOUSAI_KIHON_SHINKI.CGI";
+       document.KENSAKU_FORM.submit();
+        return false;
+    });
+// 事業所～入居者名までの連携AJAX
+     $(document).on("change" ,".for_ajax" ,function(){
+
+//            if($("#TaikyoshaHyouji:checked").val()) {
+//             TaikyoshaHyoujiCheck = $("#TaikyoshaHyouji").val();
+//            }else{
+//             TaikyoshaHyoujiCheck = "none"
+//            };
+
+        var data = {      MODE : this.id ,
+                     JIGYOUSHO : $("#Jigyousho").val() , 
+                 JIGYOUSHODISP : $("#JIGYOUSHODISP").val() , 
+                      Shisetsu : $("#Shisetsu").val(), 
+                   Caremaneger : $("#Caremaneger").val(), 
+                        userid : $("#userid").val(), 
+                      shisetsu : $("#shisetsu").val(),
+                        Tateya : $("#Tateya").val(),
+                        Floor  : $("#Floor").val(),
+                        Unit   : $("#Unit").val(),
+                    Kyoshitsu  : $("#Kyoshitsu").val(),
+                   Nyuukyosha  : $("#Nyuukyosha").val(),
+               TaikyoshaHyouji : $("#TaikyoshaHyouji").val(),
+                    }; 
+                      
+
+            $.ajax({
+                    url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+                   type:"POST",
+                   data:data,
+                success:function(response){
+                        $("#ShisetsuSelectTr").html(response);
+                }
+             })
+
+    });
+//     $(document).on("change" ,"#Shisetsu" ,function(){
+//        var data = { MODE : "Shisetsu" , JIGYOUSHO : $("#Jigyousho").val() , Shisetsu : $("#Shisetsu").val(),  Caremaneger : $("#Caremaneger").val(),  userid : $("#userid").val(), shisetsu : $("#shisetsu").val()};
+//       $.ajax({
+//             url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+//             type:"POST",
+//             data:data,
+//             success:function(response){
+//              $("#ShisetsuSelectTr").html(response);
+//          }
+//       })
+//
+//    });
+//
+//     $(document).on("change" , "#Tateya" ,function(){
+//        var data = { MODE : "Tateya" , JIGYOUSHO : $("#Jigyousho").val() , Shisetsu : $("#Shisetsu").val(),  Caremaneger : $("#Caremaneger").val(), Tateya : $("#Tateya").val() , userid : $("#userid").val(), shisetsu : $("#shisetsu").val()};
+//       $.ajax({
+//             url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+//             type:"POST",
+//             data:data,
+//             success:function(response){
+//              $("#ShisetsuSelectTr").html(response);
+//          }
+//       })
+//
+//    });
+//
+//     $(document).on("change" , "#Floor" ,function(){
+//        var data = { MODE : "Floor" , JIGYOUSHO : $("#Jigyousho").val() , Shisetsu : $("#Shisetsu").val(),  Caremaneger : $("#Caremaneger").val(), Tateya : $("#Tateya").val(), Floor: $("#Floor").val(), userid : $("#userid").val(), shisetsu : $("#shisetsu").val()};
+//       $.ajax({
+//             url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+//             type:"POST",
+//             data:data,
+//             success:function(response){
+//              $("#ShisetsuSelectTr").html(response);
+//          }
+//       })
+//
+//    });
+//
+//     $(document).on("change" , "#Unit" ,function(){
+//        var data = { MODE : "Unit" , JIGYOUSHO : $("#Jigyousho").val() , Shisetsu : $("#Shisetsu").val(),  Caremaneger : $("#Caremaneger").val(), Tateya : $("#Tateya").val(), Floor: $("#Floor").val(), Unit : $("#Unit").val() , userid : $("#userid").val(), shisetsu : $("#shisetsu").val()};
+//       $.ajax({
+//             url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+//             type:"POST",
+//             data:data,
+//             success:function(response){
+//              $("#ShisetsuSelectTr").html(response);
+//          }
+//       })
+//
+//    });
+//
+//     $(document).on("change" , "#Kyoshitsu" ,function(){
+//        var data = { MODE : "Kyoshitsu" , JIGYOUSHO : $("#Jigyousho").val() , Shisetsu : $("#Shisetsu").val(),  Caremaneger : $("#Caremaneger").val(),  Tateya : $("#Tateya").val(), Floor: $("#Floor").val(), Unit : $("#Unit").val(),Kyoshitsu : $("#Kyoshitsu").val() , userid : $("#userid").val(), shisetsu : $("#shisetsu").val()};
+//       $.ajax({
+//             url:"AJAX_KIHONJYOUHOU_ICHIRAN_RIYOUSHA_SELECT.CGI",
+//             type:"POST",
+//             data:data,
+//             success:function(response){
+//              $("#ShisetsuSelectTr").html(response);
+//          }
+//       })
+//
+//    });
+
+
+// 20150830del QR Suzuki  ↓
+//    //QR関連ボタンの表示制御（対象施設のみ表示）
+//    if("###SHISETSUID###" != "0003" ){
+//      $("#qrprint").hide();
+//    }
+// 20150830del QR Suzuki  ↑
+
+ });
+        function search(page){
+                 $("#MODE").attr({value:"search"});
+                 $('#PAGE').val(page);
+                 var form = $("#KENSAKU_FORM");
+                 form.attr({
+                       target: "_top",
+                       method: "post",
+                       action: "KIHONJYOUHOU_ICHIRAN.CGI"
+                 });
+               form.submit();
+          }
+
+    </script>
+     <script type="text/javascript" language="Javascript">
+      //<![CDATA[
+        //エンターキーの無効化
+        function keyBreak(){
+        if(window.event.keyCode=="13"){
+        event.returnValue = false;
+         }
+        }
+      //]]>
+    </script>
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em
+        }
+
+        label {
+           display:inline;
+           font-weight:normal;
+        }
+    </style>
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+  </head>
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body>

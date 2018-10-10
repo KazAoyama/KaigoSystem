@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# KYOTAKUSHIEN_KAIGO.SEARCH : 当月認定切れ一覧PDF出力
+#
+# Usage : KYOTAKUSHIEN_KAIGO.SEARCH namefile datafile
+#
+# Written by H.Fujikura(hands lab.inc)
+
+
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+taishou_month=$(mdate ${this_month}m/-11)
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/CAREPLAN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+# 必要な値の取得
+eval $(name-source ${namefile})
+
+
+
+
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+
+# ログインしているグループ事業所IDから対象の入居者IDを抽出
+cat ${data_dir}/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS                     |
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日 5:削除フラグ
+# 6:更新時間 7:更新者
+awk '$1=="'${shisetsu}'"'                                                   |
+self 2                                                                      |
+# 1:入居者ID
+LANG=C sort -k1,1 -u                                                        > $tmp-gaitou_nyuukyosya_list
+
+# 抽出期間//////////////////////////////////////////////////////////
+# 居宅支援利用者契約の終了日のマスタ作成
+self 2 4 /DATA/E-LIFE/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+LANG=C sort -k1,2                                             > ${tmp}-keiyaku_end 
+# 作成日が今日より11ヶ月以上前のもの対象
+cp ${tmp}-keiyaku_end ${work_dir}/keiyaku_end
+
+cat /DATA/E-LIFE/CAREPLAN/CAREPLAN_KAIGO/*/CAREPLAN_DATE |
+awk '$(NF-2)!="9"'                                           |
+# 1:1人用者ID 2;ケアプラン作成日 3:ケアプラン作成日（和暦） 4:? 5:事業所コード
+# 6:有効フラグ 7:更新日  8:?
+LANG=C sort -k1,1                                       |
+
+#出力者の所属事業所の利用者に限る
+join0 key=1 $tmp-gaitou_nyuukyosya_list           |
+
+
+#　まず、居宅支援利用者契約の終了日が今日より後の人
+join1 key=1 ${tmp}-keiyaku_end -                              |
+# 1:1人用者ID 2:居宅支援利用者契約終了日　3:ケアプラン作成日 4:ケアプラン作成日（和暦） 5:? 
+#6:事業所コード7:有効フラグ               8:更新日           9:?
+awk '$2>="'${today}'"'                                        |
+
+#ケアプラン作成月が現在の月より11ヶ月前
+#(ex.現在が4月なら作成月が前年5月の人)
+awk 'substr($3,1,6)=="'${taishou_month}'"'  |
+
+# 整形
+self 1 3    |
+join1 key=1 <(self 1 2 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER) - |
+#1:対象者番号  2:氏名   3:ケアプラン作成日
+
+# 利用者IDを被保険者番号に変える
+join1 key=1 <(self 1 6 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN ) - |
+delf 1                                                                    |
+LANG=C sort -k1,1                                                         |
+
+#日付直す
+awk '{print $1,$2,substr($3,1,4)"年"substr($3,5,2)"月"substr($3,7,2)"日"}' > ${tmp}-taishousha
+# 1:被保険番号 2:介護度　3:利用者名 4:有効期間From 5:有効期間To
+#年月日形式に直す
+kigen_disp=$(echo ${taishou_month} | awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' )
+today_disp=$(echo ${today} | awk '{print substr($1,1,4)"年"substr($1,5,2)"月"substr($1,7,2)"日"}' )
+
+#事業所名取得
+shisetsu_mei=$(join0 key=1 <(echo ${shisetsu})  /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | self 2 )
+
+#################################################################
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###SHISETSU### $shisetsu_mei
+###KIGEN### $kigen_disp
+###DOMAIN### $domain
+###TODAY### $today_disp
+FIN
+
+cat $tmp-calsed                |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.html |
+calsed -f $tmp-calsed_kaigyozumi -                     |
+mojihame -l###TAISHOUSHA### - $tmp-taishousha       |
+sed 's/###KAIGYO###/\n/g'                              |
+sed 's/###SPACE###/ /g'                                |
+sed 's/"_"/""/g'                                       |
+tee $tmp-html                                          |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-kyotakushien_kaigo_careplan_kigen_pdf.html
+#--------------------------------------------------------------
+cp $tmp-kyotakushien_kaigo_careplan_kigen_pdf.html $work_dir/kyotakushien_kaigo_careplan_kigen_pdf.html
+mkdir -p ${home_dir}/E-LIFE/CAREPLAN/DOWNLOAD/IKKATSU/${USER_ID}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/E-LIFE/CAREPLAN/DOWNLOAD/IKKATSU/${USER_ID}/KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-kyotakushien_kaigo_careplan_kigen_pdf.html ${home_dir}/E-LIFE/CAREPLAN/DOWNLOAD/IKKATSU/${USER_ID}/KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.pdf
+
+  # HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/IKKATSU/${USER_ID}/KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cp $tmp-html.html $work_dir/saishuu_html
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0
+
+

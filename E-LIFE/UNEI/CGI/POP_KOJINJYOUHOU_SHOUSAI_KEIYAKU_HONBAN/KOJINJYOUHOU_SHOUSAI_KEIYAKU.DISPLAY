@@ -1,0 +1,343 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KEIYAKU.DISPLAY
+# 個人情報詳細　契約タブ　表示用CGI
+#
+# Written by E.Okuda　2013/12/4
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+data=$2
+error=$3
+today="$(date +%Y%m%d)"
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE"
+cgi_dir="${app_dir}/UNEI/CGI"
+pompa_dir="${app_dir}/UNEI/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+  RIYOUSHAID=$(nameread              "RIYOUSHAID"      $namedata)
+  NYUUKYOSHISETSUID=$(nameread   "NYUUKYOSHISETSUID" $namedata)
+  NYUUKYOTATEYAID=$(nameread     "NYUUKYOTATEYAID"      $namedata)
+  NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+  NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+  NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+  USERID=$(nameread  "USERID" $namedata)
+  [ -z "${USERID}" -o "${USERID}" = "_" ] && USERID=$(nameread "userid" $namedata)
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+  RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+  SHISETSUID="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+# 入居者所属施設名
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYAID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+  NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+[ -z "${NYUUKYOSHISETSUNAME}" -o "${NYUUKYOSHISETSUNAME}" = "_" ] && NYUUKYOSHISETSUNAME=$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)
+
+cat << FIN > $tmp-keiyakusho_name
+${KEIYAKU_SHURUI} ${RIYOUSHAID}_${KEIYAKU_SHURUI}
+FIN
+
+
+# 契約書部分の変数を作成
+tenpu1_work="$(ls $tenpu_dir/$RIYOUSHAID/$RIYOUSHAID_$KEIYAKU_SHURUI.[a-zA-Z][a-zA-Z][a-zA-Z] | head -1)"
+[ ! -z "$tenpu1_work" ] && tenpu_1="$(basename $tenpu1_work)" \
+                        || tenpu_1=""
+
+#---------------------------------------------
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+# serchでも結果なしのものはinitへ
+if [ "${MODE}" = "edit_keiyakusho_upload" ] ;then
+  result="$(cat ${error} | head -1 | self 2)"
+
+  if [ "${result}" = "ng" ] ; then
+    MODE="init"
+    message="$(cat ${error} | head -1 | self 3)"
+  else
+    message="契約書を登録しました。"
+  fi
+
+elif [ "${MODE}" = "keiyakusho_sakujyo" ] ; then
+  result="$(cat ${error} | awk '$1=="result"{print $2}')"
+
+  if [ "${result}" = "ng" ] ; then
+    MODE="init"
+    message="$(cat ${error} | awk '$1=="message"{print $2}')"
+  else
+    message="契約書を削除しました。"
+  fi
+
+elif [ "${MODE}" = "keiyaku_sakujyo" ] ; then
+  result="$(cat ${error} | awk '$1=="result"{print $2}')"
+
+  if [ "${result}" = "ng" ] ; then
+    MODE="init"
+    message="$(cat ${error} | awk '$1=="message"{print $2}')"
+  else
+    message="契約を削除しました。"
+
+    # 入居施設の確認
+    awk '$1=="'${NYUUKYOSHISETSUID}'"&&$2=="'${NYUUKYOTATEYAID}'"&&$5=="'${NYUUKYOKYOSHITSU}'"&&$8>="'${today}'"&&$(NF-2)!="9"' ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS > $tmp-shisetsu_riyousha_status
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニットID 5:居室
+# 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新時間
+# 11:更新者
+
+    # 居室情報なければ一番最新の居室情報のものへ
+    if [ ! -s $tmp-shisetsu_riyousha_status ] ; then
+#      awk '$6=="'${RIYOUSHAID}'"&&$8>="'${today}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS  |
+      awk '$6=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS  |
+      LANG=C sort -k7,8 |
+      getlast 6 6       > $tmp-new_shisetsu_riyousha_status
+ 
+#      awk '$2=="'${RIYOUSHAID}'"&&$4>="'${today}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+      awk '$2=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS |
+     LANG=C sort -k3,4   |
+     getlast 2 2         > $tmp-new_jigyousho_riyousha_status
+
+      # 施設あり
+      if [ -s $tmp-new_shisetsu_riyousha_status ] ; then
+         NYUUKYOSHISETSUID="$(awk '{print $1}' $tmp-new_shisetsu_riyousha_status)"
+         NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+         NYUUKYOTATEYAID="$(awk '{print $2}' $tmp-new_shisetsu_riyousha_status)"
+         NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYANAME}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+         NYUUKYOFLOOR="$(awk '{print $3}' $tmp-new_shisetsu_riyousha_status)"
+         NYUUKYOUNITID="$(awk '{print $4}' $tmp-new_shisetsu_riyousha_status)"
+         NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+         NYUUKYOKYOSHITSU="$(awk '{print $5}' $tmp-new_shisetsu_riyousha_status)"
+      # 施設なし
+      else
+         NYUUKYOSHISETSUID="$(awk '{print $1}' $tmp-new_jigyousho_riyousha_status)"
+         NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER)"
+         NYUUKYOTATEYAID=""
+         NYUUKYOTATEYANAME=""
+         NYUUKYOFLOOR=""
+         NYUUKYOUNITID=""
+         NYUUKYOUNITNAME=""
+         NYUUKYOKYOSHITSU="施設外"
+      fi
+     
+　　　
+
+    # 居室情報あればそのままでok
+    else
+     :
+    fi
+
+  fi
+
+else 
+  :
+fi
+
+#------------------------------------------------------------------
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###NYUUKYOSHISETSUID### ${NYUUKYOSHISETSUID}
+###NYUUKYOSHISETSUNAME### ${NYUUKYOSHISETSUNAME}
+###NYUUKYOTATEYAID### ${NYUUKYOTATEYAID}
+###NYUUKYOTATEYANAME### ${NYUUKYOTATEYANAME}
+###NYUUKYOFLOOR### ${NYUUKYOFLOOR}
+###NYUUKYOUNITID### ${NYUUKYOUNITID}
+###NYUUKYOUNITNAME### ${NYUUKYOUNITNAME}
+###NYUUKYOKYOSHITSU### ${NYUUKYOKYOSHITSU}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+####TENPU1###     ${tenpu_1}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+#------------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | edit_keiyakusho_upload | keiyaku_sakujyo |keiyakusho_sakujyo )
+  
+# ${data}
+# 1:契約ID       2:施設ID            3:施設名     4:居室 5:契約種類ID
+# 6:契約種類名称 7:契約開始日        8:契約終了日 9:備考 10:更新日時
+# 11:UserID      12:利用者(入居者)ID 13:削除ボタンDISPLAY
+  if [ -s ${data} ] ; then
+
+  # classの設定
+   cat ${data} |
+# 1:契約ID       2:施設ID            3:施設名     4:居室 5:契約種類ID
+# 6:契約種類名称 7:契約開始日        8:契約終了日 9:備考 10:更新日時
+# 11:UserID      12:利用者(入居者)ID 13:削除ボタンDISPLAY
+   awk '{if($8!="_"&&$8<"'${today}'"){print $0,"keiyakugyoold"}
+         else{print $0,"keiyakugyo"}
+        }'     |
+   LANG=C sort -k7,8nr |
+# 1:契約ID       2:施設ID            3:施設名             4:居室   5:契約種類ID
+# 6:契約種類名称 7:契約開始日        8:契約終了日         9:備考   10:更新日時
+# 11:UserID      12:利用者(入居者)ID 13:削除ボタンDISPLAY 14:CLASS
+
+  # 契約日と更新日時の表記を整形
+  awk '{print $1,$2,$3,$4,$5,$6,$7!="_"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"_",$8!="99999999"?substr($8,1,4)"/"substr($8,5,2)"/"substr($8,7,2):"_",$9,$10!="_"?substr($10,1,4)"/"substr($10,5,2)"/"substr($10,7,2)"　"substr($10,9,2)":"substr($10,11,2):"_",$11,$12,$13,$14}'  |
+   self 1 5/8 2/4 9/11 14 13 12 |
+   sed 's/_/@/g'             |
+# 1:契約ID  2:契約種類ID 3:契約種類名称       4:契約開始日        5:契約終了日
+# 6:施設ID  7:施設名     8:居室               9:備考              10:更新日時
+# 11:UserID 12:CLASS     13:削除ボタンDISPLAY 14:利用者(入居者)ID
+
+# 添付ファイル名
+awk '{print $0,$14"_"$1".pdf"}' > $tmp-listdata_kari
+# 1:契約ID  2:契約種類ID 3:契約種類名称      4:契約開始日  5:契約終了日
+# 6:施設ID  7:施設名     8:居室              9:備考        10:更新日時
+# 11:UserID 12:CLASS     13:利用者(入居者)ID 14:ファイル名
+
+# 添付ファイルがあれば「閲覧」、なければ非表示
+self 1 2 14 15 $tmp-listdata_kari |
+while read keiyaku_id keiyaku_syurui user_id filename ; do
+
+  if [ -s ${tenpu_dir}/${user_id}/${filename} ]; then 
+      echo "閲覧" "no_alert"  >> $tmp-hyouji
+  else
+    if [ "${keiyaku_syurui}" -eq "001" -o "${keiyaku_syurui}" -eq "002" ] ; then
+      echo "@" "no_alert"     >> $tmp-hyouji
+    else
+      echo "@" "@"            >> $tmp-hyouji
+    fi
+  fi
+done
+
+# 表示、非表示くっつける
+ycat $tmp-listdata_kari $tmp-hyouji > $tmp-listdata
+
+  else
+
+    : > $tmp-listdata
+
+  fi
+
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+# 契約書がないよアラート
+# もしほかにアラートがないのであれば契約書がないとアラートをだす
+if [ -z "${message}" ] ; then
+
+ cat $tmp-hyouji |
+ awk '$2=="@"{print $0}' > $tmp-hyouji_nashi
+
+ [ -s $tmp-hyouji_nashi ] && message="契約書がアップロードされていない契約があります。アップロードをしてください。"
+
+else
+
+ :  
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" -a "${KANRYOU}" != "_" ] ; then
+	cat <<- FINN > $tmp-html3
+          <script type="text/javascript" language="javascript">
+           keiyaku_pop = window.open("","keiyaku_pop");
+           keiyaku_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1=""
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+
+#cp $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_KEIYAKU.html       |
+calsed -f $tmp-calsed_data_result -                     |
+mojihame -llist_rusult - $tmp-listdata                  |
+#mojihame -llist_tenpu - <(delf 11 $tmp-listdata)        |
+mojihame -llist_tenpu - $tmp-listdata        |
+#mojihame -llist_tenpu - <(delf 11 $tmp-listdata)        |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+if [ -e $tmp-html3 ] ; then
+  cat - $tmp-html3
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

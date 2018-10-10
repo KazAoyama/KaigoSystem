@@ -1,0 +1,602 @@
+#!/bin/bash
+#
+# APDATASET.DAYMD.SHOKYAKU_KANRI　(償却管理のPOMPA更新)
+#
+# Usage:APDATASET.DAYMD.SHOKYAKU_KANRI
+#
+# Written By Aoyagi (HandsLab .Inc) :
+#
+
+# 設定ファイ読込 #########################################################################
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#}}}Functions#############################################################################
+upcnt "$HOSTNAME $(basename ${0}) START $(date +%Y%m%d%H%M%S)"
+
+
+# エラー終了  ############################################################################
+function error_exit {
+  touch ${semaphore_dir}/$(basename ${0}).${HOSTNAME}.ERROR.${today}
+  rm -f ${tmp}-*
+  exit 1
+}
+
+
+# 起動時に入力がない場合当日を変数todayに設定
+[ -n "$(echo "${1}" | awk --re-interval '$1 ~ /[0-9]{8}/')" ] && today="${1}" || today="$(date "+%Y%m%d")"
+
+
+# 変数・ディレクトリ設定 #################################################################
+current_time="$(date "+%Y%m%d%H%M%S")"
+yesterday=$(mdate $today/-1)
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+input_dir="/home/hands/E-LIFE/UNEI/INPUT"
+tmp="/var/tmp/${$}"
+semaphore_dir="${home_dir}/SEMAPHORE"
+meisai_dir="${app_dir}/MEISAI"
+rireki_dir="${app_dir}/RIREKI"
+kanri_dir="${app_dir}/KANRI"
+pompa_dir="${app_dir}/POMPA/SHOKYAKU_KANRI"
+work="${app_dir}/WORK"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+keiri_input="${app_dir}/INPUT"
+
+today_day=$(echo ${today} | self 1.7.2)
+if [ ${today_day} -ge 6 ];then
+ kongetu=$(echo ${today} | self 1.1.6)
+else
+ kari_getu=$(echo ${today} | self 1.1.6)
+ kongetu=$(mdate ${kari_getu}m/-1)
+fi
+
+# inputディレクトリ作成
+mkdir -p ${keiri_input}/${today}/SHOKYAKU
+
+# 当日のINPUTデータからデータ取得 #####################################################
+find ${input_dir}/${today}/RIYOUSHA -maxdepth 1 -type f -name "RIYOUSHA_KEIYAKUKIN*" > ${tmp}-today_input_data
+[ ${?} -eq 0 ] || error_exit
+
+# INPUTディレクトリにファイルがあればINPUTデータを呼び出す
+if [ "$(gyo ${tmp}-today_input_data)" -ne 0 ];then
+  # リストを読み込んでまわす
+  cat ${tmp}-today_input_data                |
+  # 一度回収したファイルを除く
+  if [ -e ${keiri_input}/${today}/SHOKYAKU/LIST ];then
+    LANG=C sort                              |
+    join0 +ng key=1 ${keiri_input}/${today}/SHOKYAKU/LIST 2>&1 1> /dev/null
+  else
+    cat -
+  fi                                         |
+  while read inputdata ;do
+    cat ${inputdata}
+  done
+else
+  :
+fi                                               > ${tmp}-input
+cat ${tmp}-input                                 |
+# 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+# 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+# 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+# 16:特販期間TO 17:17～予備  18:削除フラグ
+self 1                                           |
+LANG=C sort -u -k1,1n                            |
+yarr                                             > ${tmp}-input_taishosha
+
+for member in $(cat $tmp-input_taishosha);do
+
+  # 施設で分けて処理
+  cat $tmp-input                                 |
+  # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+  # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+  # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+  # 16:特販期間TO 17:17～予備  18:削除フラグ
+  awk '$1=="'${member}'"{print $2,$4,$8,$9}'     |
+  LANG=C sort -k1,1 -k2,2                        > $tmp-member_taisholist
+  # 1:施設ID 2:契約金ID 3:金額 4:償却回数
+cp $tmp-member_taisholist ${work}/member_taisholist
+
+
+  for shisetsu in $(cat $tmp-member_taisholist | self 1 | LANG=C sort -u -k1,1n | yarr);do
+
+    # 個別に修正された償却データは書き換えない
+    awk '$2=="'${member}'"&&$15=="2"' ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU |
+    awk '$4==1{kaisu=$4+$5;print $14,$6,kaisu}' |
+    LANG=C sort -u                             > $tmp-jogai
+
+    join0 +ng key=2/4 $tmp-jogai $tmp-member_taisholist > $tmp-jogai_shokyaku 2> $tmp-nokosu_shokyaku
+
+    # 施設の中で契約金ごとに処理
+    cat $tmp-nokosu_shokyaku                       |
+tee ${work}/nokosu_shokyaku |
+    while read Shisetsu keiyakukin kinkin kaisu ;do
+#    for keiyakukin in $(cat $tmp-nokosu_shokyaku | self 2 | LANG=C sort -u -k1,1n | yarr);do
+#      NOKOSU_KEIYAKUKINGAKU=$(awk '$2=="'${keiyakukin}'"{print $3}' $tmp-nokosu_shokyaku | tail -n1)
+      awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_KEIYAKUKIN       |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      LANG=C sort -k1,1                            |
+      join0 key=1 <(echo ${member})                |
+      LANG=C sort -k2,2                            |
+      join0 key=2 <(echo ${shisetsu})              |
+      LANG=C sort -k4,4                            |
+      join0 key=4 <(echo ${keiyakukin})            |
+      awk '$8=="'${kinkin}'"'                      |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+
+      # 償却対象の契約金のみ対象
+      awk '$9!="_"'         > $tmp-member_keiyakukin
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+
+      # 契約終了になったかどうかの判定
+      cat $tmp-member_keiyakukin                    |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      self 3                                        |
+      LANG=C sort -u -k1,1n                         > $tmp-taisho_keiyaku
+
+      cat ${riyosha_dir}/RIYOUSHA_KEIYAKU           |
+      # 1:利用者ID   2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+      # 6:ユニットID 7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+      # 11:引渡し日  12:契約開始日 13:契約終了日 14:退去日    15:退去理由詳細
+      # 16:備考      17:予備1      18:予備2      19:予備3     20:予備4
+      # 21:予備5     22:削除フラグ 23:更新日     24:更新者
+      join0 key=1 <(echo $member)                   |
+      LANG=C sort -k3,3n                            |
+      join0 key=3 <(echo $shisetsu)                 |
+      LANG=C sort -k2,2n                            |
+      join0 key=2 $tmp-taisho_keiyaku               |
+      awk '$13!="99999999"{print $2}'               > $tmp-end_keiyaku
+      # 1:契約ID
+      # 契約終了ではない契約金を対象に償却データを作成
+      cat $tmp-member_keiyakukin                    |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      awk '$7!="99999999"'                          > $tmp-end_keiyakukin
+
+      cat $tmp-member_keiyakukin                    > $tmp-shoukyaku_taisho
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      #awk '$7=="99999999"'                          > $tmp-shoukyaku_taisho
+
+      #LANG=C sort -k3,3n                            |
+      #join0 +ng key=3 $tmp-end_keiyaku              > $tmp-end_keiyakukin  2> $tmp-shoukyaku_taisho
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      
+      # 償却データ作成
+      cat $tmp-shoukyaku_taisho                     |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+
+      # 特販かどうか
+      awk '{if($12!="_"){print $1,$3,$4,$6,$7,$14,$9,$10}else{print $1,$3,$4,$6,$7,$8,$9,$10}}' |
+      # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+      # 6:金額     7:償却回数 8:非返却金額
+      sed 's/_/0/g'                                 |
+      lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$6-$8'         > $tmp-base_data
+      # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+      # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額
+      # 償却月
+      START_MONTH=$(cat $tmp-base_data | awk '{print substr($4,1,6)}')
+      KAISU=$(cat $tmp-base_data | awk '{kaisu=$7-1;print kaisu}')
+
+      STARTDAY=$(echo $START_MONTH | awk '{print substr($1,1,4)"/"substr($1,5,2)"/01"}')
+      for kaisu_month in $(seq ${KAISU} | yarr);do
+        date -d "${STARTDAY} ${kaisu_month} months" '+%Y%m' 
+      done                                        > $tmp-month_list_pre
+      echo $START_MONTH                                               |
+      cat - $tmp-month_list_pre                                       |
+#      mdate -e ${START_MONTH}m/+${KAISU}                             |
+      yarr                                                           > $tmp-month_list
+      LAST_MONTH=$(cat $tmp-month_list | tarr | tail -n1)
+
+      # 償却回数が0の場合
+      SHOKYAKU_KAISU=$(cat $tmp-base_data | self 7)
+
+      if [ "${SHOKYAKU_KAISU}" = 0 ];then
+        cat $tmp-base_data                                           |
+        # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+        # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額
+        awk '{zankin=$6-$8;print "'${START_MONTH}'",$1,"'${START_MONTH}'",0,0,$6,$8,zankin,0,0,0,0,zankin,0}' > $tmp-month
+
+      # 償却回数が1の場合
+      elif [ "${SHOKYAKU_KAISU}" = 1 ];then
+        cat $tmp-base_data                                           |
+        awk '{zankin=$6-$8;print "'${START_MONTH}'",$1,"'${START_MONTH}'",1,0,$6,$8,zankin,0,0,zankin,zankin,0,0}' > $tmp-month
+            cat $tmp-tougetsu_data                    >> $tmp-month
+            # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+            # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+            # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+
+      # 償却回数が1より大きい場合
+      else
+        # 日割りするかどうかで処理を分岐
+        SANTEI=$(cat $tmp-shoukyaku_taisho | self 11)
+        START=$(cat $tmp-base_data | awk '{print substr($4,7,2)}')
+        # 日割りしない場合
+        if [ "${SANTEI}" = "2" -o "${START}" = "01" ];then
+          # 償却の計算
+          cat $tmp-base_data                                           |
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額
+          lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$9/$7'                     |
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+          marume -sage 10.0                                            |
+          lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9-($10*$7)'           > $tmp-base_second
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+          # 11:調整額
+
+          # 月毎に処理をまわす
+          for month in $(cat $tmp-month_list);do
+            if [ $month = $START_MONTH ];then
+              cat $tmp-base_second                                      |
+              # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+              # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+              # 11:調整額
+              awk '{zandaka=$9-$10;nokori=$7-1;print "'${month}'",$1,"'${month}'","1",nokori,$6,$8,$9,"0",$9,$10,$10,zandaka,$11}'   > $tmp-zengetsu_data
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              cat $tmp-zengetsu_data                                      >> $tmp-month
+            elif [ $month = $LAST_MONTH ];then
+              cat $tmp-zengetsu_data                                       |
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              awk '{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$9+$11;$10=$13;$11=$11+$14;$12=$12+$11;$13=$13-$11;print $0}'  > $tmp-tougetsu_data
+              cat $tmp-tougetsu_data                    >> $tmp-month
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+
+            else
+              cat $tmp-zengetsu_data                                       |
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              awk '{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$9+$11;$10=$13;$12=$12+$11;$13=$13-$11;print $0}'  > $tmp-tougetsu_data
+              cat $tmp-tougetsu_data                                       >> $tmp-month
+              mv $tmp-tougetsu_data $tmp-zengetsu_data
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+            fi
+          done
+        # 日割りする場合
+        else
+          # 償却の計算
+          cat $tmp-base_data                                           |
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額
+          lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$9/$7'                     |
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+          marume -sage 10.0                                            |
+          lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9-($10*$7)'           > $tmp-base_second
+          # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+          # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+          # 11:調整額
+
+          # 月毎に処理をまわす
+          for month in $(cat $tmp-month_list);do
+            END_DAY=$(mdate ${month}m | tarr | tail -n1)
+            START_DAY=$(echo ${month}${START})
+            if [ $month = $START_MONTH ];then
+              HIWARI=$(mdate ${END_DAY} ${START_DAY} | lcalc '$1+1')
+              cat $tmp-base_second                                      |
+              # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+              # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+              # 11:調整額
+              self 10                                                   |
+              lcalc '$1/30'                                             |
+              awk '{print $1,"'${HIWARI}'"}'                            |
+              lcalc '$1*$2'                                             |
+              # 端数処理1000円未満で行わないらしい
+#              lcalc '$1/1000'                                           |
+#              marume -sage 1.0                                          |
+#              lcalc '$1*1000'                                           > $tmp-shokai
+              marume -sage 1.0                                          > $tmp-shokai
+              SHOKAI=$(cat $tmp-shokai)
+              NOKORI=$(cat $tmp-base_second | self 10 | awk '{print $1,"'${SHOKAI}'"}' | lcalc '$1-$2')
+              GETSUGAKU=$(cat $tmp-base_second | self 10 | head -n1)
+              
+              cat $tmp-base_second                                      |
+              # 1:利用者ID 2:契約ID   3:契約金種別ID 4:償却開始日 5:償却終了日
+              # 6:金額     7:償却回数 8:非返却金額   9:償却対象金額 10:償却月額
+              # 11:調整額
+              awk '{$10="'${SHOKAI}'";zandaka=$9-$10;$11=$11+"'${NOKORI}'";nokori=$7-1;print "'${month}'",$1,"'${month}'","1",nokori,$6,$8,$9,"0",$9,$10,$10,zandaka,$11}'   > $tmp-zengetsu_data
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              cat $tmp-zengetsu_data                                      >> $tmp-month
+            elif [ $month = $LAST_MONTH ];then
+              cat $tmp-zengetsu_data                                       |
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              awk '{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$9+$11;$10=$13;$11=$11+$14;$12=$12+$11;$13=$13-$11;print $0}'  > $tmp-tougetsu_data
+              cat $tmp-tougetsu_data                    >> $tmp-month
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+
+            else
+              cat $tmp-zengetsu_data                                       |
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+              awk '{if($4==1){$11="'${GETSUGAKU}'";$1="'${month}'";$4=$4+1;$5=$5-1;$9=$12;$10=$13;$12=$12+"'${GETSUGAKU}'";$13=$13-"'${GETSUGAKU}'";print $0}else{$1="'${month}'";$4=$4+1;$5=$5-1;$9=$9+$11;$10=$13;$12=$12+$11;$13=$13-$11;print $0}}'  > $tmp-tougetsu_data
+              cat $tmp-tougetsu_data                                       >> $tmp-month
+              mv $tmp-tougetsu_data $tmp-zengetsu_data
+              # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+              # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+              # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+            fi
+          done
+        fi
+
+      fi
+
+      # データを保存する
+      cat $tmp-month                                                      |
+      # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+      # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+      # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:調整額
+      delf 14                                                             |
+      # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+      # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+      # 11:償却月額 12:当月償却額累計 13:当月償却残高
+      awk '{print $0,"'${keiyakukin}'","1","'${current_time}'","'${userid}'"}'    > $tmp-kari_pompa
+      # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+      # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+      # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+      # 16:登録時間 17:userid
+
+      # POMPAファイル保存
+      mkdir -p ${pompa_dir}/${shisetsu}
+      target_file="${pompa_dir}/SHOKYAKU_KANRI"
+      lock_file="${target_file}.LOCK"
+      lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました。"
+
+      if [ -e ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU ];then
+        cat ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU                   |
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        awk '{if($8=="'${kinkin}'"&&$14=="'${keiyakukin}'"){$15="9"};print}'                 |
+        cat - $tmp-kari_pompa                                             |
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        LANG=C sort -k14,14n -k15,15n -k1,1n                              > $tmp-new_pompa
+        mv $tmp-new_pompa ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU
+      else
+        cat  $tmp-kari_pompa                                              > $tmp-new_pompa
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        mv $tmp-new_pompa ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU
+      fi
+
+      # ロックを解除
+      rm -f ${lock_file}
+      unset lock_file
+      [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+      # 添付ファイル削除して次の人へ
+      rm $tmp-month
+    done
+
+    # 終了させる契約金
+    # 施設の中で契約金ごとに処理
+cp $tmp-member_taisholist ${work}/taisho_list
+    for keiyakukin in $(cat $tmp-member_taisholist | self 2 | LANG=C sort -u -k1,1n | yarr);do
+      cat ${riyosha_dir}/RIYOUSHA_KEIYAKUKIN       |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      LANG=C sort -k1,1n                           |
+      join0 key=1 <(echo ${member})                |
+      LANG=C sort -k2,2n                           |
+      join0 key=2 <(echo ${shisetsu})              |
+      LANG=C sort -k4,4n                           |
+      join0 key=4 <(echo ${keiyakukin})            |
+      awk '$22!="9"'                               |
+      LANG=C sort -k6,6 | tail -n1 |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+
+      # 償却対象の契約金のみ対象
+      awk '$9!="_"'         > $tmp-member_keiyakukin
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+cp $tmp-member_keiyakukin ${work}/member_keiyakukin
+
+      # 契約終了になったかどうかの判定
+      cat $tmp-member_keiyakukin                    |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      self 3                                        |
+      LANG=C sort -u -k1,1n                         > $tmp-taisho_keiyaku
+
+      cat ${riyosha_dir}/RIYOUSHA_KEIYAKU           |
+      # 1:利用者ID   2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+      # 6:ユニットID 7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+      # 11:引渡し日  12:契約開始日 13:契約終了日 14:退去日    15:退去理由詳細
+      # 16:備考      17:予備1      18:予備2      19:予備3     20:予備4
+      # 21:予備5     22:削除フラグ 23:更新日     24:更新者
+      join0 key=1 <(echo $member)                   |
+      LANG=C sort -k3,3n                            |
+      join0 key=3 <(echo $shisetsu)                 |
+      LANG=C sort -k2,2n                            |
+      join0 key=2 $tmp-taisho_keiyaku               |
+tee ${work}/kokokra |
+      awk '$13!="99999999"{print $2}'               > $tmp-end_keiyaku
+      # 1:契約ID
+      # 契約終了ではない契約金を対象に償却データを作成
+      cat $tmp-member_keiyakukin                    |
+      # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+      # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+      # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+      # 16:特販期間TO 17:17～予備  18:削除フラグ
+      awk '$7!="99999999"'                          > $tmp-end_keiyakukin
+
+      # 終了する契約があったら償却データを終わらせる
+      if [ "$(gyo $tmp-end_keiyakukin)" = 0 ];then
+        :
+      else
+        cat $tmp-end_keiyakukin                                            |
+        # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+        # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+        # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+        # 16:特販期間TO 17:17～予備  18:削除フラグ
+        self 4  8                                    |
+        # 1:利用者ID    2:施設ID     3:契約ID      4:契約金種別ID 5:番号
+        # 6:償却開始日  7:償却終了日 8:金額        9:償却回数     10:非返却金額
+        # 11:算出方法   12:特販ID    13:値引金額   14:値引後金額  15:特販期間FROM
+        # 16:特販期間TO 17:17～予備  18:削除フラグ
+        LANG=C sort -k1,1                            > $tmp-end_taisho
+
+        end_kingaku=$(self 2 $tmp-end_taisho | tail -n1)
+
+        # POMPAデータを呼び出して償却データの更新
+        cat ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU                     |
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        LANG=C sort -k14,14                           |
+        join0 key=14 $tmp-end_taisho                  |
+        awk '$15!="9"&&$6=="'${end_kingaku}'"'        |
+        LANG=C sort -k1,1n                            > $tmp-end_base
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+
+        END_MONTH=$(cat $tmp-end_keiyakukin | self 7 | awk '{print substr($1,1,6)}')
+        # 契約終了月で償却終了にする
+        cat $tmp-end_base                             |
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        awk '$1<="'${END_MONTH}'"'                    > $tmp-end_base_second
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        #MOTOKIN="$(awk '$1=="'${END_MONTH}'"' $tmp-end_base | self 11 | head -n1)"
+        MOTOKIN="$(awk '$1=="'${END_MONTH}'"' $tmp-end_base | lcalc 'sage($8/($4+$5),0)' | head -n1)"
+        ENDNITI="$(cat $tmp-end_keiyakukin | self 7)"
+        ENDSHONITI="$(echo "${END_MONTH}""01")"
+        ENDNISU="$(mdate ${ENDNITI} ${ENDSHONITI} | lcalc '$1+1')"
+        getsumatsu_haitei=$(mdate ${END_MONTH}m | tarr | tail -n1)
+        if [ ${getsumatsu_haitei} = ${ENDNITI} ];then
+          ENDKIN=$MOTOKIN
+        else
+          ENDKIN="$(echo "${MOTOKIN}" "${ENDNISU}" | lcalc '$1/30*$2' | marume +age 1.0)"
+        fi
+        #NEWKAISU=$(gyo $tmp-end_base_second)
+        cat $tmp-end_base_second                       | 
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        awk '{if($1=="'${END_MONTH}'"){$11="'${ENDKIN}'";$12=$9+"'${ENDKIN}'";$13=$10-"'${ENDKIN}'"};$16="'${current_time}'";$17="'${userid}'";print}' > $tmp-end_new_data
+        # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+        # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+        # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+        # 16:登録時間 17:userid
+        #awk '{for(i=1;i<=NR;i++){$5="'${NEWKAISU}'"-i};print}'              > $tmp-end_new_data
+
+        # POMPAファイル保存
+        target_file="${pompa_dir}/SHOKYAKU_KANRI"
+        lock_file="${target_file}.LOCK"
+        lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました。"
+  
+        if [ -e ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU ];then
+          cat ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU                   |
+          # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+          # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+          # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+          # 16:登録時間 17:userid
+          awk '{if($14=="'${keiyakukin}'"&&$8=="'${end_kingaku}'"){$15="9"};print}'                 |
+          cat - $tmp-end_new_data                                           |
+          # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+          # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+          # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+          # 16:登録時間 17:userid
+          LANG=C sort -k14,14n -k15,15n -k1,1n                              > $tmp-new_pompa
+          mv $tmp-new_pompa ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU
+        else
+          cat  $tmp-end_new_data                                            > $tmp-new_pompa
+          # 1:年月    2:利用者ID   3:起算月       4:経過月数       5:償却残回数
+          # 6:元金額  7:非返却金額 8:償却対象金額 9:前月償却額累計 10:前月償却残高
+          # 11:償却月額 12:当月償却額累計 13:当月償却残高 14:契約金ID 15:有効フラグ
+          # 16:登録時間 17:userid
+          mv $tmp-new_pompa ${pompa_dir}/${shisetsu}/${member}.SHOKYAKU
+        fi
+  
+        # ロックを解除
+        rm -f ${lock_file}
+        unset lock_file
+        [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+        # 添付ファイル削除して次の人へ
+      fi
+    done
+  done
+done
+
+
+if [ -e ${keiri_input}/${today}/SHOKYAKU/LIST ];then
+  cat ${keiri_input}/${today}/SHOKYAKU/LIST ${tmp}-today_input_data |
+  LANG=C sort -u                                                  > $tmp-input_list
+  cp $tmp-input_list ${keiri_input}/${today}/SHOKYAKU/LIST
+else
+  cp ${tmp}-today_input_data ${keiri_input}/${today}/SHOKYAKU/LIST
+fi
+
+
+# 終了 ######################################################################
+rm -f ${tmp}-*
+exit 0
+

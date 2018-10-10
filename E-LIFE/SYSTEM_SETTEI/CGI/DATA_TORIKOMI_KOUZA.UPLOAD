@@ -1,0 +1,230 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_KOUZA.UPLOAD
+#
+# データ取込：口座情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE3" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE3/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+cat ${excel} |
+e2t2 1 a2 m-  > $tmp-data
+# 1:UserID           2:acountUserid   3:FBuseflg     4:customerid  5:accountname
+# 6:accountnameカナ  7:銀行ID         8:支店ID       9:accountType 10:Accountid
+# 11:accountStartDay 12:accountEndDay 13:AccountHome
+
+[ -s "$tmp-data" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# RIYOUSHA_MASTER
+cat $tmp-data           |
+self 1 2 7/12 6 5 4     |
+# 1:UserID      2:acountUserid    3:銀行ID        4:支店ID          5:accountType
+# 6:Accountid   7:accountStartDay 8:accountEndDay 9:accountnameカナ 10:accountname
+# 11:customerid
+# 請求内容コード、備考。一括請求フラグ、一括請求者ID、一括請求書フラグ、予備項目を追記し並べ替え
+awk '{print $0,$2+("'${Shisetsu}'"*100),substr($7,1,6),$8=="99981231"?"999999":substr($8,1,6),"1","_","0","_","0","_"}' |
+self 1 NF-8 3 4 NF-5 5 6 NF-7 NF-6 9 NF-4/NF-1 10 11 NF NF NF NF |
+# 1:UserID      2:acountUserid    3:銀行ID        4:支店ID            5:請求内容コード
+# 6:accountType 7:Accountid       8:期間開始年月  9:期間終了年月      10:名義カナ
+# 11:備考       12:一括請求フラグ 13:一括請求者ID 14:一括請求書フラグ 15:名義漢字
+# 16:顧客番号   17:予備1          18:予備2        19:予備3            20:予備4
+awk '{print $0,"1","2014071500000000","00078"}' |
+LANG=C sort    > $tmp-riyousha_kouza
+# 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+# 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+# 16:予備1⇒顧客番号 17:予備2                18:予備3            19:予備4            20:予備5
+# 21:削除フラグ      22:更新時間             23:更新者
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# 利用者IDを日も付ける
+if [ -s $tmp-riyousha_kouza ] ; then
+
+   [ -s /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} ] || error_exit "利用者情報がありません。先に利用者情報をアップロードしてください。"
+
+  cat $tmp-riyousha_kouza |
+  cjoin1 +ng key=1 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-riyousha_kouza_ok 2>$tmp-kouza_riyoushaid_ng 
+
+  cat $tmp-riyousha_kouza_ok |
+  delf 1                     |
+  LANG=C sort                > $tmp-kouza_${Shisetsu}result
+
+else
+  :
+fi
+
+#cp $tmp-* /home/hands/work/okuda 
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#-------------------------
+#
+#if [ -s /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KOUZA ] ; then
+#
+#cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KOUZA /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_KOUZA_${cur_time}
+#
+cat $tmp-kouza_${Shisetsu}result |
+cat /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KOUZA - |
+LANG=C sort -u                   |
+getlast 1 8                      > $tmp-riyousha_kouza_result
+#tee $tmp-kouza_new_before  |
+#awk '$(NF-2)!="9"'         |
+## 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+## 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+## 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+## 16:予備1⇒顧客番号 17:予備2                18:予備3            19:予備4            20:予備5
+## 21:削除フラグ      22:更新時間             23:更新者
+#
+## 2つ以上データがあるやつ
+#rank ref=1                 |
+#awk '$1=="2"'              |
+#self 2                     > $tmp-kouza_2tsu_ijyou_userid
+## 1:利用者ID
+#
+#  if [ -s $tmp-kouza_2tsu_ijyou_userid ] ; then
+##    cat $tmp-kouza_2tsu_ijyou_userid |
+##    cjoin1 key=1 - $tmp-kouza_new_before > $tmp-kouza_2tsu_ijyou_data
+#     : > $tmp-kouza_2tsu_result
+#     : > $tmp-kouza_3tsu_ijyou
+#
+#    cat $tmp-kouza_2tsu_ijyou_userid |
+#    LANG=C sort -u                   |
+#
+#    while read USERID ; do
+#      awk '$1=="'${USERID}'"' $tmp-kouza_new_before > $tmp-${USERID}_data
+#
+#      if [ -s "$tmp-${USERID}_data" -a "$(gyo "$tmp-${USERID}_data")" = "2" ] ; then
+#        new_start_nengetsu="$(LANG=C sort -k8,9 $tmp-${USERID}_data  | getlast 1 1 | self 8)"
+#        # 1:後の方の開始年月 
+#
+#        old_end_nengetsu="$(LANG=C sort -k8,9 $tmp-${USERID}_data  | getfirst 1 1 | self 9)"
+#        if [ "${old_end_nengetsu}" = "999999" ] ; then
+#          new_end_nengetsu="$(mdate ${new_start_nengetsu}m/-1)"
+#        else
+#          new_end_nengetsu="$(echo "${old_end_nengetsu}")"
+#        fi
+#        # 1:先の方の終了年月
+#
+#        cat $tmp-${USERID}_data      |
+#        LANG=C sort -k8,9            |
+#        rank                         |
+#        awk '{if($1=="1"){print $0,"'${new_end_nengetsu}'","'${cur_time}'"}else{print $0,$10,"'${cur_time}'"}}' |
+## 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+## 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+## 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+## 16:予備1⇒顧客番号 17:予備2                18:予備3            19:予備4            20:予備5
+## 21:削除フラグ      22:更新時間             23:更新者           24:New請求期間To    25:更新時間
+#        delf 1 |
+#        self 1/8 NF-1 10/NF-4 NF NF-2          >> $tmp-kouza_2tsu_result
+#      else
+#        cat $tmp-${USERID}_data      >> $tmp-kouza_3tsu_ijyou
+#      fi
+#
+#    done
+#    
+#  else
+#    :
+#  fi 
+#
+#
+#  cat $tmp-kouza_new_before |
+#
+#  if [ -s $tmp-kouza_2tsu_result ] ; then
+#    cat - $tmp-kouza_2tsu_result 
+#  else
+#    cat -
+#  fi |
+#  LANG=C sort |
+#  getlast 1 2 > $tmp-riyousha_kouza_new
+#
+#[ -s $tmp-kouza_2tsu_result ] && cp $tmp-kouza_2tsu_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KOUZA_2_kakuninyou
+#[ -s $tmp-kouza_3tsu_ijyou ] && cp $tmp-kouza_3tsu_ijyou /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KOUZA_3ijyou_ng
+#
+cp $tmp-kouza_${Shisetsu}result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KOUZA_${Shisetsu}
+cp $tmp-riyousha_kouza_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KOUZA
+cp $tmp-riyousha_kouza_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KOUZA
+cp $tmp-riyousha_kouza_result /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KOUZA
+#
+#else
+# :
+#fi
+#
+cp $tmp-*ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}
+cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA
+#-------------------------------------------------------------
+
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

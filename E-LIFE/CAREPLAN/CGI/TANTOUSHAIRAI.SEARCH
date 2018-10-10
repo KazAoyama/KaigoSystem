@@ -1,0 +1,132 @@
+#!/bin/bash
+#
+# TANTOUSHAIRAI.DISPLAY
+# 担当者会議（介護）　表示用CGI
+#
+# Written by K.Aoyama :20131206
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" ] ; then
+    cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_DATE |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+fi
+
+# 一括印刷用
+if [ -z "${hdIkkatsuKijunDate}" -o "${hdIkkatsuKijunDate}" = "_" ] ; then
+# 週間計画データの取得
+  cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI   |
+  awk '$1=="'${Riyoushaid}'"'   |
+  awk '$16!="9"'                 |
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'                |
+  getlast 1 1                   |
+  self 2 > $tmp-latest_date
+else
+# 週間計画データの取得
+  cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI   |
+  awk '$1=="'${Riyoushaid}'"'   |
+  awk '$16!="9"'                 |
+  awk '$2<="'${hdIkkatsuKijunDate}'"'                |
+  getlast 1 1                   |
+  self 2 > $tmp-latest_date
+fi
+
+dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+Reason
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# ケアプラン日付
+# --------------------------
+# 
+awk '$2=="'${dispHdKeikakuSakuseiDate}'"'    |
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1/3                    |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-tantoushairai_base
+
+# 追加用データの取得
+caresakusei_date=$(awk '{print $2}' $tmp-result)
+
+
+# 照会データ
+cat ${pompa_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TANTOUSHAIRAI_SHOUKAI  |
+# 1:利用者ID  2:ケアプラン作成年月日(西暦) 3:ケアプラン作成年月日(和暦) 4:照会先   5:照会年月日
+# 6:照会内容  7:回答氏名                   8:回答年月日                 9:回答内容 10:有効フラグ
+# 11:更新日時 12:ログインユーザ
+awk '$1=="'${Riyoushaid}'"&&$2=="'${caresakusei_date}'"&&$10!="9"{print $0}' |
+# 1:照会先   2:照会年月日 3:照会内容 4:回答氏名 5:回答年月日
+# 6:回答内容
+self 4/NF-3  |
+awk '{print "l",$0}'       > $tmp-tantoushairai_shoukai_list
+
+# 全てのデータをマージする
+cat ${tmp}-tantoushairai_base ${tmp}-tantoushairai_shoukai_list
+
+
+## 終了
+rm -f $tmp-*
+exit 0

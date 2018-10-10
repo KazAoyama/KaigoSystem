@@ -1,0 +1,160 @@
+#!/bin/bash
+#
+# SHOKUJI_SHOUSAI_TOUROKU.EXCEL : 食事詳細登録EXCEL出力
+#
+# Usage : SHOKUJI_SHOUSAI_TOUROKU.EXCEL namefile datafile
+#
+# Written by H.Fujikura(hands lab.inc)
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#///////////////////////////////////////////////////////////////////
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+#//////////////////////////////////////////////////////////////////
+awk '$2=="'${RirekiNengetsuhi}'"' ${searchfile} > $tmp-listdata
+#  サーチで取得したデータをリストにセット
+#if [ "$(gyo ${searchfile})" = 1 ] ; then
+#   cat ${searchfile}        > $tmp-listdata
+#else
+# 空のリストデータを作成する
+#   : > $tmp-listdata
+#fi
+# 1:利用者ID             2:食事詳細ID      3:期間FROM             4:期間TO                    5:形態
+# 6:主食                 7:副食            8:指示食：糖尿病       9:指示食：糖尿病カロリーcal 10:指示食：減塩食
+# 11:指示食：減塩食塩分g 12:指示食：肝臓食 13:指示食：肝臓食塩分g 14:指示食：肝臓蛋白g        15:食事アレルギー
+# 16:禁止食              17:その他
+ 
+#建屋名
+self 1 3 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME   |
+join0 key=1 <(echo ${Tateya}) -                   |
+self 2                                             >${tmp}-tateya
+#フロア名
+echo ${Floor}                                        >${tmp}-floor
+#ユニット名
+self 1 2 ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME       |
+join0 key=1 <(echo ${Unit}) -                       |
+self 2                                              > ${tmp}-unit
+#居室名
+echo ${Kyoshitsu}                                    > ${tmp}-room
+#入居者名
+self 1 2 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+join0 key=1 <(self 1 $tmp-listdata) -               |
+self 2                                              |
+awk '{print $0"様"}'                                > ${tmp}-name                   
+#開始日
+f_day=$(self 3 $tmp-listdata)                                
+echo 平成 ${f_day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}'             > ${tmp}-kaishi
+#終了日
+t_day=$(self 4 $tmp-listdata)
+if [ ${t_day} != "" ] && [ ${t_day} != "99999999" ] ;then
+  echo 平成 ${t_day}                                    |
+  self 1 2.1.4 2.5.2 2.7                              |
+  awk '{print $1$2-1988"年"$3"月"$4"日"}'             > ${tmp}-owari
+else
+  :  > ${tmp}-owari
+fi
+#形態
+Keitai=$(self 5 $tmp-listdata)                        
+cat ${pompa_dir}/${shisetsu}/${Tateya}/SHOKUJI_KEITAI  |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態名称
+awk '{if($3=="_"&&$5!="9"){print $1,$4}
+    else if($3>="'${today}'"&&$5!="9"){print $1,$4}
+   }'  |
+awk '{if($1=="'${Keitai}'"){print $2}}'                > $tmp-keitai
+#主食
+Shushoku=$(self 6 $tmp-listdata)
+  cat ${pompa_dir}/${shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU  |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態名称
+  awk '{if($3=="_"&&$5!="9"){print $1,$4}
+      else if($3>="'${today}'"&&$5!="9"){print $1,$4}
+     }'  |
+  awk '{if($1=="'${Shushoku}'"){print $2}}'               > $tmp-shushoku
+#副食
+Fukushoku=$(self 7 ${tmp}-listdata)
+  cat ${pompa_dir}/${shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態名称
+  awk '{if($3=="_"&&$5!="9"){print $1,$4}
+      else if($3>="'${today}'"&&$5!="9"){print $1,$4}
+     }'  |
+  awk '{if($1=="'${Fukushoku}'"){print $2}}'              > $tmp-fukushoku
+#糖尿フラグ
+if [ $(self 8 $tmp-listdata) = "1" ] ;then
+  echo "◎"                                        > ${tmp}-tounyou
+else
+  :                                               > ${tmp}-tounyou
+fi
+#減塩フラグ
+if [ $(self 10 $tmp-listdata) = "1" ] ;then
+  echo "◎"                                       >  ${tmp}-genen
+else
+  :                                               > ${tmp}-genen
+fi
+#肝臓食フラグ
+if [ $(self 12 $tmp-listdata) = "1" ] ;then
+  echo "◎"                                       > ${tmp}-kanzou
+else
+  :                                               > ${tmp}-kanzou
+fi
+
+TEMPLA=${template_dir}/SHOKUJI_SHOUSAI_TOUROKU_TMP.xls
+Ehexcel < ${TEMPLA} 1 b3 ${tmp}-tateya      \
+                    1 b4 ${tmp}-floor       \
+                    1 b5 ${tmp}-unit        \
+                    1 b6 ${tmp}-room        \
+                    1 e3 ${tmp}-name        \
+                    1 e6 ${tmp}-print_day   \
+                    1 b10 ${tmp}-kaishi     \
+                    1 h10 ${tmp}-owari      \
+                    1 a14 ${tmp}-keitai     \
+                    1 e14 ${tmp}-shushoku   \
+                    1 i14 ${tmp}-fukushoku  \
+                    1 b18 ${tmp}-tounyou    \
+                    1 f18 ${tmp}-genen      \
+                    1 j18 ${tmp}-kanzou     \
+                    1 a36 $tmp-listdata     > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat $tmp-html.html
+rm -f ${tmp}-*
+exit 0

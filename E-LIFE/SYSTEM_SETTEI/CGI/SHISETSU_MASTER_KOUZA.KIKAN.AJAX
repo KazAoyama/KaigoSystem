@@ -1,0 +1,115 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KOUZA.KIKAN.AJAX : 施設マスタ 金融機関テーブル書き換えAJAX
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 表示データの作成
+
+# calsedテーブル用意
+: > ${tmp}-calsed
+# 金融機関インデックス
+[ "${kikan_index}" != "" -a "${kikan_index}" != "_" ] && echo "###KIKAN_ACTIVE${kikan_index}### active" >> ${tmp}-calsed
+
+# 金融機関テーブル
+LANG=C sort ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME |
+case "${kikan_index}" in
+  0 )
+    awk '{print $1,$3}' -
+  ;;
+  1 )
+    awk '$2~/^ア/||$2~/^イ/||$2~/^ウ/||$2~/^エ/||$2~/^オ/||$2~/^ヴ/{print $1,$3}' -
+  ;;
+  2 )
+    awk '$2~/^カ/||$2~/^キ/||$2~/^ク/||$2~/^ケ/||$2~/^コ/||$2~/^ガ/||$2~/^ギ/||$2~/^グ/||$2~/^ゲ/||$2~/^ゴ/{print $1,$3}' -
+  ;;
+  3 )
+    awk '$2~/^サ/||$2~/^シ/||$2~/^ス/||$2~/^セ/||$2~/^ソ/||$2~/^ザ/||$2~/^ジ/||$2~/^ズ/||$2~/^ゼ/||$2~/^ゾ/{print $1,$3}' -
+  ;;
+  4 )
+    awk '$2~/^タ/||$2~/^チ/||$2~/^ツ/||$2~/^テ/||$2~/^ト/||$2~/^ダ/||$2~/^ヂ/||$2~/^ヅ/||$2~/^デ/||$2~/^ド/{print $1,$3}' -
+  ;;
+  5 )
+    awk '$2~/^ナ/||$2~/^ニ/||$2~/^ヌ/||$2~/^ネ/||$2~/^ノ/{print $1,$3}' -
+  ;;
+  6 )
+    awk '$2~/^ハ/||$2~/^ヒ/||$2~/^フ/||$2~/^ヘ/||$2~/^ホ/||$2~/^バ/||$2~/^ビ/||$2~/^ブ/||$2~/^ベ/||$2~/^ボ/||$2~/^パ/||$2~/^ピ/||$2~/^プ/||$2~/^ペ/||$2~/^ポ/{print $1,$3}' -
+  ;;
+  7 )
+    awk '$2~/^マ/||$2~/^ミ/||$2~/^ム/||$2~/^メ/||$2~/^モ/{print $1,$3}' -
+  ;;
+  8 )
+    awk '$2~/^ヤ/||$2~/^ユ/||$2~/^ヨ/{print $1,$3}' -
+  ;;
+  9 )
+    awk '$2~/^ラ/||$2~/^リ/||$2~/^ル/||$2~/^レ/||$2~/^ロ/{print $1,$3}' -
+  ;;
+  10 )
+    awk '$2~/^ワ/||$2~/^ヲ/||$2~/^ン/{print $1,$3}' -
+  ;;
+  11 )
+    echo "@ @"
+  ;;
+  * )
+  ;;
+esac > ${tmp}-kikan_data
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 共通設定項目
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+#--------------------------------------------------------
+
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+awk '/kikan_table_start/,/kikan_table_end/' ${html_dir}/SHISETSU_MASTER_KOUZA2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l"KINYUU_KIKAN_TBL" - ${tmp}-kikan_data > ${tmp}-html
+echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+cat - ${tmp}-html
+#sed 's/###KAIGYO###/\n/g'     |
+#sed 's/###SPACE###/ /g' |
+#if [ -e $tmp-html_alert ] ; then
+#  cat - $tmp-html_alert
+#else
+#  cat -
+#fi
+#formhame -d"_" - ${namedata}
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

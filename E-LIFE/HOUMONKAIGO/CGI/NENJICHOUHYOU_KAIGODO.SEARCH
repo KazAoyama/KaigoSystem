@@ -1,0 +1,512 @@
+#!/bin/bash
+#
+# NENJICHOUHYOU_INSATSU.SEARCH
+# 年次帳票印刷　検索用CGI
+#
+# Written by K.Aoyama
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "サービス提供事業者が不明です"
+# 対象年月
+[ -z "${TaishouNendo}" -o "${TaishouNendo}" = "_" ] && error_exit "対象年が不明です"
+
+# 曜日取得
+echo "1" "月" > $tmp-youbi
+echo "2" "火" >> $tmp-youbi
+echo "3" "水" >> $tmp-youbi
+echo "4" "木" >> $tmp-youbi
+echo "5" "金" >> $tmp-youbi
+echo "6" "土" >> $tmp-youbi
+echo "7" "日" >> $tmp-youbi
+
+cp $tmp-youbi $work_dir/youbi
+
+# 利用者マスタ
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER  |
+self 1 2                                       |
+LANG=C sort -k1,1                              > $tmp-riyousha_master
+
+
+# 年度FROM
+NENDO_FROM=$(echo "${TaishouNendo}04")
+NENDO_TO=$(echo "${TaishouNendo}" | lcalc '$1+1' | awk '{print $1"03"}')
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+
+
+# 紐付く事業所
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+# ログイン中の施設で絞る
+# 介護と予防のみに絞る
+awk '$1=="'$shisetsu'"&&($3=="11"||$3=="61"){print $2,$3}' |
+LANG=C sort -k1,1                       > $tmp-select_kyoukyusha
+# 1:供給者ID  2:サービスコード種類
+
+# 訪問介護実績ファイルの取得
+# 対象となる全利用者のディレクトリを検索する
+: > $tmp-jisseki_data
+ls -F ${pompa_dir}/HOUMONKAIGO |
+grep /                         |
+sed 's/\///g'                  |
+while read path ; do
+if [ -s ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI ] ; then
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -                  > $tmp-jisseki_kaigo_yobou
+
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/*/JIHI_SERVICE |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,"jihi",$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+    # 介護・予防実績と自費実績を連結
+    cat $tmp-jisseki_kaigo_yobou $tmp-jisseki_jihi
+
+  else
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -                  > $tmp-jisseki_kaigo_yobou
+
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/*/JIHI_SERVICE |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,"jihi",$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+    # 介護・予防実績と自費実績を連結
+    cat $tmp-jisseki_kaigo_yobou $tmp-jisseki_jihi
+
+  fi
+#fi
+done  > $tmp-search_data_dmy_dmy
+
+cat $tmp-search_data_dmy_dmy |
+awk '$3$4>="'$NENDO_FROM'"&&"'$NENDO_TO'">=$3$4{print $0}'  |
+# 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+# 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+# 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+# 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+# 保険対象有無選択
+# 全て
+if [ $slHokenTaishou == 0 ] ; then
+  cat -
+# 保険対象のみ
+elif [ $slHokenTaishou == 1 ] ; then
+  awk '$16=="11" || $16=="61"{print}'
+# 保険対象外のみ
+elif [ $slHokenTaishou == 2 ] ; then
+  awk '$16!="11" && $16!="61"{print}'
+else
+  cat -
+fi |
+
+# 請求対象外のチェックが入っていたら
+if [ $chkSeikyuTaishougai == "1" ] ; then
+  awk '$15=="1"{print}'
+else
+  cat -
+fi > $tmp-search_base_data
+
+
+
+
+
+
+
+
+
+# 介護度リスト
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN              |
+awk '$23<="'${today}'"&&$28>="'${today}'"{print $1,$3,$4,$34}' |
+# 1:利用者ID 2:介護度 3:保険者番号 4:最終更新日
+LANG=C sort -k1,1 -k3,3nr                                      |
+getfirst 1 1                                                   |
+delf 4                                                         |
+LANG=C sort -k1,1                                              > $tmp-kaigodo
+# 1:利用者ID 2:介護度 3:保険者番号
+
+cat $tmp-search_base_data                   |
+awk '{print $1,$3$4}'                       |
+# 1:利用者ID 2:対象年月
+LANG=C sort -k1,1                           |
+join2 key=1 <(cat $tmp-kaigodo | self 1 2)  > $tmp-kaigodo_taisyousya_base
+# 1:利用者ID 2:介護度 2:対象年月
+
+
+#################### 要支援1 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==1'                      |
+tee $tmp-you_shien_1_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_shien_1_nobe
+[ "$(gyo $tmp-you_shien_1_nobe)" == "0" ] && echo "_ _" > $tmp-you_shien_1_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_shien_1_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_shien_1_jitsu
+[ "$(gyo $tmp-you_shien_1_jitsu)" == "0" ] && echo "_ _" > $tmp-you_shien_1_jitsu
+# 1:年月 2:count
+
+#################### 要支援2 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==2'                      |
+tee $tmp-you_shien_2_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_shien_2_nobe
+[ "$(gyo $tmp-you_shien_2_nobe)" == "0" ] && echo "_ _" > $tmp-you_shien_2_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_shien_2_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_shien_2_jitsu
+[ "$(gyo $tmp-you_shien_2_jitsu)" == "0" ] && echo "_ _" > $tmp-you_shien_2_jitsu
+# 1:年月 2:count
+
+#################### 要介護1 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==3'                      |
+tee $tmp-you_kaigo_1_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_1_nobe
+[ "$(gyo $tmp-you_kaigo_1_nobe)" == "0" ] && echo "_ _" > $tmp-you_kaigo_1_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_kaigo_1_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_1_jitsu
+[ "$(gyo $tmp-you_kaigo_1_jitsu)" == "0" ] && echo "_ _" > $tmp-you_kaigo_1_jitsu
+# 1:年月 2:count
+
+#################### 要介護2 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==4'                      |
+tee $tmp-you_kaigo_2_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_2_nobe
+[ "$(gyo $tmp-you_kaigo_2_nobe)" == "0" ] && echo "_ _" > $tmp-you_kaigo_2_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_kaigo_2_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_2_jitsu
+[ "$(gyo $tmp-you_kaigo_2_jitsu)" == "0" ] && echo "_ _" > $tmp-you_kaigo_2_jitsu
+# 1:年月 2:count
+
+#################### 要介護3 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==5'                      |
+tee $tmp-you_kaigo_3_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_3_nobe
+[ "$(gyo $tmp-you_kaigo_3_nobe)" == "0" ] && echo "_ _" > $tmp-you_kaigo_3_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_kaigo_3_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_3_jitsu
+[ "$(gyo $tmp-you_kaigo_3_jitsu)" == "0" ] && echo "_ _" > $tmp-you_kaigo_3_jitsu
+# 1:年月 2:count
+
+#################### 要介護4 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==6'                      |
+tee $tmp-you_kaigo_4_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_4_nobe
+[ "$(gyo $tmp-you_kaigo_4_nobe)" == "0" ] && echo "_ _" > $tmp-you_kaigo_4_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_kaigo_4_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_4_jitsu
+[ "$(gyo $tmp-you_kaigo_4_jitsu)" == "0" ] && echo "_ _" > $tmp-you_kaigo_4_jitsu
+# 1:年月 2:count
+
+#################### 要介護4 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2==7'                      |
+tee $tmp-you_kaigo_5_base        |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_5_nobe
+[ "$(gyo $tmp-you_kaigo_5_nobe)" == "0" ] && echo "_ _" > $tmp-you_kaigo_5_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-you_kaigo_5_base        |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-you_kaigo_5_jitsu
+[ "$(gyo $tmp-you_kaigo_5_jitsu)" == "0" ] && echo "_ _" > $tmp-you_kaigo_5_jitsu
+# 1:年月 2:count
+
+#################### 非該当 #######################
+cat $tmp-kaigodo_taisyousya_base |
+awk '$2=="_"'                    |
+tee $tmp-higaitou_base           |
+LANG=C sort -k3,3                |
+# 延べ人数
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-higaitou_nobe
+[ "$(gyo $tmp-higaitou_nobe)" == "0" ] && echo "_ _" > $tmp-higaitou_nobe
+# 1:年月 2:count
+
+# 実人数
+cat $tmp-higaitou_base           |
+LANG=C sort -k1,3 -u             |
+LANG=C sort -k3,3                |
+count 3 3                        |
+LANG=C sort -k1,1                > $tmp-higaitou_jitsu
+[ "$(gyo $tmp-higaitou_jitsu)" == "0" ] && echo "_ _" > $tmp-higaitou_jitsu
+# 1:年月 2:count
+
+# 実人数
+loopj -d@ num=1 $tmp-you_shien_1_jitsu $tmp-you_shien_2_jitsu $tmp-higaitou_jitsu $tmp-you_kaigo_1_jitsu $tmp-you_kaigo_2_jitsu $tmp-you_kaigo_3_jitsu $tmp-you_kaigo_4_jitsu $tmp-you_kaigo_5_jitsu |
+awk '$1!="_"' |
+awk '{print $1"1","実人数",$0}' > $tmp-jitsu_ninzu
+# 1:番号   2:実人数 3:年月  4:支援1 5:支援2
+# 6:非該当 7:介護1  8:介護2 9:介護3 10:介護4
+# 11:介護5
+
+# 延べ人数
+loopj -d@ num=1 $tmp-you_shien_1_nobe $tmp-you_shien_2_nobe $tmp-higaitou_nobe $tmp-you_kaigo_1_nobe $tmp-you_kaigo_2_nobe $tmp-you_kaigo_3_nobe $tmp-you_kaigo_4_nobe $tmp-you_kaigo_5_nobe |
+awk '$1!="_"' |
+awk '{print $1"2","延人数",$0}' > $tmp-nobe_ninzu
+# 1:番号   2:実人数 3:年月  4:支援1 5:支援2
+# 6:非該当 7:介護1  8:介護2 9:介護3 10:介護4
+# 11:介護5
+
+
+cat $tmp-jitsu_ninzu $tmp-nobe_ninzu |
+LANG=C sort -k1,1                    |
+self 3 2 4/NF                        |
+self 1.5.2 2/NF                      |
+lcalc '$1*1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$3+$4+$5+$6+$7+$8+$9+$10' |
+awk '{print "search",$1"月",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}' > $tmp-search_data
+# 1:search 2:年月  3:項目  4:支援1 5:支援2
+# 6:非該当 7:介護1 8:介護2 9:介護3 10:介護4
+# 11:介護5 12:合計
+
+
+# 合計
+# 実人数計
+cat $tmp-jitsu_ninzu                                                |
+LANG=C sort -k1,1                                                   | 
+self 4/NF                                                           |
+sm2 0 0 1 8                                                         |
+lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$1+$2+$3+$4+$5+$6+$7+$8'             |
+# 1:支援1 2:支援2 3:非該当 4:介護1 5:介護2
+# 6:介護3 7:介護4 8:介護5  9:合計
+sed -e "s/ 0 / @ /g" -e "s/ 0 / @ /g" -e "s/^0 /@ /" -e "s/ 0$/ @/" |
+awk '{print "jitsukei_goukei",$0}'                                  > $tmp-jitsukei_goukei
+# 1:jitsukei_goukei 2:支援1 3:支援2 4:非該当 5:介護1
+# 6:介護2           7:介護3 8:介護4 9:介護5  10:合計
+
+# 述べ人数
+cat $tmp-nobe_ninzu                                                 |
+LANG=C sort -k1,1                                                   |
+self 4/NF                                                           |
+sm2 0 0 1 8                                                         |
+lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$1+$2+$3+$4+$5+$6+$7+$8'             |
+# 1:支援1 2:支援2 3:非該当 4:介護1 5:介護2
+# 6:介護3 7:介護4 8:介護5  9:合計
+sed -e "s/ 0 / @ /g" -e "s/ 0 / @ /g" -e "s/^0 /@ /" -e "s/ 0$/ @/" |
+awk '{print "nobe_goukei",$0}'                                      > $tmp-nobe_goukei
+# 1:nobe_goukei 2:支援1 3:支援2 4:非該当 5:介護1
+# 6:介護2       7:介護3 8:介護4 9:介護5  10:合計
+
+# (実人数/年間)
+# 要支援1
+cat $tmp-you_shien_1_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_shien_1_nenkan_jitsu
+# 要支援2
+cat $tmp-you_shien_2_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_shien_2_nenkan_jitsu
+# 要介護1
+cat $tmp-you_kaigo_1_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_kaigo_1_nenkan_jitsu
+# 要介護2
+cat $tmp-you_kaigo_2_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_kaigo_2_nenkan_jitsu
+# 要介護3
+cat $tmp-you_kaigo_3_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_kaigo_3_nenkan_jitsu
+# 要介護4
+cat $tmp-you_kaigo_4_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_kaigo_4_nenkan_jitsu
+# 要介護5
+cat $tmp-you_kaigo_5_base |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-you_kaigo_5_nenkan_jitsu
+# 非該当 
+cat $tmp-higaitou_base    |
+# 1:対象者 2:介護コード 3:年月
+delf 3                    |
+# 1:対象者 2:介護コード
+LANG=C sort -k1,2 -u      |
+gyo                       > $tmp-higaitou_nenkan_jitsu
+
+ycat $tmp-you_shien_1_nenkan_jitsu $tmp-you_shien_2_nenkan_jitsu $tmp-higaitou_nenkan_jitsu $tmp-you_kaigo_1_nenkan_jitsu $tmp-you_kaigo_2_nenkan_jitsu $tmp-you_kaigo_3_nenkan_jitsu $tmp-you_kaigo_4_nenkan_jitsu $tmp-you_kaigo_5_nenkan_jitsu |
+lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$1+$2+$3+$4+$5+$6+$7+$8' |
+# 1:支援1 2:支援2 3:非該当 4:介護1 5:介護2
+# 6:介護3 7:介護4 8:介護5  9:合計
+sed -e "s/ 0 / @ /g" -e "s/ 0 / @ /g" -e "s/^0 /@ /" -e "s/ 0$/ @/" |
+awk '{print "nenkan_jitsu_goukei",$0}'                                      > $tmp-nenkan_jitsu_goukei
+
+
+
+
+
+tcat  $tmp-search_data  $tmp-jitsukei_goukei $tmp-nobe_goukei $tmp-nenkan_jitsu_goukei
+
+
+
+## 終了
+rm -f $tmp-*
+exit 0

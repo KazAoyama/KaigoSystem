@@ -1,0 +1,428 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.SEARCH : 月間バイタルグラフ検索用CGI
+#
+# Usage : KAIGOJISSEKI_GRAPH_MONTHLY_VITAL.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月の取得
+echo ${nengetsu} > ${tmp}-nengetsu
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 検索する年月の日にちを取得
+mdate ${nengetsu}m    > ${tmp}-search_month
+
+# 検索する
+cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU_VITAL     |
+# 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻 11:所要時間 12:備考 13:実施者 14:登録時間 15:ID
+LANG=C sort -k1,1n                                                      |
+join0 key=1 ${tmp}-taishosha                                            |
+sed 's/_/0/g'                                                           > ${tmp}-taisho_data
+[ "$(gyo ${tmp}-taisho_data)" = 0 ] && exit 0
+# まわしてsearchdata作成
+for day in $(cat ${tmp}-search_month);do
+  cat ${tmp}-taisho_data             |
+  # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻 11:所要時間 12:備考 13:実施者 14:登録時間 15:ID
+  LANG=C sort -k2,2n                 |
+  join0 key=2 <(echo $day)           > ${tmp}-original
+  if [ -s ${tmp}-original ];then
+    # 体温
+    cat ${tmp}-original                |
+    self 1 2 3                         > $tmp-taion_base
+    taion_kaisu=$(cat $tmp-taion_base | awk '$3!=0' | gyo)
+    if [ "${taion_kaisu}" = 0 ];then
+      cat $tmp-taion_base                > $tmp-taion
+    else
+      cat $tmp-taion_base                |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${taion_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.1                         > $tmp-taion
+    fi
+    # 血圧(上)
+    cat ${tmp}-original                |
+    self 1 2 4                         > $tmp-ketsu_ue_base
+    ketsu_ue_kaisu=$(cat $tmp-ketsu_ue_base | awk '$3!=0' | gyo)
+    if [ "${ketsu_ue_kaisu}" = 0 ];then
+      cat $tmp-ketsu_ue_base             > ${tmp}-ketsu_ue
+    else
+      cat $tmp-ketsu_ue_base             |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${ketsu_ue_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-ketsu_ue
+    fi
+    # 血圧(下)
+    cat ${tmp}-original                |
+    self 1 2 5                         > $tmp-ketsu_shita_base
+    ketsu_shita_kaisu=$(cat $tmp-ketsu_shita_base | awk '$3!=0' | gyo)
+    if [ "${ketsu_shita_kaisu}" = 0 ];then
+      cat $tmp-ketsu_shita_base          > ${tmp}-ketsu_shita
+    else
+      cat $tmp-ketsu_shita_base          |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${ketsu_shita_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-ketsu_shita
+    fi
+    # 脈拍
+    cat ${tmp}-original                |
+    self 1 2 6                         > $tmp-myakuhaku_base
+    myakuhaku_kaisu=$(cat $tmp-myakuhaku_base | awk '$3!=0' | gyo)
+    if [ "${myakuhaku_kaisu}" = 0 ];then
+      cat $tmp-myakuhaku_base          > $tmp-myakuhaku
+    else
+      cat $tmp-myakuhaku_base            |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${myakuhaku_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-myakuhaku
+    fi
+    # 呼吸
+    cat ${tmp}-original                |
+    self 1 2 7                         > $tmp-kokyu_base
+    kokyu_kaisu=$(cat $tmp-kokyu_base | awk '$3!=0' | gyo)
+    if [ "${kokyu_kaisu}" = 0 ];then
+      cat $tmp-kokyu_base              > $tmp-kokyu
+    else
+      cat $tmp-kokyu_base                |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${kokyu_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-kokyu
+    fi
+    # SAT
+    cat ${tmp}-original                |
+    self 1 2 8                         > $tmp-sat_base
+    sat_kaisu=$(cat $tmp-sat_base | awk '$3!=0' | gyo)
+    if [ "${sat_kaisu}" = 0 ];then
+      cat $tmp-sat_base                > $tmp-sat
+    else
+      cat $tmp-sat_base                  |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${sat_kaisu}'"}'   |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-sat
+    fi
+    # 体重
+    cat ${tmp}-original                |
+    self 1 2 9                         > $tmp-taijyu_base
+    taijyu_kaisu=$(cat $tmp-taijyu_base | awk '$3!=0' | gyo)
+    if [ "${taijyu_kaisu}" = 0 ];then
+      cat $tmp-taijyu_base             > $tmp-taijyu
+    else
+      cat $tmp-taijyu_base               |
+      sm2 1 2 3 3                        |
+      awk '{print $0,"'${taijyu_kaisu}'"}' |
+      lcalc '$1,$2,$3/$4'                |
+      marume 3.0                         > ${tmp}-taijyu
+    fi
+    # 合体
+    loopj num=2 ${tmp}-taion ${tmp}-ketsu_ue ${tmp}-ketsu_shita ${tmp}-myakuhaku ${tmp}-kokyu ${tmp}-sat ${tmp}-taijyu |
+    awk '{print $1,substr($2,7,2),$3,$4,$5,$6,$7,$8,$9}'                                                               >> ${tmp}-daydata
+    # 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+  else
+    :               
+  fi
+  rm ${tmp}-original
+done
+  
+# データを整形
+# 先に目盛りの日にちデータを作成
+cat  ${tmp}-search_month             |
+tarr                                 |
+awk '{print substr($1,7,2),"0"}'     > ${tmp}-calender
+
+# 表のヘッダーを作成
+echo "日付"                           |
+cat - ${tmp}-calender                 |
+self 1                                |
+yarr                                  > ${tmp}-header
+
+#--------------------------------------------------------------------------------
+# 体重
+#--------------------------------------------------------------------------------
+cat ${tmp}-daydata                    |
+# 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+self 2 9                              |
+# 1:日 2:体温
+awk '$2!="0"'                         > ${tmp}-taijyuuu
+if [ "$(gyo ${tmp}-taijyuuu)" = "0" ];then
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+  yarr                                 |
+  sed 's/ /,/g'                         |
+  awk '{print "taijyu",$0}'          > ${tmp}-taijyu_data
+# 体重の表のデータ
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "体重",$0}'              > ${tmp}-taijyu_hyo
+else
+  cat ${tmp}-taijyuuu                 |
+  loopj num=1 - ${tmp}-calender         |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+  # 1:['日' 2:体重]
+  yarr                                  |
+  sed 's/ /,/g'                         |
+  awk '{print "taijyu",$0}'             > ${tmp}-taijyu_data
+
+# 体重の表のデータ
+  cat ${tmp}-taijyuuu                 |
+  loopj num=1 - ${tmp}-calender         |
+  self 2                              |
+  yarr                                |
+  awk '{print "体重",$0}'             > ${tmp}-taijyu_hyo
+fi
+
+#--------------------------------------------------------------------------------
+# 体温
+#--------------------------------------------------------------------------------
+cat ${tmp}-daydata                    |
+# 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+self 2 3                              |
+# 1:日 2:体温
+awk '$2!="0"'                         |
+tee ${tmp}-taion_totyu                |
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "taion",$0}'              > ${tmp}-taion_data
+
+# 体温の表のデータ
+if [ "$(gyo  "${tmp}-taion_totyu")" = 0 ];then
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+  yarr                                 |
+  sed 's/ /,/g'                        |
+  awk '{print "taion",$0}'             > ${tmp}-taion_data
+
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "体温",$0}'              > ${tmp}-taion_hyo
+else
+  loopj num=1  ${tmp}-taion_totyu ${tmp}-calender |
+  self 2                               |
+  yarr                                 |
+  awk '{print "体温",$0}'              > ${tmp}-taion_hyo
+fi
+
+#--------------------------------------------------------------------------------
+# 脈拍
+#--------------------------------------------------------------------------------
+cat ${tmp}-daydata                    |
+# 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+self 2 6                              |
+# 1:日 2:体温
+awk '$2!="0"'                         |
+tee ${tmp}-myakuhaku_totyu                |
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "myakuhaku",$0}'          > ${tmp}-myakuhaku_data
+
+# 脈拍の表のデータ
+if [ "$(gyo  "${tmp}-myakuhaku_totyu")" = 0 ];then
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+  yarr                                 |
+  sed 's/ /,/g'                        |
+  awk '{print "myakuhaku",$0}'         > ${tmp}-myakuhaku_data
+
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "脈拍",$0}'              > ${tmp}-myakuhaku_hyo
+else
+  loopj num=1  ${tmp}-myakuhaku_totyu ${tmp}-calender |
+  self 2                               |
+  yarr                                 |
+  awk '{print "脈拍",$0}'              > ${tmp}-myakuhaku_hyo
+fi
+
+
+#--------------------------------------------------------------------------------
+# 呼吸
+#--------------------------------------------------------------------------------
+cat ${tmp}-daydata                    |
+# 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+self 2 7                              |
+# 1:日 2:体温
+awk '$2!="0"'                         |
+tee ${tmp}-kokyu_totyu                |
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+# 1:['日' 2:体重]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "kokyu",$0}'          > ${tmp}-kokyu_data
+
+# 呼吸の表のデータ
+if [ "$(gyo  "${tmp}-kokyu_totyu")" = 0 ];then
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+  yarr                                 |
+  sed 's/ /,/g'                        |
+  awk '{print "kokyu",$0}'             > ${tmp}-kokyu_data
+
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "呼吸",$0}'              > ${tmp}-kokyu_hyo
+else
+  loopj num=1  ${tmp}-kokyu_totyu ${tmp}-calender |
+  self 2                               |
+  yarr                                 |
+  awk '{print "呼吸",$0}'              > ${tmp}-kokyu_hyo
+fi
+
+#--------------------------------------------------------------------------------
+# 血圧
+#--------------------------------------------------------------------------------
+cat ${tmp}-daydata                    |
+# 1:利用者 2:日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重
+self 2 5 4                            |
+# 1:日 2:血圧(下) 3:血圧(上)
+awk '$2!="0" || $3!="0"'              |
+tee ${tmp}-ketsu_totyu                |
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2,$3"]"}' |
+# 1:['日' 2:血圧(下) 3:血圧(上)]
+yarr                                  |
+sed 's/ /,/g'                         |
+awk '{print "ketsu",$0}'              > ${tmp}-ketsu_data
+
+# 血圧の表のデータ
+if [ "$(gyo  "${tmp}-ketsu_totyu")" = 0 ];then
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2,$3"]"}' |
+  yarr                                 |
+  sed 's/ /,/g'                        |
+  awk '{print "ketsu",$0}'             > ${tmp}-ketsu_data
+
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "血圧(上)",$0}'              > ${tmp}-ketsu_ue_hyo
+
+  cat  ${tmp}-search_month             |
+  tarr                                 |
+  awk '{print substr($1,7,2),"0"}'     |
+  self 2                               |
+  yarr                                 |
+  awk '{print "血圧(下)",$0}'              > ${tmp}-ketsu_shita_hyo
+else
+  # 血圧(下)
+  cat  ${tmp}-ketsu_totyu              |
+  self 1 2                             |
+  loopj num=1 - ${tmp}-calender        |
+  self 2                               |
+  yarr                                 |
+  awk '{print "血圧(下)",$0}'          > ${tmp}-ketsu_shita_hyo
+  # 血圧(上)
+  cat  ${tmp}-ketsu_totyu              |
+  self 1 3                             |
+  loopj num=1 - ${tmp}-calender        |
+  self 2                               |
+  yarr                                 |
+  awk '{print "血圧(上)",$0}'          > ${tmp}-ketsu_ue_hyo
+fi
+
+
+cat  ${tmp}-search_month             |
+tarr                                 |
+awk '{print substr($1,7,2),"0"}'     |
+awk 'BEGIN{OFS=","}{print "[""'\''"$1"'\''",$2"]"}' |
+yarr                                 |
+sed 's/ /,/g'                         |
+awk '{print "memori",$0}'          > ${tmp}-momeri
+
+
+cat ${tmp}-taijyu_data ${tmp}-taion_data ${tmp}-myakuhaku_data ${tmp}-kokyu_data ${tmp}-ketsu_data ${tmp}-header ${tmp}-taijyu_hyo ${tmp}-taion_hyo ${tmp}-myakuhaku_hyo ${tmp}-kokyu_hyo ${tmp}-ketsu_ue_hyo ${tmp}-ketsu_shita_hyo
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

@@ -1,0 +1,426 @@
+#!/bin/bash
+#
+# CARE_SHISETSU_CAREPLAN.DISPLAY : アセスメント表示
+#
+# Usage : CARE_SHISETSU_CAREPLAN.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+list_data=$3
+result_data=$4
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# shisetsu_tateya_floor_roomのマスタ準備
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM  |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+#join0 key=2 <(echo "00")                                     |
+awk '$(NF-2)!="9"'             > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${home_dir}/TBL/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER                           |
+self 1 2        > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+#join0 key=2 <(echo "00")                                     |
+awk '$8>="'${today}'"'                   > $tmp-riyosha_status
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+if [ "$MODE" = "init" ];then
+# nameをクリアする
+  dispFloor=$(cat $tmp-shisetsu_tateya_floor_id                      |
+          self 3 | head -n1)
+  dispUnit=$(cat $tmp-shisetsu_tateya_floor_id                      |
+         self 4 | head -n1)
+else
+  :
+fi
+
+# 利用者名の取得
+if [ -n "${Riyoushaid}" -a "${Riyoushaid}" != "_" ];then
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$3=="'${dispFloor}'" && $4=="'${dispUnit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1n                                                |
+  join1 key=1 $tmp-riyosha_master                                   |
+  awk '{print $0,"'${Riyoushaid}'"}'                              |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   |
+  LANG=C sort -k1,2 -u                                             |
+  sed 's/###SPACE###/　/g'                                         > ${tmp}-riyosha_name
+else
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$3=="'${dispFloor}'" && $4=="'${dispUnit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1n                                                |
+  join1 key=1 $tmp-riyosha_master                                   |
+  awk '{print $0,""}'                                               |
+  LANG=C sort -k1,2 -u                                              |
+  sed 's/###SPACE###/　/g'                                          > ${tmp}-riyosha_name
+fi
+# フロアの取得
+if [ -n "${dispFloor}" -a "${dispFloor}" != "_" ];then
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $0,"'${dispFloor}'"}'                                |
+# 1:FLOOR_CODE 2:floor_name
+  awk '{if($1==$2){print $1,$1"F","selected"}else{print $1,$1"F",""}}'   > ${tmp}-floor_name
+else
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${dispUnit}" -a "${dispUnit}" != "_" ];then
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  awk '$3=="'${dispFloor}'"'                                       |
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  awk '{print $0,"'${dispUnit}'"}'                                 |
+# 1:UNTI_CODE 2:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-unit_master                                 > $tmp-unit_name
+fi
+
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,$3,$4}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+# 元号
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+LANG=C sort -k3,3nr                                |
+awk '$5!="9"{print $2,substr($3,1,4)-1}'        > $tmp-gengou_mst
+
+# 入居者情報(仮)
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:和暦開始 5:和暦終了
+# 6:誕生日年 7:誕生日月   8:誕生日 9:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    # 空のリストデータを作成する
+    cat ${list_data} > $tmp-listdata
+  ;;
+
+  # 検索結果
+#  search)
+#    if [ "$(gyo ${result_data})" != 0 ] ; then
+#      cat ${result_data}        |
+      # 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終>更新日時
+      # 6:最終更新者
+#      LANG=C sort -k6,6nr       |
+#      self 1 2 3 4 5            |
+#      rank                      |
+#      head -10                  > $tmp-listdata
+#    else
+#      : > $tmp-listdata
+#    fi
+#  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    cat ${list_data} > $tmp-listdata
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+cat $tmp-listdata   |
+delf 1 2            > $tmp-listdata2
+
+#if [ "$(gyo $tmp-listdata2)" != "0" ] ; then
+#   hdKeikakuSakuseiDate=$(cat $tmp-listdata | self 2 | uniq)
+#fi
+
+# 和暦変換（変更日）
+cat $tmp-gengou_master |
+awk '$3<="'$hdKeikakuSakuseiDate'"&&"'$hdKeikakuSakuseiDate'"<=$4' |
+awk '{print $2,"'$hdKeikakuSakuseiDate'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-sakusei_date
+
+dispKeikakuSakuseiDate=$(cat $tmp-sakusei_date)
+#dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!=""{print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+# 仮ＣＧＩ設定
+echo "KAIGO_KANGO_YOUYAKU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+select_riyosha_id=$(self 1 $tmp-riyosha_name | head -1)
+
+awk '$(NF-2)!="9"{print $2}' ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_KAIGO_KEIKAKU |
+LANG=C sort -k1r,1r |
+awk '{if($1=="'${Rireki}'"){print $1,$1,"selected"}else{print $1,$1,"　"};}' > $tmp-rireki
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### ${Riyoushaid}
+###USERID### ${USER_ID}
+###RIYOUSHAMEI### $Riyoushamei
+###KEIKAKUSAKUSEIDATE### ${dispKeikakuSakuseiDate}
+###HDKEIKAKUSAKUSEIDATE### ${hdKeikakuSakuseiDate}
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###SELECT_SHISETSU### $select_shisetsu
+###HDKENSAKUDATE### $hdkensakudate
+###HDSHISETSUKENSAKU### $hdShisetsuKensaku
+###HDCAREMANAGERKENSAKU### $hdCaremanagerKensaku
+FIN
+
+# 訪問介護サービス事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER   |
+# 1:ID          2:事業所名  3:電話番某      4:住所   5:金融コード
+# 6:支店コード  7:口座区分  8:口座番号      9:口座名 10:郵便番号
+# 11:有効フラグ 12:処理時刻 13:ユーザコード
+awk '$11!="9"'                                      |
+LANG=C sort -k1,1                                   |
+self 1 2 4                                 > $tmp-kyotaku_master
+
+
+# 施設による事業所マスタフィルタリング
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/SHISETSU_JIGYOUSHO_MASTER  |
+awk '$2=="'${shisetsu}'"&&$(NF-2)!="9"{print $1}'                |
+LANG=C sort -k1,1                                   > $tmp-shisetsu_jigyousho
+
+# グランクレールケアサービス横浜、馬事公苑
+# 馬事公苑
+echo "0029" "1" > $tmp-jigyousho-sort
+# 横浜
+echo "0070" "1" >> $tmp-jigyousho-sort
+
+
+# 事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER      |
+LANG=C sort -k1,1                                       |
+# 施設ごとに関連する事業者に絞る
+join0 key=1 $tmp-shisetsu_jigyousho                     |
+# 1:事業所ID 2:事業所名 3:事業所タイプ
+awk '$(NF-2)!="9" {print $1,$3,$4}'                     |
+LANG=C sort -k3,3                                   |
+join1 key=3 ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+awk '$3=="11"||$3=="12"||$3=="13"||$3=="14"||$3=="15"||$3=="16"||$3=="17"||$3=="21"||$3=="22"||$3=="23"||$3=="31"||$3=="41"||$3=="43"||$3=="71"||$3=="72"'       |
+# 1:事業所ID 2:事業所名 3:事業所タイプ 4:サービスタイプ 5:サービスタイプ名
+self 1 2 3                                          |
+LANG=C sort -k1,3                                   |
+join2 +"0" key=1 $tmp-jigyousho-sort                |
+LANG=C sort -k2,2nr                                 |
+delf 2                                              > ${tmp}-jigyousho_master1
+
+# カスタム事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/CUSTOM_JIGYOUSHO_MASTER      |
+awk '$46!="9" {print $1,$3,$4}'                     |
+LANG=C sort -k1,3                                   > ${tmp}-jigyousho_master2
+
+cat ${tmp}-jigyousho_master1 ${tmp}-jigyousho_master2 > ${tmp}-jigyousho_master
+
+# 介護タイプ
+cat ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+awk '$1=="11"||$1=="12"||$1=="13"||$1=="14"||$1=="15"||$1=="16"||$1=="17"||$1=="21"||$1=="22"||$1=="23"||$1=="31"||$1=="41"||$1=="43"||$1=="71"||$1=="72"||$1=="aa"'  |
+self 1 3                                > $tmp-kaigotype_mst
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+#############################
+####　テスト設定
+#############################
+echo "3" > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+cat ${checkfile} >> $tmp-calsed
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/CARE_SHISETSU_CAREPLAN1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/CARE_SHISETSU_CAREPLAN2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###UNIT_NAME### - ${tmp}-unit_name |
+mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+mojihame -l###RIREKI_SELECT### - ${tmp}-rireki |
+mojihame -h###MOKUHYOU### - $tmp-listdata2 |
+mojihame -l###JIGYOUSHOMASTER### - $tmp-jigyousho_master  |
+mojihame -l###GENGOU### - $tmp-gengou_mst  |
+mojihame -l###KAIGOTYPE### - $tmp-kaigotype_mst  |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

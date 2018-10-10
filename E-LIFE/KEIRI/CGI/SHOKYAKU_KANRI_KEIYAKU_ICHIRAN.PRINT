@@ -1,0 +1,194 @@
+#!/bin/bash
+#
+# SHOKYAKU_KANRI.DISPLAY : 償却管理.DISPLAY
+#
+# Usage : SHOKYAKU_KANRI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+this_year="$(date +%Y)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+
+# 建屋の取得
+awk '$1=="'${shisetsu}'"{print $2}' ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR    |
+LANG=C sort -u                                              |
+join1 key=1 ${hometbl_dir}/SHISETSU_MASTER/TATEYA_NAME -    |
+self 1 3                                                    |
+awk '$1=="'${tateya_select}'"{print $2}'                    > $tmp-tateya
+
+# floorの取得
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR       |
+# 1:施設id 2:建屋id 3:フロア
+awk '$1=="'${shisetsu}'" && $2=="'${tateya_select}'"'          |
+self 3                                                         > $tmp-floor_set
+echo "0"                                                       |
+cat - $tmp-floor_set                                           |
+awk '{print $0,"'${floor_select}'"}'                           |
+awk '{if($1==$2){print $1"F"}}' |
+sed 's/0F/全て/g'                                              > $tmp-floor
+
+# 一時金種別の取得
+cat ${hometbl_dir}/RIYOURYOU_MASTER/KEIYAKUKIN_MASTER   |
+# 1:施設ID 2:契約金種別ID 3:契約金種別名 4:順番 5:有効フラグ
+awk '$1=="'${shisetsu}'" && $3!="_"'                    |
+awk '$2=="'${shubetsu_select}'"&&$5==1{print $3}'         > $tmp-shubetsu
+SHUBETSU=$(cat $tmp-shubetsu)
+
+# searchfileの処理
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2                          > $tmp-riyosha_kihon
+
+
+if [ "$(gyo $searchfile)" -ne 0 ];then
+  cat $searchfile          
+else
+  : 
+fi                               > $tmp-search
+cat $tmp-search                  |
+if [ "${hyoji_jun}" = "sort_room" ];then
+  LANG=C sort -k1,1
+else
+  LANG=C sort 
+fi                               |
+comma 5 6 7 8 9                  |
+juni                             > $tmp-search_data
+cp $tmp-search_data ${work}/searchdata
+
+
+# 合計行追加
+cat $tmp-search                  |
+sm2 0 0 5 NF                     |
+awk '{print "@","@","合計","@","@",$0}' |
+comma 6 7 8 9 10                 > ${tmp}-goukei_data
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###SHUBETSU### ${SHUBETSU}
+###NENGETSU### $NENGETSU
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+# ページ分け 26行で分ける
+ALL=$(gyo $tmp-search_data)
+PAGE=$(echo "$ALL 26" | lcalc '$1/$2' | marume +age 1.0)
+
+cat ${html_dir}/SHOKYAKU_KANRI_ICHIRAN_PRINT.html               > $tmp-base.html
+
+# ヘッダー部分
+awk '/\<header_kokokara\>/,/\<header_kokomade\>/' $tmp-base.html  > $tmp-header.html
+
+# フッター部分
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-last.html
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+<div style="page-break-after:always;"></div>
+FIN
+
+for page in $(seq ${PAGE} | yarr);do
+  # 最初の行と最後の行
+  START=$(echo ${page} | lcalc '$1*26-25')
+  END=$(echo ${page} | lcalc '$1*26')
+
+  awk 'NR>='${START}'&&NR<='${END}'' $tmp-search_data > $tmp-meisai_data
+  echo "${page} ${PAGE}" > $tmp-page_number
+  
+  # html作成
+  # 最終ページかどうか
+  if [ "${page}" = "${PAGE}" ];then
+    awk '/\<kiritori_kokokara\>/,/\<last_kokomade\>/' $tmp-base.html |
+    mojihame -l###SEARCH_KEKKA### - ${tmp}-meisai_data                 |
+    mojihame -l###GOUKEI_KEKKA### - ${tmp}-goukei_data                 |
+    mojihame -l###PAGE_NUMBER### - ${tmp}-page_number                  |
+    calsed -f ${tmp}-calsed -
+  else
+    awk '/\<kiritori_kokokara\>/,/\<kiritori_kokomade\>/' $tmp-base.html |
+    cat - $tmp-last.html                                                 |
+    mojihame -l###SEARCH_KEKKA### - ${tmp}-meisai_data                   |
+    mojihame -l###PAGE_NUMBER### - ${tmp}-page_number                  |
+    calsed -f ${tmp}-calsed -
+  fi                                                                   
+done                                                                   |
+cat $tmp-header.html -                                                 > $tmp-base_pdf.html
+cp $tmp-base_pdf.html ${work}/base.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.SHOKYAKU_KANRI.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.SHOKYAKU_KANRI.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0
+

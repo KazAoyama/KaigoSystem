@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>訪問介護実績入力</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap.css">
+    
+    <link rel="stylesheet" type="text/css" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/font.css">
+    <link rel="stylesheet" href="/css/jquery-ui.css" />
+    <script src="/js/jquery-1.7.2.min.js" type="text/javascript"></script>
+    <script src="/js/jquery-ui.js"></script>
+	<script src="/js/validateUtils.js"></script>
+	<script src="/js/messageMaster.js"></script>
+ <script>
+
+
+    // 確定フラグ
+    kakuteiflg="###KAKUTEIFLG###";
+
+    // テスト設定
+        // 施設パラメータセット
+        var Douitsu="###DOUITSU_GENSAN###";
+        var servicemanager="###SERVICEMANAGER_GENSAN###";
+    // 事業所情報
+        var JigyoushaType="###JIGYOUSHATYPE###";
+        var JigyoushaScale="###SHISETSUKBN###";
+
+    // 介護度
+        var youkaigodo="###YOUKAIGODO###";
+
+
+    // 介護計画書で設定した内容を反映(担当者、対象月で検索)
+
+    datad = [
+//         ###JISSEKILIST###
+             {"id":"%1","day":"%2","start":"%3","end":"%4","code":"%5","seikyu":"%6","helper1":"%7",
+              "helper2":"%8","naiyou":"%9","unittime":"%10","kinkyu":"%11","shousai":"%12"},
+//         ###JISSEKILIST###
+       ];
+
+ Tantousha = [
+//         ###HELPERLIST###
+      { "id": "%1", "name":"%2"},
+//         ###HELPERLIST###
+     ];
+
+    Kaigonaiyoud = [
+      { "id": "1", "value":"身体介護中心"},
+      { "id": "2", "value":"生活援助中心"},
+      { "id": "4", "value":"身体介護に続き生活援助を実施"},
+      { "id": "3", "value":"通院など乗降介助中心"},
+        ];
+
+    Seikyud = [
+            {"id":"1","value":"介護保険対象"},
+            {"id":"0","value":"請求対象外"},
+        ];
+
+    ServiceKbn = [
+//                     ###SERVICECODE###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","unit":"%13","fee":"%14"},
+//                     ###SERVICECODE###
+  ];
+
+
+
+ var dataArrEventRiyoushaId = new Array();
+
+        var jissekihtml="";
+        var jissekinum=0;
+
+ jQuery(function(){
+
+        if(kakuteiflg=="1") {
+             $("#KakuteiFlg").text("確定済");
+             $("#KakuteiFlg").removeClass("btn-alpha").addClass("btn-echo");
+             $("#KakuteiFlg").attr("disabled","disabled");
+             $("#regist").attr("disabled","disabled");
+             $("#add").attr("disabled","disabled");
+        }
+
+
+        function setTantouHelperPulldown(num) {
+           if(Tantousha.length>0) {
+               for (var h in Tantousha) {
+                   $('.ServiceJissekiTantouHelper').eq(num).append("<option value=\""+Tantousha[h].id+"\">"+Tantousha[h].name+"</option>");
+               }
+           }
+        }
+
+//        setTantouHelperPulldown(0);
+
+        function setDoukouHelperPulldown(num) {
+           if(Tantousha.length>0) {
+               for (var h in Tantousha) {
+                   $('.ServiceJissekiDoukouHelper').eq(num).append("<option value=\""+Tantousha[h].id+"\">"+Tantousha[h].name+"</option>");
+               }
+           }
+        }
+
+//        setDoukouHelperPulldown(0);
+  
+        function setKaigonaiyouPulldown(num) {
+            if(Kaigonaiyoud.length>0) {
+                for (var k in Kaigonaiyoud) {
+                    $('.ServiceJissekiKaigoNaiyou').eq(num).append('<option value="'+Kaigonaiyoud[k].id+'">'+Kaigonaiyoud[k].value+'</option>');
+                }
+            }
+        }
+
+//        setKaigonaiyouPulldown(0);
+
+        function setSeikyuPulldown(num) {
+            if(Seikyud.length>0) {
+               for (var s in Seikyud) {
+                  $('.ServiceJissekiSeikyuTaishou').eq(num).append('<option value="'+Seikyud[s].id+'">'+Seikyud[s].value+'</option>');
+               }
+            }
+        }
+
+//        setSeikyuPulldown(0);
+
+        function setServiceKbnPulldown(num) {
+            if(ServiceKbn.length>0) {
+               for (var sk in ServiceKbn) {
+//                 $('.ServiceJissekiServiceKbn').eq(num).append('<option value="'+ServiceKbn[sk].jigyoushatype+ServiceKbn[sk].id+'">'+ServiceKbn[sk].value+'</option>');
+                 $('.ServiceJissekiServiceKbn').eq(num).append('<option value="'+ServiceKbn[sk].id+'">'+ServiceKbn[sk].value+'</option>');
+               }
+            }
+        }
+
+//        setServiceKbnPulldown(0);
+
+//  対象年月を本日の日付を中心に計算
+        TaishouDate = new Date(###TAISHOUKIKAN###);
+        TaishouYear = TaishouDate.getFullYear();
+        TaishouFromYear = TaishouYear-1;
+        TaishouToYear = TaishouYear+1;
+        tmpTaishouMonth = TaishouDate.getMonth()+1;
+        TaishouMonth = ('00'+tmpTaishouMonth).slice(-2);
+
+        var dataArrValueFormat=new Array();
+        var dataArrPostValue=new Array();
+
+        function setJissekiFormat(y,m) {
+            dataArrValueFormat=new Array();
+            var NumOfMonth = new Date(y,m,0).getDate();
+            for(var i=0;i<NumOfMonth;i++) {
+                dataArrValueFormat.push("_");
+            }
+        }
+
+
+        for(var y=TaishouFromYear; y<=TaishouToYear; y++) {
+             if (y==TaishouYear) {
+                 $('#TaishouNen').append('<option value="'+y+'" selected>'+y+'</option>');
+             } else {
+                 $('#TaishouNen').append('<option value="'+y+'">'+y+'</option>');
+             }
+        }
+
+        for(var m=1; m<=12; m++) {
+             if (m==TaishouMonth) {
+                     valueM=('00'+m).slice(-2);
+              $('#TaishouTsuki').append('<option value="'+valueM+'" selected>'+m+'</option>');
+             } else {
+                     valueM=('00'+m).slice(-2);
+              $('#TaishouTsuki').append('<option value="'+valueM+'">'+m+'</option>');
+             }
+        }
+
+        $('#CareplanHanei').click(function(){
+            $('#MODE').val('careplan');
+            $('*[name="TaishouNen"]').val($('#TaishouNen').val());
+            $('*[name="TaishouTsuki"]').val($('#TaishouTsuki').val());
+            document.frmHoumonkaigoJisseki.submit(); 
+        });
+
+        $('#Jisseki').click(function(){
+            $('#MODE').val('search');
+            $('*[name="TaishouNen"]').val($('#TaishouNen').val());
+            $('*[name="TaishouTsuki"]').val($('#TaishouTsuki').val());
+            document.frmHoumonkaigoJisseki.submit(); 
+        });
+
+
+        $('#add').live('click',function(){
+            setHTMLFormatJisseki();
+        });
+
+        function setHTMLFormatJisseki() {
+            jissekihtml="";
+            jissekihtml=jissekihtml+'<tr>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<input type="text" id="ServiceJissekiDate'+jissekinum+'" name="ServiceJissekiDate'+jissekinum+'" class="ServiceJissekiDate" style="background-color:lightyellow;width:100%" readonly>';
+            jissekihtml=jissekihtml+'<input type="hidden" id="DataID'+jissekinum+'" name="DataID'+jissekinum+'" ></td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px" id="ServiceJissekiYoubi'+jissekinum+'" name="ServiceJissekiYoubi'+jissekinum+'" class="ServiceJissekiYoubi">';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<select id="ServiceJissekiTantouHelper'+jissekinum+'" name="ServiceJissekiTantouHelper'+jissekinum+'" class="ServiceJissekiTantouHelper"><option value=""></option></select>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<select id="ServiceJissekiDoukouHelper'+jissekinum+'" name="ServiceJissekiDoukouHelper'+jissekinum+'" class="ServiceJissekiDoukouHelper"><option value=""></option></select>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<input type="time" id="ServiceJissekiHakenJikanStart'+jissekinum+'" name="ServiceJissekiHakenJikanStart'+jissekinum+'" class="ServiceJissekiHakenJikanStart" style="width:80px" value="">～';
+            jissekihtml=jissekihtml+'<input type="time" id="ServiceJissekiHakenJikanEnd'+jissekinum+'" name="ServiceJissekiHakenJikanEnd'+jissekinum+'" class="ServiceJissekiHakenJikanEnd" style="width:80px" value="">';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<select id="ServiceJissekiKaigoNaiyou'+jissekinum+'" name="ServiceJissekiKaigoNaiyou'+jissekinum+'" class="ServiceJissekiKaigoNaiyou"><option value=""></option></select>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px;display:none">';
+            jissekihtml=jissekihtml+'<input type="number" style="width:80px" step="1" min="0" placeholder="30" id="ServiceJissekiTaniJikan'+jissekinum+'" name="ServiceJissekiTaniJikan'+jissekinum+'">';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'緊急加算<input type="checkbox" id="ServiceJissekiKinkyuKasan'+jissekinum+'" name="ServiceJissekiKinkyuKasan'+jissekinum+'" class="ServiceJissekiKinkyuKasan" value="1">';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<select id="ServiceJissekiServiceKbn'+jissekinum+'" name="ServiceJissekiServiceKbn'+jissekinum+'" class="ServiceJissekiServiceKbn">';
+            jissekihtml=jissekihtml+'<option value=""></option>';
+            jissekihtml=jissekihtml+'</select>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px">';
+            jissekihtml=jissekihtml+'<select id="ServiceJissekiSeikyuTaishou'+jissekinum+'" name="ServiceJissekiSeikyuTaishou'+jissekinum+'" class="ServiceJissekiSeikyuTaishou"></select>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#bbbbbb solid 2px"><input type="hidden" id="PostRiyouhyou'+jissekinum+'" name="PostRiyouhyou'+jissekinum+'">';
+            jissekihtml=jissekihtml+'<button type="button" id="ServiceJissekiDetail'+jissekinum+'" name="ServiceJissekiDetail'+jissekinum+'" class="ServiceJissekiDetail"  disabled >詳細</button>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'</tr>';
+
+            $('#JissekiIchiran').append(jissekihtml);
+
+            setTantouHelperPulldown(jissekinum);
+            setDoukouHelperPulldown(jissekinum);
+            setKaigonaiyouPulldown(jissekinum);
+            setSeikyuPulldown(jissekinum);
+            setServiceKbnPulldown(jissekinum);
+            setJissekiDateFMT(jissekinum);
+
+            TN=$('#TaishouNen').val();
+            TT=$('#TaishouTsuki').val();
+            $('#ServiceJissekiDate'+jissekinum).datepicker("option","minDate",new Date(TN,TT-1,1));
+            $('#ServiceJissekiDate'+jissekinum).datepicker("option","maxDate",new Date(TN,TT,1-1));
+
+            jissekinum++;
+        }
+        
+        $("#KakuteiFlg").click(function(){
+                var Text = $(this).text();
+                if (Text == '未確定'){
+                  $(this).text('確定済');
+            $(this).removeClass("btn-alpha").addClass("btn-echo");
+            $(this).val('1');
+                } else {
+            $(this).text('未確定');
+            $(this).removeClass("btn-echo").addClass("btn-alpha");
+            $(this).val('_');
+                }
+        });
+
+        // メニュー上のボタン制御
+        $("#home").click(function(){
+            document.frmBack.submit();
+        });
+
+        $('.ServiceJissekiDetail').live('click',function(){
+            var idx = $('.ServiceJissekiDetail').index(this);
+            $('#DetailID').val($('#DataID'+idx).val());
+            $('*[name="MODE"]').val('search');
+            $('*[name="Riyoushaid"]').val($('#Riyoushaid').val());
+            $('*[name="USER_ID"]').val($('#USER_ID').val());
+            $('*[name="TaishouNen"]').val($('#TaishouNen').val());
+            $('*[name="TaishouTsuki"]').val($('#TaishouTsuki').val());
+            $('*[name="TaishouDay"]').val($('#ServiceJissekiDate'+idx).val());
+            $('*[name="Kyoukyusha"]').val($('#Kyoukyusha').val());
+            $('*[name="Jigyoushatype"]').val($('#Jigyoushatype').val());
+            document.frmHoumonkaigoDetail.submit();
+        });
+
+        $('#regist').click(function(){
+			//バリデーションチェック
+			var message = "";
+			message += validationCheck();
+			if (message != "") {
+				alert(message);
+				return false;
+			}
+           // 開始時刻、終了時刻、サービス区分によって別々に配列を作る。
+           // 多重連想配列はjavascriptでは不可能なので配列オブジェクトのプロバティ名を
+           // 「開始時間＋終了時間＋サービス区分」とする
+           // その配列にまず、日数分の空の値"_"をセットする。（配列はCSVとして内部で格納される）
+           for(var c=0;c<jissekinum;c++) {
+               dataArrPostValue[$('#ServiceJissekiHakenJikanStart'+c).val()+$('#ServiceJissekiHakenJikanEnd'+c).val()+$('#ServiceJissekiServiceKbn'+c).val()]=new Array();
+               NumOfMonth = new Date(TN,TT,0).getDate();
+               for(var i=0;i<NumOfMonth;i++) {
+                  dataArrPostValue[$('#ServiceJissekiHakenJikanStart'+c).val()+$('#ServiceJissekiHakenJikanEnd'+c).val()+$('#ServiceJissekiServiceKbn'+c).val()].push('_');
+               }
+
+           }
+           // 日（実績）の値を取得し、該当する配列の該当する日数インデックスに1をセットする
+           for(var c=0;c<jissekinum;c++) {
+               if($('#ServiceJissekiDate'+c).val()!="") {
+                  var val=parseInt($('#ServiceJissekiDate'+c).val())-1;
+//                  dataArrValueFormat[val]="1";
+                  dataArrPostValue[$('#ServiceJissekiHakenJikanStart'+c).val()+$('#ServiceJissekiHakenJikanEnd'+c).val()+$('#ServiceJissekiServiceKbn'+c).val()][val]='1';
+               }
+           }
+           // 上記でセットした実績配列を該当のPOSTフォームパラメータにセットする
+           for(var c=0;c<jissekinum;c++) {
+               $('#PostRiyouhyou'+c).val(dataArrPostValue[$('#ServiceJissekiHakenJikanStart'+c).val()+$('#ServiceJissekiHakenJikanEnd'+c).val()+$('#ServiceJissekiServiceKbn'+c).val()]);
+//               alert($('#PostRiyouhyou'+c).val());
+           }
+           $("#MODE").val('regist');
+           $("#JISSEKINUM").val(jissekinum);
+           $('*[name="TaishouNen"]').val($('#TaishouNen').val());
+           $('*[name="TaishouTsuki"]').val($('#TaishouTsuki').val());
+           $('*[name="KakuteiFlg"]').val($('#KakuteiFlg').val());
+           $('*[name="ServiceJissekiShokaiKasan"]').val($('#ServiceJissekiShokaiKasan').val());
+           document.frmHoumonkaigoJisseki.submit();
+        });
+
+
+  // 現状、終了時刻のテキストボックスからフォーカスが離れた際にサービスのプルダウン項目制御が行われる。
+  // 供給者の事業者タイプ、事業者の規模、施設種類、介護度、時間によってフィルタリングされる。
+  function ServiceSelect(idx) {
+                       $('.ServiceJissekiServiceKbn').eq(idx).children().remove();
+                       $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\"\"></option>");
+                       var StartTime=$(".ServiceJissekiHakenJikanStart").eq(idx).val().split(":");
+                       var EndTime=$(".ServiceJissekiHakenJikanEnd").eq(idx).val().split(":");
+                       var StartMinutes=StartTime[0]*60+parseInt(StartTime[1]);
+                       var EndMinutes=EndTime[0]*60+parseInt(EndTime[1]);
+                       var KikanMinutes=parseInt(EndMinutes)-parseInt(StartMinutes);
+                       var Jigyoushatype=$('#Jigyoushatype').val();
+                       var JigyoushaFacilityType=$('.ServiceJissekiKaigoNaiyou').eq(idx).val();
+
+   for (var ks in ServiceKbn) {
+                          if(Jigyoushatype=="11") {
+                            if(ServiceKbn[ks].jigyoushatype=="11") {
+//    if(ServiceKbn[ks].scale==JigyoushaScale&&ServiceKbn[ks].servicemanager==servicemanager&&ServiceKbn[ks].facilitytype==JigyoushaFacilityType) {
+    if(ServiceKbn[ks].scale==JigyoushaScale&&ServiceKbn[ks].servicemanager==servicemanager&&ServiceKbn[ks].douitsu==Douitsu) {
+                                    if(ServiceKbn[ks].min<=KikanMinutes&&KikanMinutes<ServiceKbn[ks].max) {
+                                        if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                            if(ServiceKbn[ks].asayoru=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else if(StartTime[0]>21||StartTime[0]<6) {
+                                            if(ServiceKbn[ks].shinya=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else {
+                                            if(ServiceKbn[ks].asayoru=='1'&&ServiceKbn[ks].shinya=='1') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        }
+                                     } else {
+                                      if(ServiceKbn[ks].min==="_"&&ServiceKbn[ks].max==="_") {
+                                        if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                            if(ServiceKbn[ks].asayoru=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else if(StartTime[0]>21||StartTime[0]<6) {
+                                            if(ServiceKbn[ks].shinya=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else {
+                                            if(ServiceKbn[ks].asayoru=='1'&&ServiceKbn[ks].shinya=='1') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        }
+                                      }
+                                     }
+    } else {
+// 通院介助
+//                                     if(ServiceKbn[ks].scale==JigyoushaScale&&ServiceKbn[ks].min==="_"&&ServiceKbn[ks].max==="_"&&ServiceKbn[ks].facilitytype==JigyoushaFacilityType) {
+                                     if(ServiceKbn[ks].scale==JigyoushaScale&&ServiceKbn[ks].douitsu==Douitsu&&ServiceKbn[ks].servicemanager==servicemanager&&ServiceKbn[ks].min==="_"&&ServiceKbn[ks].max==="_") {
+                                        if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                            if(ServiceKbn[ks].asayoru=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else if(StartTime[0]>21||StartTime[0]<6) {
+                                            if(ServiceKbn[ks].shinya=='2') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        } else {
+                                            if(ServiceKbn[ks].asayoru=='1'&&ServiceKbn[ks].shinya=='1') {
+                    $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                            }
+                                        }
+                                     }
+    }
+                             }
+                           } else {
+                               if(ServiceKbn[ks].jigyoushatype=="61") {
+                                    if((ServiceKbn[ks].kaigodo==youkaigodo||youkaigodo=="2")&&ServiceKbn[ks].servicemanager==servicemanager&&ServiceKbn[ks].douitsu==Douitsu){
+         $('.ServiceJissekiServiceKbn').eq(idx).append("<option value=\""+ServiceKbn[ks].id+"\">"+ServiceKbn[ks].value+"</option>");
+                                    }
+                                }
+
+                           }
+   }
+  }
+
+  $(".ServiceJissekiHakenJikanStart").live('blur',function() {
+                    var idx=$(".ServiceJissekiHakenJikanStart").index(this);
+                   // setInputControl_start(idx);
+      ServiceSelect(idx);
+ 
+//            setKasanControl(idx);
+  });
+
+  $(".ServiceJissekiHakenJikanEnd").live('blur',function() {
+                    var idx=$(".ServiceJissekiHakenJikanEnd").index(this);
+                    //setInputControl_end(idx);
+      ServiceSelect(idx);
+  });
+
+//                $(".ServiceJissekiKaigoNaiyou").live('change',function() {
+//                    var idx=$(".ServiceJissekiKaigoNaiyou").index(this);
+//      ServiceSelect(idx);
+//                });
+
+
+
+        //　時刻入力制御
+
+              function setInputControl_start(num) {
+//  $(".ServiceJissekiHakenJikanStart").eq(num).live('keyup',function(){
+      if($(".ServiceJissekiHakenJikanStart").eq(num).val().match(/:/)){
+    if($(".ServiceJissekiHakenJikanStart").eq(num).val().length<4||$(".ServiceJissekiHakenJikanStart").eq(num).val().length>5) {
+        alert("文字数に誤りがあります。");
+                    $(".ServiceJissekiHakenJikanStart").eq(num).val("");
+                    return false;
+    } else {
+                    var strHour=$(".ServiceJissekiHakenJikanStart").eq(num).val().split(':')[0];
+                    var strMinute=$(".ServiceJissekiHakenJikanStart").eq(num).val().split(':')[1];
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanStart").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $("#ServiceJissekiHakenJikanStart").val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+        var strsei=strHour+":"+strMinute;
+        $(".ServiceJissekiHakenJikanStart").eq(num).val(strsei);
+                }
+   } else {
+    if($(".ServiceJissekiHakenJikanStart").eq(num).val().length<3||$(".ServiceJissekiHakenJikanStart").eq(num).val().length>4) {
+        alert("文字数に誤りがあります。");
+                    $(".ServiceJissekiHakenJikanStart").eq(num).val("");
+                    return false;
+    } else {
+     var strlen=parseInt($(".ServiceJissekiHakenJikanStart").eq(num).val().length);
+     var sentoulen=strlen-2;
+                    var strHour=$(".ServiceJissekiHakenJikanStart").eq(num).val().substr(0,sentoulen);
+                    var strMinute=$(".ServiceJissekiHakenJikanStart").eq(num).val().substr(sentoulen,strlen);
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanStart").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanStart").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+        var strsei=strHour+":"+strMinute;
+        $(".ServiceJissekiHakenJikanStart").eq(num).val(strsei);
+       }
+   }
+//  });
+                }
+              function setInputControl_end(num) {
+        //　時刻入力制御
+//  $(".ServiceJissekiHakenJikanEnd").eq(num).live('keyup',function(){
+      if($(".ServiceJissekiHakenJikanEnd").eq(num).val().match(/:/)){
+    if($(".ServiceJissekiHakenJikanEnd").eq(num).val().length<4||$(".ServiceJissekiHakenJikanEnd").eq(num).val().length>5) {
+        alert("文字数に誤りがあります。");
+                    $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                    return false;
+    } else {
+                    var strHour=$(".ServiceJissekiHakenJikanEnd").eq(num).val().split(':')[0];
+                    var strMinute=$(".ServiceJissekiHakenJikanEnd").eq(num).val().split(':')[1];
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+        var strsei=strHour+":"+strMinute;
+        $(".ServiceJissekiHakenJikanEnd").eq(num).val(strsei);
+                }
+   } else {
+    if($(".ServiceJissekiHakenJikanEnd").eq(num).val().length<3||$(".ServiceJissekiHakenJikanEnd").eq(num).val().length>4) {
+        alert("文字数に誤りがあります。");
+                    $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                    return false;
+    } else {
+     var strlen=parseInt($(".ServiceJissekiHakenJikanEnd").eq(num).val().length);
+     var sentoulen=strlen-2;
+                    var strHour=$(".ServiceJissekiHakenJikanEnd").eq(num).val().substr(0,sentoulen);
+                    var strMinute=$(".ServiceJissekiHakenJikanEnd").eq(num).val().substr(sentoulen,strlen);
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".ServiceJissekiHakenJikanEnd").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+        var strsei=strHour+":"+strMinute;
+        $(".ServiceJissekiHakenJikanEnd").eq(num).val(strsei);
+//                    ServiceSelect();
+       }
+   }
+//  });
+               }
+
+//        function setKasanControl(idx) {
+//            var startHour=$(".ServiceJissekiHakenJikanStart").eq(idx).val().split(':')[0];
+//            if((startHour>17&&startHour<22)||(startHour>5&&startHour<8)) {
+//                $('.ServiceJissekiShinyaKasan').eq(idx).removeAttr('checked');
+//                $('.ServiceJissekiAsayoruKasan').eq(idx).attr('checked','checked');
+//            } else if(startHour>21||startHour<6) {
+//                $('.ServiceJissekiShinyaKasan').eq(idx).attr('checked','checked');
+//                $('.ServiceJissekiAsayoruKasan').eq(idx).removeAttr('checked');
+//            } else {
+//                $('.ServiceJissekiShinyaKasan').eq(idx).removeAttr('checked');
+//                $('.ServiceJissekiAsayoruKasan').eq(idx).removeAttr('checked');
+//            }
+//        }
+
+
+        $("#btnTaishoushaSentaku").click(function(){
+            window.open("pop-nyukyosha_jisseki.html", "NyukyoshaSentaku","width=800,height=600,resizable=yes,scrollbars=yes");
+        });
+
+        // デフォルトのサービス提供日設定
+        var TN=$('#TaishouNen').val();
+        var TT=$('#TaishouTsuki').val();
+
+  $.datepicker.setDefaults({
+            minDate:new Date(TN,TT-1,1),
+            maxDate:new Date(TN,TT,1-1),
+   changeYear:false,
+   changeMonth:false,
+   yearRange:"c-130:c+1",
+   dateFormat: 'yy/mm/dd',
+         dayNamesShort: ['日','月','火','水','木','金','土'],
+            dayNamesMin: ['日','月','火','水','木','金','土']
+        });
+
+        // 対象年月を変更したときのサービス提供日設定
+        $('#TaishouNen').live('change',function(){
+            TN=$('#TaishouNen').val();
+            TT=$('#TaishouTsuki').val();
+            $(".ServiceJissekiDate").datepicker("option","minDate",new Date(TN,TT-1,1));
+            $(".ServiceJissekiDate").datepicker("option","maxDate",new Date(TN,TT,1-1));
+        });
+        $('#TaishouTsuki').live('change',function(){
+            TN=$('#TaishouNen').val();
+            TT=$('#TaishouTsuki').val();
+            $(".ServiceJissekiDate").datepicker("option","minDate",new Date(TN,TT-1,1));
+            $(".ServiceJissekiDate").datepicker("option","maxDate",new Date(TN,TT,1-1));
+        });
+
+  function convert_wareki(year, setting){
+      var result;
+      if(setting === false){
+          return year;
+//                  ###GENGOU###
+      } else if (year > %3) {
+          result = year - %3;
+          result = '%2' + result;
+          return result;
+//                  ###GENGOU###
+      }
+  }
+
+        function setJissekiDateFMT(idx) {
+    
+        $(".ServiceJissekiDate").eq(idx).datepicker({            
+    onSelect: function(dateText, inst){
+    var ArrDate=dateText.split("/");
+       var DispDate=convert_wareki(ArrDate[0],true)+"年"+parseInt(ArrDate[1])+"月"+parseInt(ArrDate[2])+"日";
+    $(".ServiceJissekiDate").eq(idx).val(ArrDate[2]);
+        // 曜日
+                var myTbl = new Array("日","月","火","水","木","金","土");
+        var slDate= new Date(dateText);
+    $(".ServiceJissekiYoubi").eq(idx).text(myTbl[slDate.getDay()]);
+            }
+  });
+
+        }
+
+//        setJissekiDateFMT(0);
+
+
+
+
+
+
+///////////////////////////
+//データセット
+///////////////////////////
+
+            if(datad.length>0){
+                for(var f in datad) {
+                    setHTMLFormatJisseki();
+                    $('#DataID'+f).val(datad[f].id);
+                    $('#ServiceJissekiDate'+f).val(datad[f].day);
+                    $('#ServiceJissekiTantouHelper'+f).val(datad[f].helper1);
+                    $('#ServiceJissekiDoukouHelper'+f).val(datad[f].helper2);
+                    $('#ServiceJissekiHakenJikanStart'+f).val(datad[f].start);
+                    $('#ServiceJissekiHakenJikanEnd'+f).val(datad[f].end);
+                    $('#ServiceJissekiKaigoNaiyou'+f).val(datad[f].naiyou);
+                    $('#ServiceJissekiTaniJikan'+f).val(datad[f].unittime);
+                    if(datad[f].kinkyu=='1') {
+                       $('#ServiceJissekiKinkyuKasan'+f).attr('checked','checked');
+                    }
+                    $('#ServiceJissekiServiceKbn'+f).val(datad[f].code);
+                    $('#ServiceJissekiSeikyuTaishou'+f).val(datad[f].seikyu);
+                    if(datad[f].shousai!='1'){ 
+                       $('#ServiceJissekiDetail'+f).attr('disabled','disabled');
+                    } else {
+                       $('#ServiceJissekiDetail'+f).removeAttr('disabled');
+                    }
+                    dtTbl = new Array("日","月","火","水","木","金","土");
+                    dispText=String($("#TaishouNen").val())+"/"+String($("#TaishouTsuki").val())+"/"+String(datad[f].day);
+                    dtDate= new Date(dispText);
+                    $(".ServiceJissekiYoubi").eq(f).text(dtTbl[dtDate.getDay()]);
+                }
+            } else {
+                    setHTMLFormatJisseki();
+            }
+
+ });
+
+                $('.shisetsulist').live('mouseover',function(){
+                   this.style.backgroundColor="lightgrey";
+                });
+                $('.shisetsulist').live('mouseout',function(){
+                   this.style.backgroundColor="white";
+                });
+        // 数値のみを入力可能にする
+        function numOnly() {
+           m = String.fromCharCode(event.keyCode);
+           if("0123456789\b\r".indexOf(m, 0) < 0) return false;
+           return true;
+        } 
+		function validationCheck() {
+			var message = "";
+			message += idealValidateCheck($("input[type='number'],input:text").not("[disabled='disabled']"), true);
+			//提供時間入れ子チェック
+			message += validateTime();
+			return message;
+		}
+		function validateTime() {
+			var message = "";
+			var separator = ":";
+			//　各フラグ設定
+			var timeCompareCheckFlag = false;
+			//提供時間セレクター
+			var sTimes = $("input[type='time'][name*='ServiceJissekiHakenJikanStart']").get();
+			var eTimes = $("input[type='time'][name*='ServiceJissekiHakenJikanEnd']").get();
+			message = checkTime(sTimes, eTimes, separator, HOUMONKAIGO_Item.num0, HOUMONKAIGO_Item.num1);
+			return message;
+		}
+ </script>
+
+    <!-- Demo page code -->
+
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em;
+        }
+    </style>
+
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+
+  </head>
+
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body class=""> 
+  <!--<![endif]-->
+<div class="navbar">
+  <div class="navbar-inner">
+    <ul class="nav pull-right">
+      <li id="fat-menu2">
+        <a href="/E-LIFE/SYSTEM_SETTEI/cgi-bin/SIGN_IN.CGI" tabindex="-1">ログアウト</a>
+      </li>
+    </ul>
+    <ul class="nav pull-right">
+      <li class="dropdown" id="fat-menu">
+        <a class="dropdown-toggle" data-toggle="dropdown" href="#" role="button">
+          <!-- ###USER__NAME### -->
+          <i class="icon-user"></i>
+          %1
+          <!-- ###USER__NAME### -->
+        </a>
+      </li>
+    </ul>
+    <ul class="nav pull-right">
+      <li class="dropdown on" id="fat-menu3">
+        <a class="dropdown-toggle" data-toggle="dropdown" href="#" tabindex="-1">
+          ###SELECT_SHISETSU###
+          <i class="icon-caret-down"></i>
+        </a>
+        <ul class="dropdown-menu" style="z-index:1000">
+          <!-- ###SHISETSU_TAISHOU### -->
+          <li class="shisetsulist">
+            <a href="javascript:Post('###USERID###','###PASSWORD###','%1','/E-LIFE/SYSTEM_SETTEI/cgi-bin/LOGIN.CGI')">%2</a>
+          </li>
+          <!-- ###SHISETSU_TAISHOU### -->
+        </ul>
+      </li>
+    </ul>
+    <font class="brand">
+      <span style="position:relative; top:-4px;">
+        <img alt="東急マーク" height="28" src="/images/tokyu_logo.gif" width="40" />
+      </span>
+      <span class="first">東急イーライフデザイン</span>
+    </font>
+  </div>
+</div>
+<div class="header">
+  <h1 class="page-title">訪問介護実績入力</h1>
+</div>
+<div class="row-fluid">
+  <table style="margin-left:2em;min-width:1024px;">
+    <tr>
+      <td style="width:25%;">
+        利用者名：
+        <font style="font-size:20px">
+          <b>###RIYOUSHA###</b>
+        </font>
+      </td>
+      <td style="width:12%;">
+        対象年　
+        <select id="TaishouNen" name="TaishouNen"></select>
+      </td>
+      <td style="width:12%;">
+        対象月　
+        <select id="TaishouTsuki" name="TaishouTsuki"></select>
+      </td>
+      <!--
+        <td style="width:12%;"><button id="CareplanHanei" style="vertical-align:center;">ケアプラン反映</button>
+        </td>
+      -->
+      <!--
+        <td style="width:12%;"><button id="Jisseki" name="Jisseki" style="vertical-align:center;">実績参照</button>
+        </td>
+      -->
+      <td style="width:12%;">
+        <button id="Jisseki" name="Jisseki" style="vertical-align:center;">表示</button>
+      </td>
+      <td style="width:20%;">
+        初回加算<input type="checkbox" id="ServiceJissekiShokaiKasan" name="ServiceJissekiShokaiKasan" class="ServiceJissekiShokaiKasan" value="1" ###SHOKAICHECK### />
+      </td>
+      <td style="text-align:right;">
+        <div class="btn-toolbar">
+          <button class="btn btn-red" id="KakuteiFlg" name="KakuteiFlg" rel="tooltip" title="確定チェックをして登録した後は内容の修正ができません。" value="_">未確定</button>
+          <button id="regist" name="regist" class="btn btn-pink" style="display:###PRINTDISP###" ###DISABLED### >
+          <i class="icon-edit"></i>
+          登録
+          <button class="btn btn-move" id="home" name="home">
+            <i class="icon-home"></i>
+            戻る
+          </button>
+        </div>
+      </td>
+    </tr>
+  </table>
+</div>
+<div class="container-fluid">
+  <div class="well" style="min-width:1024px;">
+    <div style="height:650px; overflow-y:auto">
+      <div style="margin-top:1em;">
+        <h3>実績一覧</h3>
+        <table>
+          <tr>
+            <td>
+              <p style="margin-top:1em">
+                <button class="btn btn-pink" id="add" name="add" style="display:###TOUROKUDISP###" type="button">
+                  <i class="icon-plus"></i>
+                  実績追加
+                </button>
+              </p>
+            </td>
+          </tr>
+        </table>
+        <form action="SERVICE_JISSEKI.CGI" id="frmHoumonkaigoJisseki" method="POST" name="frmHoumonkaigoJisseki">
+          <input id="MODE" name="MODE" type="hidden" />
+          <input id="USER_ID" name="USER_ID" type="hidden" value="###USERID###" />
+          <input id="Riyoushaid" name="Riyoushaid" type="hidden" value="###RIYOUSHAID###" />
+          <input id="Kyoukyusha" name="Kyoukyusha" type="hidden" value="###KYOUKYUSHA###" />
+          <input id="Jigyoushatype" name="Jigyoushatype" type="hidden" value="###JIGYOUSHATYPE###" />
+          <input id="JISSEKINUM" name="JISSEKINUM" type="hidden" />
+          <input id="JissekiValue" name="JissekiValue" type="hidden" />
+          <input name="TaishouNen" type="hidden" />
+          <input name="TaishouTsuki" type="hidden" />
+          <input name="KakuteiFlg" type="hidden" />
+          <input name="ServiceJissekiShokaiKasan" type="hidden" />
+          <input name="userid" type="hidden" value="###USERID###" />
+          <input name="password" type="hidden" value="###PASSWORD###" />
+          <input name="shisetsu" type="hidden" value="###SHISETSUID###" />
+          <table id="JissekiIchiran" style="border:#bbbbbb solid 2px;min-width:1024px;">
+            <tr>
+              <th class="td-success" style="width:7%; border:#bbbbbb solid 1px;text-align:center;">日</th>
+              <th class="td-success" style="width:3%; border:#bbbbbb solid 1px;text-align:center;">曜日</th>
+              <th class="td-success" style="width:14%; border:#bbbbbb solid 1px;text-align:center;">担当ヘルパー</th>
+              <th class="td-success" style="width:14%; border:#bbbbbb solid 1px;text-align:center;">同行ヘルパー</th>
+              <th class="td-success" style="width:10%; border:#bbbbbb solid 1px;text-align:center;">派遣時間</th>
+              　　　　　　　　　　　　
+              <th class="td-success" style="width:14%; border:#bbbbbb solid 1px;text-align:center;">介護内容</th>
+              　　　　　　　　　　　　
+              <th class="td-success" style="width:3%; border:#bbbbbb solid 1px;text-align:center; display:none">単位時間</th>
+              <th class="td-success" style="width:8% border:#bbbbbb solid 1px;text-align:center;">加減算内容</th>
+              <th class="td-success" style="width:14%; border:#bbbbbb solid 1px;text-align:center;">サービス区分</th>
+              <th class="td-success" style="width:10%; border:#bbbbbb solid 1px;text-align:center;">請求対象</th>
+              <th class="td-success" style=" border:#bbbbbb solid 1px;text-align:center;">詳細</th>
+            </tr>
+          </table>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<form action="SERVICE_JISSEKI_DETAIL.CGI" id="frmHoumonkaigoDetail" method="POST" name="frmHoumonkaigoDetail">
+  <input name="MODE" type="hidden" />
+  <input name="USER_ID" type="hidden" value="###USERID###" />
+  <input name="Riyoushaid" type="hidden" value="###RIYOUSHAID###" />
+  <input name="TaishouNen" type="hidden" />
+  <input name="TaishouTsuki" type="hidden" />
+  <input name="TaishouDay" type="hidden" />
+  <input name="Kyoukyusha" type="hidden" />
+  <input name="Jigyoushatype" type="hidden" />
+  <input id="DetailID" name="DetailID" type="hidden" />
+  <input name="userid" type="hidden" value="###USERID###" />
+  <input name="password" type="hidden" value="###PASSWORD###" />
+  <input name="shisetsu" type="hidden" value="###SHISETSUID###" />
+</form>
+<form action="HOUMONKAIGO_MENU.CGI" id="frmBack" method="POST" name="frmBack">
+  <input name="Riyoushaid" type="hidden" value="###RIYOUSHAID###" />
+  <input name="USER_ID" type="hidden" value="###USERID###" />
+  <input name="MODE" type="hidden" value="init" />
+  <input name="userid" type="hidden" value="###USERID###" />
+  <input name="password" type="hidden" value="###PASSWORD###" />
+  <input name="shisetsu" type="hidden" value="###SHISETSUID###" />
+</form>
+<form action="" method="post" name="formlink">
+  <input name="userid" type="hidden" />
+  <input name="password" type="hidden" />
+  <input name="cgi" type="hidden" />
+  <input name="shisetsu" type="hidden" />
+</form>
+
+    <script type="text/javascript">
+        function Post(md,tx,shisetsu,url) {
+            formlink.userid.value = md;
+            formlink.password.value = tx;
+            formlink.shisetsu.value = shisetsu;
+            formlink.action=url;
+            formlink.cgi.value = url;
+            formlink.submit();
+        }
+    </script>
+
+    <script src="/js/bootstrap.js"></script>
+    <script type="text/javascript">
+//        $("[rel=tooltip]").tooltip();
+        $(function() {
+            $('.demo-cancel-click').click(function(){return false;});
+        });
+    </script>
+    
+  </body>
+</html>
+
+

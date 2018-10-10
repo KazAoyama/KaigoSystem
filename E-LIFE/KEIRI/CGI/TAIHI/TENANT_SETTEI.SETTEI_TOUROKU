@@ -1,0 +1,136 @@
+#!/bin/bash
+#
+# TENANT_TENANT_TOUROKU.TOUROKU :
+#
+# Usage : TENANT_TENANT_TOUROKU.TOUROKU
+#
+# Written by aoyagi
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/KEIRI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+
+# データ作成
+echo "${denkidai} ${suidodai} ${parking} ${tyurinjo} ${internet} ${park24} ${jihanki}" |
+awk '{print $0,"1","'${sdaytime}'","'${userid}'"}' > $tmp-settei_input
+# 1:電気代         2:水道代               3:駐車場代   4:駐輪場代 5:インターネット利用料
+# 6:パーク24電気代 7:パーク24自販機設置代 8:有効フラグ 9:処理時間 10:userid
+
+
+#---------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+TENANT_ZENTAI_SETTEI TENANT_ZENTAI_SETTEI
+FIN
+
+input_detail_dir=TENANT_MASTER/${shisetsu}
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 3 -l 10 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_exit "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+awk '{$(NF-2)="9";print}' /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_ZENTAI_SETTEI |
+cat - $tmp-settei_input        > $tmp-pompa_new
+cat $tmp-koushin_pompa         |
+# 列数チェック
+[ "$(retu $tmp-pompa_new)" -ne 10 ] && : $tmp-err
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+mv -f $tmp-settei_input ${input_dir_name}/${today}/${input_detail_dir}/TENANT_ZENTAI_SETTEI.${cur_time}.$(basename $0).$$
+mv -f $tmp-pompa_new /home/hands/E-LIFE/KEIRI/POMPA/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_ZENTAI_SETTEI
+#--------------------------------------------------------------
+
+
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

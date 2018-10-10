@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# GENKIN_KANRI.SEARCH : サーチ
+#
+# Usage : GENKIN_KANRI.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+nengappi=$(echo $today | awk '{print substr($1,1,4)"-"substr($1,5,2)}')
+# eval
+eval $(name-source ${namefile})
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+
+# initの時は渡ってきたnameをクリア
+if [ ${MODE} = "init" ];then
+  floor="0"
+  room="0"
+  riyosha_name="00"
+else
+  :
+fi
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   > $tmp-riyosha_status
+
+self 6 5 7 $tmp-riyosha_status                               |
+LANG=C sort -k3,3                                            |
+getlast 1 1                                                  |
+self 1 2                                                     |
+LANG=C sort -k1,1                                            |
+join1 key=1 $tmp-riyosha_master                              > $tmp-riyosha_room
+# 1:利用者id 2:利用者名 3:居室
+
+# SHISETSU_RIYOUSAH_STATUS
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+awk '$1=="'${shisetsu}'"&&$8>="'${today}'"{print $3,$5,$6}' > $tmp-status
+# 1:フロア 2:居室 3:利用者ID
+
+
+month=$(echo $nengappi | awk '{print substr($1,1,4)substr($1,6,2)}')
+awk '$(NF-2)!=9' ${pompa_dir}/GENKIN_KANRI/${shisetsu}/${month}/GENKIN_KANRI_$month > $tmp-search
+# 1:現金管理id          2:フロア            3:居室          4:入居者id    5:立替項目id
+# 6:立替項目id          7:日付              8:収入数        9:収入金      10:支出数
+# 11:支出金額           12:対応者id         13:印刷対象区分 14:印刷済区分 15:申込書番号
+# 16:立替金移行対象区分 17:立替金移行済区分 18:請求対象区分 19:備考       20:有効フラグ
+# 21:更新時間           22:userid
+
+cat $tmp-search
+rm -f ${tmp}-*
+exit 0
+

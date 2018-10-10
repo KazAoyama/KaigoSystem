@@ -1,0 +1,408 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_KOUZA.UPLOAD
+#
+# データ取込：口座情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE7 - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE7" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE7/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+cat ${excel} |
+e2t2 1 a2 o-  > $tmp-data
+# 1:ChargeID      2:UserID      3:DayOrMonth     4:ItemID       5:PaymentTypeID
+# 6:PayNumber     7:PayCharge   8:ChargeStartDay 9:ChargeEndDay 10:EditPlace
+# 11:EditDatetime 12:EditUserID 13:EditPCName    14:ServiceType 15:PayPlan
+
+# 月額利用料名称マスタ
+cat ${excel} |
+e2t2 2 a2 c- |
+LANG=C sort  |
+getlast 1 1  > $tmp-data2
+# 1:ItemID 2:ItemName 3:ItemNameカナ
+
+# 月額利用料料金マスタ
+cat ${excel} |
+e2t2 3 a2 c- |
+self 1 3     |
+LANG=C sort  |
+getlast 1 1  > $tmp-data3
+# 1:PaymentTypeID    2:PayCharge
+
+[ -s "$tmp-data" ] || error_exit
+[ -s "$tmp-data2" ] || error_exit
+[ -s "$tmp-data3" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 
+cat $tmp-data        |
+self 2 4 8 9 5       |
+# 1:UserID 2:ItemID 3:ChargeStartDay 4:ChargeEndDay 5:PaymentTypeID
+
+if [ "$(awk '$8~/\//' $tmp-data | gyo)" = "0" ] ; then
+  awk '{print $0,"_","99999999","1","2014070100000000","00078"}' 
+# 1:UserID      2:ItemID    3:起算開始日   4:起算終了日   5:金額ID
+# 6:特販ID      7:値引額    8:値引き後金額 9:特販期間FROM 10:特販期間TO
+# 11:予備1      12:予備2    13:予備3       14:予備4       15:予備5
+# 16:削除フラグ 17:更新時間 18:更新者
+
+else
+  sed 's/\// /g'            |
+  maezero 4.2 5.2 7.2 8.2   |
+# 1:UserID         2:ItemID         3:ChargeStartDay年 4:ChargeStartDay月 5:ChargeStartDay日
+# 6:ChargeEndDay年 7:ChargeEndDay月 8:ChargeEndDay日   9:PaymentTypeID
+  awk '{print $1,$2,$3$4$5,$6$7$8,$9,"_","99999999","1","2014070100000000","00078"}' 
+fi |
+
+self 1 2 3/5 NF-4 NF-4 NF-4 NF-4 NF-3 NF-4 NF-4 NF-4 NF-4 NF-4 NF-2/NF  |
+# 1:UserID      2:ItemID    3:起算開始日   4:起算終了日   5:金額ID
+# 6:特販ID      7:値引額    8:値引き後金額 9:特販期間FROM 10:特販期間TO
+# 11:予備1      12:予備2    13:予備3       14:予備4       15:予備5
+# 16:削除フラグ 17:更新時間 18:更新者
+sed 's/99981231/99999999/g'  |
+LANG=C sort      |
+rank ref=1       |
+self 2 3 1 4/NF  |
+# 1:UserID      2:ItemID      3:番号      4:起算開始日   5:起算終了日
+# 6:金額ID      7:特販ID      8:値引額    9:値引き後金額 10:特販期間FROM
+# 11:特販期間TO 12:予備1      13:予備2    14:予備3       15:予備4
+# 16:予備5      17:削除フラグ 18:更新時間 19:更新者
+LANG=C sort -k6,6          > $tmp-riyouryou_data_before
+
+if [ -s $tmp-riyouryou_data_before ] ; then
+  cat $tmp-riyouryou_data_before  |
+  # 利用料金額を取得する
+  cjoin1 +ng key=6 $tmp-data3 -   > $tmp-riyouryou_data_1_ok 2> $tmp-riyouryou_kingakudata_naiyo_${Shisetsu}_ng
+  # 利用料名称を取得する
+  cat $tmp-riyouryou_data_1_ok    |
+  cjoin1 +ng key=2 $tmp-data2 -       > $tmp-riyouryou_data_2_ok 2> $tmp-riyouryou_name_naiyo_${Shisetsu}_ng
+# 1:UserID     2:ItemID        3:Item名称      4:Item名称カナ 5:番号
+# 6:起算開始日 7:起算終了日    8:金額ID        9:金額         10:特販ID
+# 11:値引額    12:値引き後金額 13:特販期間FROM 14:特販期間TO  15:予備1
+# 16:予備2     17:予備3        18:予備4        19:予備5       20:削除フラグ
+# 21:更新時間  22:更新者
+
+else
+  error_exit "エクセルデータが不正です"
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#----------------------
+# 利用料IDを作成する
+#----------------------
+    NOW_RIYOURYOUID="$(cat /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/RIYOURYOU_ID)"
+
+cat $tmp-riyouryou_data_2_ok     |
+self 2/4                         |
+tee $tmp-riyouryou_master_before |
+# 1:ItemID 2:Item名称 3:Item名称カナ
+awk '$2=="月額賃料"{print $1,"'${Shisetsu}'","001","月額賃料"}'       > $tmp-riyouryou_master_001
+
+cat $tmp-riyouryou_master_before |
+awk '$2=="食事代"{print $1,"'${Shisetsu}'","002","食事代"}'           > $tmp-riyouryou_master_002
+
+cat $tmp-riyouryou_master_before |
+awk '$2=="管理費"{print $1,"'${Shisetsu}'","003","管理費"}'           > $tmp-riyouryou_master_003
+
+cat $tmp-riyouryou_master_before |
+awk '$2=="介護支援サービス費"{print $1,"'${Shisetsu}'","005","サービス費"}'   > $tmp-riyouryou_master_005
+
+cat $tmp-riyouryou_master_before |
+awk '$2=="サービス費"{print $1,"'${Shisetsu}'","004","サービス費"}'   > $tmp-riyouryou_master_004
+
+cat $tmp-riyouryou_master_before |
+awk '$2~/トランクルーム/{print $1,"'${Shisetsu}'","006","トランクルーム利用料"}'   > $tmp-riyouryou_master_006
+
+cat $tmp-riyouryou_master_before |
+awk '$2~/駐車場/{print $1,"'${Shisetsu}'","007","駐車場利用料"}'   > $tmp-riyouryou_master_007
+
+cat $tmp-riyouryou_master_before |
+awk '$2~/駐輪場/{print $1,"'${Shisetsu}'","008","駐輪場利用料"}'   > $tmp-riyouryou_master_008
+
+cat $tmp-riyouryou_master_before |
+awk '$2!="月額賃料"&&$2!="食事代"&&$2!="管理費"&&$2!="サービス費"&&$2!~/トランクルーム利用料/&&$2!~/駐車場利用料/&&$2!~/駐輪場利用料/'   |
+LANG=C sort -k3,3 |
+uniq              |
+# カナの名前が一緒のものは同じ番号を振る
+rank key=3        |
+awk '{print $2,"'${Shisetsu}'",$1+"'${NOW_RIYOURYOUID}'",$3}' |
+maezero 3.3       |
+# 1:ItemID 2:施設ID 3:新ID 4:名称
+
+if [ -s $tmp-riyouryou_master_001 ] ; then
+  cat $tmp-riyouryou_master_001 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_002 ] ; then
+  cat $tmp-riyouryou_master_002 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_003 ] ; then
+  cat $tmp-riyouryou_master_003 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_004 ] ; then
+  cat $tmp-riyouryou_master_004 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_005 ] ; then
+  cat $tmp-riyouryou_master_005 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_006 ] ; then
+  cat $tmp-riyouryou_master_006 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_007 ] ; then
+  cat $tmp-riyouryou_master_007 -
+else
+  cat -
+fi |
+
+if [ -s $tmp-riyouryou_master_008 ] ; then
+  cat $tmp-riyouryou_master_008 -
+else
+  cat -
+fi |
+LANG=C sort -u  > $tmp-riyouryou_master_result
+# 1:ItemID 2:施設ID 3:新ID 4:名称
+
+#----------------------
+# 利用料IDを紐付ける
+#----------------------
+if [ -s "$tmp-riyouryou_master_result" ] ; then
+  cat $tmp-riyouryou_data_2_ok  |
+# 1:UserID     2:ItemID        3:Item名称      4:Item名称カナ 5:番号
+# 6:起算開始日 7:起算終了日    8:金額ID        9:金額         10:特販ID
+# 11:値引額    12:値引き後金額 13:特販期間FROM 14:特販期間TO  15:予備1
+# 16:予備2     17:予備3        18:予備4        19:予備5       20:削除フラグ
+# 21:更新時間  22:更新者
+  cjoin1 key=2 $tmp-riyouryou_master_result - |
+# 1:UserID        2:ItemID       3:施設ID      4:新ID       5:名称
+# 6:Item名称      7:Item名称カナ 8:番号        9:起算開始日 10:起算終了日
+# 11:金額ID       12:金額        13:特販ID     14:値引額    15:値引き後金額
+# 16:特販期間FROM 17:特販期間TO  18:予備1      19:予備2     20:予備3
+# 21:予備4        22:予備5       23:削除フラグ 24:更新時間  25:更新者
+  delf 2 5/7 11 |
+  LANG=C sort   > $tmp-riyouryou_data_before_2
+# 1:UserID        2:施設ID      3:新利用料ID        4:番号      5:起算開始日
+# 6:起算終了日    7:金額        8:特販ID      9:値引額    10:値引き後金額
+# 11:特販期間FROM 12:特販期間TO 13:予備1      14:予備2    15:予備3
+# 16:予備4        17:予備5      18:削除フラグ 19:更新時間 20:更新者
+
+  #----------------------
+  # 利用者IDをくっつける
+  #----------------------
+  [ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu}" ] || error_exit "新利用者IDをひも付けるテーブルがありません。先に利用者情報をアップロードしてください"
+
+  cat $tmp-riyouryou_data_before_2  |
+  cjoin1 +ng key=1 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-riyousha_riyouryou_ok 2> $tmp-riyoushaid_naiyo_${Shisetsu}_ng
+# 1:UserID        2:新利用者ID    3:施設ID      4:新利用料ID  5:番号
+# 6:起算開始日    7:起算終了日    8:金額        9:特販ID      10:値引額
+# 11:値引き後金額 12:特販期間FROM 13:特販期間TO 14:予備1      15:予備2
+# 16:予備3        17:予備4        18:予備5      19:削除フラグ 20:更新時間
+# 21:更新者
+
+
+  #----------------------
+  # 契約情報とひも付ける
+  #----------------------
+  [ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKU_${Shisetsu}" ] || error_exit "契約をひも付けるテーブルがありません。先に契約情報(あるいは居室情報)をアップロードしてください"
+
+  self 1 2 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKU_${Shisetsu} |
+  getlast 1 1  > $tmp-riyousha_keiyakuid
+
+  cat $tmp-riyousha_riyouryou_ok |
+  delf 1                         |
+  LANG=C sort -u                 |
+  cjoin1 key=1 $tmp-riyousha_keiyakuid - > $tmp-riyousha_riyouryou_keiyaku_ok 2>$tmp-riyousha_riyouryou_keiyaku_naiyo_${Shisetsu}_ng
+
+  cat $tmp-riyousha_riyouryou_keiyaku_ok |
+# 1:新利用者ID    2:契約ID        3:施設ID      4:新利用料ID  5:番号
+# 6:起算開始日    7:起算終了日    8:金額        9:特販ID      10:値引額
+# 11:値引き後金額 12:特販期間FROM 13:特販期間TO 14:予備1      15:予備2
+# 16:予備3        17:予備4        18:予備5      19:削除フラグ 20:更新時間
+# 21:更新者
+  self 1 3 2 4 5/NF   |
+  LANG=C sort -u        > $tmp-riyousha_riyouryou_result
+
+else
+
+  error_exit "利用料マスタが作成できませんでした"
+
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+  if [ -s $tmp-riyousha_riyouryou_result ] ; then
+
+    cat $tmp-riyouryou_master_result |
+# 1:ItemID 2:施設ID 3:新ID 4:名称
+    delf 1 |
+    awk '{print $0,"1","0","1","1","1","20140701000000","00078"}' |
+    LANG=C sort -u > $tmp-riyouryou_master
+
+#------------------------------------------------
+
+# 取り込んだデータをまずは指定の場所へ
+# 利用料実績
+# 利用料マスタ
+# 利用料管理番号
+
+   mkdir -p /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}
+
+    cp -p $tmp-riyousha_riyouryou_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_RIYOURYOU_"${Shisetsu}"
+    cp -p $tmp-riyouryou_master /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOURYOU_MASTER_"${Shisetsu}"
+
+    cp -p $tmp-*_ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}/
+#--------------3
+# 利用料マスタ
+#---------------
+     cat /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/RIYOURYOU_MASTER $tmp-riyouryou_master |
+     LANG=C sort -u  |
+     getlast 1 2     > $tmp-RIYOURYOU_MASTER
+
+# TODO HANEI --
+    mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/back
+    cp -p /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/RIYOURYOU_MASTER /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/back/RIYOURYOU_MASTER_${cur_time}
+    cp -p $tmp-RIYOURYOU_MASTER /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/RIYOURYOU_MASTER
+    cp -p $tmp-RIYOURYOU_MASTER /home/hands/E-LIFE/TBL/RIYOURYOU_MASTER/RIYOURYOU_MASTER
+#---
+#--------------
+# 利用料実績
+#--------------
+   cat $tmp-riyousha_riyouryou_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+   LANG=C sort  |
+   getlast 1 5  > $tmp-RIYOUSHA_RIYOURYOU
+
+# TODO HANEI --
+   if [ -s "/home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RIYOURYOU" ] ; then
+      mkdir -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back
+       cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RIYOURYOU /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_RIYOURYOU_${cur_time}
+   else
+      :
+   fi
+   cp -p $tmp-RIYOUSHA_RIYOURYOU /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_RIYOURYOU
+   cp -p $tmp-RIYOUSHA_RIYOURYOU /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_RIYOURYOU
+##--------
+
+#----------------
+# 利用料管理番号
+#----------------
+    # 利用料ID
+    NEW_RIYOURYOUID="$(tail -1 $tmp-riyouryou_master | self 2)"
+    NOW_RIYOURYOUID="$(cat /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/RIYOURYOU_ID)"
+    
+    if [ "${NEW_RIYOURYOUID}" -gt "${NOW_RIYOURYOUID}" ] ; then
+
+      echo "${NEW_RIYOURYOUID}"  > /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOURYOU_ID_"${Shisetsu}"
+
+      mkdir -p /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/back
+      cp -p /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/RIYOURYOU_ID /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/back/RIYOURYOU_ID_${cur_time}
+
+## TODO HANEI --
+      echo "${NEW_RIYOURYOUID}" > /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/RIYOURYOU_ID
+##--
+
+# 更新した本データのコピー
+      echo "${NEW_RIYOURYOUID}"  >  /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOURYOU_ID
+      cp -p $tmp-RIYOURYOU_MASTER /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOURYOU_MASTER
+      cp -p $tmp-RIYOUSHA_RIYOURYOU /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_RIYOURYOU
+
+    else
+     :
+    fi
+
+  else
+    error_exit
+  fi    
+
+cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA
+#-------------------------------------------------------------
+
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

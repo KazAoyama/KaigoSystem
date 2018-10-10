@@ -1,0 +1,1183 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_ASSESSMENT_JYOUHOUSHEET.DISPLAY
+# 個人情報詳細　アセスメント　表示用CGI
+#
+# Written by E.Okuda　2013/12/11
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+checkfile="$2"
+data=$3
+result=$4
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#--------------------------------------------------------------
+
+  Shisetsu=$(nameread "shisetsu" $namedata)
+  USERID=$(nameread "userid" $namedata)
+
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_"  -o "${shisetsu}" = "###ROGINSHISETSU###" ] && Shisetsu="0001"
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" -o "${shisetsu}" = "###ROGINSHISETSU###"  ] && shisetsu="0001"
+
+#  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSU=$shisetsu
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+  RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+
+# ユーザー所属施設名所属部署名)
+  SHISETSUNAME="$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+# 入居者所属施設名
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  Taikyo="$(nameread "Taikyo" $namedata)"
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON          > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+
+#--------------------------------------------------------------
+# 登録の場合は入力されたNAMEデータを活用
+#if [ "$MODE" = "touroku" ] ; then
+#KinkyuujiKoushinbi=$(date +%Y%m%d | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')
+# それ以外のときはsearchの結果データから取得
+#elif [ "$MODE" = "init" ] ; then
+  awk '$1=="kihon"{print $0}' ${data} |
+  delf 1 > $tmp-kihon_data
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別 5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:年齢 
+
+if [ "${MODE}" != "init" -a -s $tmp-kihon_data ] ; then
+  RIYOUSHANAME="$(awk '{print $2}' $tmp-kihon_data)"
+  RIYOUSHNAMEKANA="$(awk '{print $3}' $tmp-kihon_data)"
+  RIYOUSHASEIBETSU="$(awk '{if($4=="2"){print "女"}else{print "男"}}' $tmp-kihon_data)"
+  RIYOUSHABIRTHGENGOU="$(awk '{print $5}' $tmp-kihon_data | cjoin1 key=1 - ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU | self 2)"
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+  RIYOUSHABIRTHYEAER="$(awk '{print $6}' $tmp-kihon_data)"
+  RIYOUSHABIRTHMONTH="$(awk '{print $7}' $tmp-kihon_data)"
+  RIYOUSHABIRTHDAY="$(awk '{print $8}' $tmp-kihon_data)"
+  RIYOUSHANENREI="$(awk '{print $9}' $tmp-kihon_data)"
+else
+  RIYOUSHAID=""
+  RIYOUSHANAME=""
+  RIYOUSHNAMEKANA=""
+  RIYOUSHASEIBETSU=""
+  RIYOUSHABIRTHGENGOU=""
+  RIYOUSHABIRTHYEAER=""
+  RIYOUSHABIRTHMONTH=""
+  RIYOUSHABIRTHDAY=""
+  RIYOUSHANENREI=""
+  Tateya=""
+  Floor=""
+  Kyoshitsu=""
+  Nyuukyosha=""
+fi
+
+if [ "${Taikyo}" = "1" ] ; then
+  TAIKYOCHECK="checked"
+else
+  TAIKYOCHECK="@"
+fi
+
+  awk '$1=="jyouhoudata"{print $0}' ${data} |
+  delf 1 > $tmp-jyouhoudata
+# 1:利用者(入居者)ID                     2:アセスメント情報シートID              3:施設                                    4:移動屋内1:自立                          5:移動屋内2:杖使用
+# 6:移動屋内3:その他                     7:移動屋内3:その他シルバーカー          8:移動屋内3:その他歩行器                  9:移動屋内3:その他車椅子                  10:移動屋外1:自立
+# 11:移動屋外2:杖使用                    12:移動屋外3:その他                     13:移動屋外3:その他シルバーカー           14:移動屋外3:その他歩行器                 15:移動屋外3:その他車椅子
+# 16:コミュニケーション視力1:良好        17:コミュニケーション視力2:メガネ       18:コミュニケーション視力2:コンタクト     19:コミュニケーション視力2:その他         20:コミュニケーション視力2:備考
+# 21:コミュニケーション聴力1:良好        22:コミュニケーション聴力2:聞こえずらい 23:コミュニケーション聴力2:聞こえずらい右 24:コミュニケーション聴力2:聞こえずらい左 25:コミュニケーション聴力3:補聴器使用
+# 26:コミュニケーション聴力3:補聴器右    27:コミュニケーション聴力3:補聴器左     28:コミュニケーション聴力3:補聴器外出時   29:コミュニケーション発話障害：なし       30:コミュニケーション発話障害：有り
+# 31:コミュニケーション発話障害：備考    32:食事形態1:普通                       33:食事形態2:主食                         34:食事形態2:主食1:軟飯                   35:食事形態2:主食2:粥
+# 36:食事形態3:副食                      37:食事形態3:副食1:一口大               38:食事形態3:副食2:刻み                   39:禁止食1：なし                          40:禁止食2:あり
+# 41:禁止食：備考                        42:食事制限1：なし                      43:食事制限2:カロリー                     44:食事制限2:カロリー備考                 45:食事制限3:塩分
+# 46:食事制限3:塩分備考                  47:食事準備                             48:食事後片付け                           49:食事後片付け                           50:洗濯機の使用
+# 51:洗濯干して取り込む                  52:洗濯備考                             53:掃除機の使用                           54:整理整頓                               55:掃除備考
+# 56:ゴミだし                            57:ゴミだし備考                         58:買い物                                 59:買い物備考                             60:通院予約
+# 61:通院受診                            62:通院備考                             63:通院薬受け取り                         64:通院備考                               65:金銭管理
+# 66:郵便管理                            67:管理備考１                           68:電話･来客管理                          69:戸締り・火の元管理                     70:管理備考２
+# 71:服薬管理                            72:服薬備考                             73:交通機関の利用                         74:交通手段備考                           75:自家用車の利用1：なし
+# 76:自家用車の利用1：あり               77:自家用車の利用1：あり自分で運転      78:自家用車の利用1：あり家族が運転        79:社会活動老人会1:なし                   80:社会活動老人会2:あり
+# 81:社会活動老人会2:あり回数            82:社会活動老人会備考                   83:社会活動ボランティア1:なし             84:社会活動ボランティア2:あり             85:社会活動ボランティア2:あり回数
+# 86:社会活動ボランティア備考            87:社会活動サークル1:なし               88:社会活動サークル1:あり                 89:社会活動サークル1:あり回数             90:社会活動サークル備考
+# 91:介護保険サービス家事援助1:なし      92:介護保険サービス家事援助2:有り       93:介護保険サービス家事援助月             94:介護保険サービス家事援助火曜           95:介護保険サービス家事援助水曜
+# 96:介護保険サービス家事援助木曜        97:介護保険サービス家事援助金曜         98:介護保険サービス家事援助土曜           99:介護保険サービス家事援助日曜           100:介護保険サービス家事援助備考
+# 101:介護保険サービス入浴介助1:なし     102:介護保険サービス入浴介助2:あろ      103:介護保険サービス入浴介助月曜          104:介護保険サービス入浴介助火曜          105:介護保険サービス入浴介助水曜
+# 106:介護保険サービス入浴介助木曜       107:介護保険サービス入浴介助金曜        108:介護保険サービス入浴介助土曜          109:介護保険サービス入浴介助日曜          110:介護保険サービス入浴介助備考
+# 111:介護保険サービス訪問リハ1:なし     112:介護保険サービス訪問リハ2:有り      113:介護保険サービス訪問リハ月曜          114:介護保険サービス訪問リハ火曜          115:介護保険サービス訪問リハ水曜
+# 116:介護保険サービス訪問リハ木曜       117:介護保険サービス訪問リハ金曜        118:介護保険サービス訪問リハ土曜          119:介護保険サービス訪問リハ日曜          120:介護保険サービス訪問リハ備考
+# 121:介護保険外サービス家事手伝い1:なし 122:介護保険外サービス家事手伝い2:有り  123:介護保険外サービス家事手伝い月曜      124:介護保険外サービス家事手伝い火曜      125:介護保険外サービス家事手伝い水曜
+# 126:介護保険外サービス家事手伝い木曜   127:介護保険外サービス家事手伝い金曜    128:介護保険外サービス家事手伝い土曜      129:介護保険外サービス家事手伝い日曜      130:介護保険外サービス家事手伝い備考
+# 131:介護保険外サービスその他1:なし     132:介護保険外サービスその他2:あり      133:介護保険外サービスその他月曜          134:介護保険外サービスその他火曜          135:介護保険外サービスその他水曜
+# 136:介護保険外サービスその他木曜       137:介護保険外サービスその他金曜        138:介護保険外サービスその他土曜          139:介護保険外サービスその他日曜          140:介護保険外サービスその他備考
+# 141:本人の要望                         142:家族の要望                          143:備考
+
+  awk '$1=="kaigohoken"{print $0}' ${data} |
+  delf 1/4  > $tmp-kaigohoken
+
+if [ "${MODE}" != "init" -a -s $tmp-jyouhoudata ] ; then
+  KOUSHINBI="$(awk '{print substr($151,1,4)"/"substr($151,5,2)"/"substr($151,7,2)}' $tmp-jyouhoudata)"
+  KOUSHINSHAID="$(awk '{print $NF}' $tmp-jyouhoudata)"
+ if [ ! -z "${KOUSHINSHAID}" -a "${KOUSHINSHAID}" != "_" ] ;then
+    KOUSHINSHA="$(echo "${KOUSHINSHAID}" | cjoin1 key=1 - ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | self 2)"
+  else
+    KOUSHINSHA="_"
+  fi
+ Seikatsu4="$(awk '{print $4}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu5="$(awk '{print $5}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu6="$(awk '{print $6}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu7="$(awk '{print $7}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu8="$(awk '{print $8}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu9="$(awk '{print $9}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu10="$(awk '{print $10}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu11="$(awk '{print $11}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu12="$(awk '{print $12}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu13="$(awk '{print $13}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu14="$(awk '{print $14}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu15="$(awk '{print $15}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu16="$(awk '{print $16}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu17="$(awk '{print $17}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu18="$(awk '{print $18}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu19="$(awk '{print $19}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu20="$(awk '{print $20}' $tmp-jyouhoudata)"
+ Seikatsu21="$(awk '{print $21}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu22="$(awk '{print $22}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu23="$(awk '{print $23}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu24="$(awk '{print $24}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu25="$(awk '{print $25}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu26="$(awk '{print $26}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu27="$(awk '{print $27}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu28="$(awk '{print $28}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu29="$(awk '{print $29}' $tmp-jyouhoudata | awk '{if($1=="29"){print "checked"}else{print "@"}}')"
+ Seikatsu30="$(awk '{print $29}' $tmp-jyouhoudata | awk '{if($1=="30"){print "checked"}else{print "@"}}')"
+ Seikatsu31="$(awk '{print $31}' $tmp-jyouhoudata)"
+ Seikatsu32="$(awk '{print $32}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu33="$(awk '{print $33}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu34="$(awk '{print $34}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu35="$(awk '{print $35}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu36="$(awk '{print $36}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu37="$(awk '{print $37}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu38="$(awk '{print $38}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu39="$(awk '{print $39}' $tmp-jyouhoudata | awk '{if($1=="39"){print "checked"}else{print "@"}}')"
+ Seikatsu40="$(awk '{print $39}' $tmp-jyouhoudata | awk '{if($1=="40"){print "checked"}else{print "@"}}')"
+ Seikatsu41="$(awk '{print $41}' $tmp-jyouhoudata)"
+ Seikatsu42="$(awk '{print $42}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu43="$(awk '{print $43}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu44="$(awk '{print $44}' $tmp-jyouhoudata)"
+ Seikatsu45="$(awk '{print $45}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu46="$(awk '{print $46}' $tmp-jyouhoudata)"
+ Genjyou47="$(awk '{print $47}' $tmp-jyouhoudata)"
+ Genjyou48="$(awk '{print $48}' $tmp-jyouhoudata)"
+ Genjyou49="$(awk '{print $49}' $tmp-jyouhoudata)"
+ Genjyou50="$(awk '{print $50}' $tmp-jyouhoudata)"
+ Genjyou51="$(awk '{print $51}' $tmp-jyouhoudata)"
+ Genjyou52="$(awk '{print $52}' $tmp-jyouhoudata)"
+ Genjyou53="$(awk '{print $53}' $tmp-jyouhoudata)"
+ Genjyou54="$(awk '{print $54}' $tmp-jyouhoudata)"
+ Genjyou55="$(awk '{print $55}' $tmp-jyouhoudata)"
+ Genjyou56="$(awk '{print $56}' $tmp-jyouhoudata)"
+ Genjyou57="$(awk '{print $57}' $tmp-jyouhoudata)"
+ Genjyou58="$(awk '{print $58}' $tmp-jyouhoudata)"
+ Genjyou59="$(awk '{print $59}' $tmp-jyouhoudata)"
+ Genjyou60="$(awk '{print $60}' $tmp-jyouhoudata)"
+ Genjyou61="$(awk '{print $61}' $tmp-jyouhoudata)"
+ Genjyou62="$(awk '{print $62}' $tmp-jyouhoudata)"
+ Genjyou63="$(awk '{print $63}' $tmp-jyouhoudata)"
+ Genjyou64="$(awk '{print $64}' $tmp-jyouhoudata)"
+ Genjyou65="$(awk '{print $65}' $tmp-jyouhoudata)"
+ Genjyou66="$(awk '{print $66}' $tmp-jyouhoudata)"
+ Genjyou67="$(awk '{print $67}' $tmp-jyouhoudata)"
+ Genjyou68="$(awk '{print $68}' $tmp-jyouhoudata)"
+ Genjyou69="$(awk '{print $69}' $tmp-jyouhoudata)"
+ Genjyou70="$(awk '{print $70}' $tmp-jyouhoudata)"
+ Genjyou71="$(awk '{print $71}' $tmp-jyouhoudata)"
+ Genjyou72="$(awk '{print $72}' $tmp-jyouhoudata)"
+ Genjyou73="$(awk '{print $73}' $tmp-jyouhoudata)"
+ Genjyou74="$(awk '{print $74}' $tmp-jyouhoudata)"
+ Genjyou75="$(awk '{print $75}' $tmp-jyouhoudata | awk '{if($1=="75"){print "checked"}else{print "@"}}')"
+ Genjyou76="$(awk '{print $75}' $tmp-jyouhoudata | awk '{if($1=="76"){print "checked"}else{print "@"}}')"
+ Genjyou77="$(awk '{print $77}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Genjyou78="$(awk '{print $78}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu79="$(awk '{print $79}' $tmp-jyouhoudata | awk '{if($1=="79"){print "checked"}else{print "@"}}')"
+ Seikatsu80="$(awk '{print $79}' $tmp-jyouhoudata | awk '{if($1=="80"){print "checked"}else{print "@"}}')"
+ Seikatsu81="$(awk '{print $81}' $tmp-jyouhoudata)"
+ Seikatsu82="$(awk '{print $82}' $tmp-jyouhoudata)"
+ Seikatsu83="$(awk '{print $83}' $tmp-jyouhoudata | awk '{if($1=="83"){print "checked"}else{print "@"}}')"
+ Seikatsu84="$(awk '{print $83}' $tmp-jyouhoudata | awk '{if($1=="84"){print "checked"}else{print "@"}}')"
+ Seikatsu85="$(awk '{print $85}' $tmp-jyouhoudata)"
+ Seikatsu86="$(awk '{print $86}' $tmp-jyouhoudata)"
+ Seikatsu87="$(awk '{print $87}' $tmp-jyouhoudata | awk '{if($1=="87"){print "checked"}else{print "@"}}')"
+ Seikatsu88="$(awk '{print $87}' $tmp-jyouhoudata | awk '{if($1=="88"){print "checked"}else{print "@"}}')"
+ Seikatsu89="$(awk '{print $89}' $tmp-jyouhoudata)"
+ Seikatsu90="$(awk '{print $90}' $tmp-jyouhoudata)"
+# Seikatsu91="$(awk '{print $91}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu92="$(awk '{print $92}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu93="$(awk '{print $93}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu94="$(awk '{print $94}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu95="$(awk '{print $95}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu96="$(awk '{print $96}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu97="$(awk '{print $97}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu98="$(awk '{print $98}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu99="$(awk '{print $99}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu100="$(awk '{print $100}' $tmp-jyouhoudata)"
+# Seikatsu101="$(awk '{print $101}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu102="$(awk '{print $102}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu103="$(awk '{print $103}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu104="$(awk '{print $104}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu105="$(awk '{print $105}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu106="$(awk '{print $106}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu107="$(awk '{print $107}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu108="$(awk '{print $108}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu109="$(awk '{print $109}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu110="$(awk '{print $110}' $tmp-jyouhoudata)"
+# Seikatsu111="$(awk '{print $111}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu112="$(awk '{print $112}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu113="$(awk '{print $113}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu114="$(awk '{print $114}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu115="$(awk '{print $115}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu116="$(awk '{print $116}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu117="$(awk '{print $117}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu118="$(awk '{print $118}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu119="$(awk '{print $119}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+# Seikatsu120="$(awk '{print $120}' $tmp-jyouhoudata)"
+ Seikatsu121="$(awk '{print $121}' $tmp-jyouhoudata | awk '{if($1=="121"){print "checked"}else{print "@"}}')"
+ Seikatsu122="$(awk '{print $121}' $tmp-jyouhoudata | awk '{if($1=="122"){print "checked"}else{print "@"}}')"
+ Seikatsu123="$(awk '{print $123}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu124="$(awk '{print $124}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu125="$(awk '{print $125}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu126="$(awk '{print $126}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu127="$(awk '{print $127}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu128="$(awk '{print $128}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu129="$(awk '{print $129}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu130="$(awk '{print $130}' $tmp-jyouhoudata)"
+ Seikatsu131="$(awk '{print $131}' $tmp-jyouhoudata | awk '{if($1=="131"){print "checked"}else{print "@"}}')"
+ Seikatsu132="$(awk '{print $131}' $tmp-jyouhoudata | awk '{if($1=="132"){print "checked"}else{print "@"}}')"
+ Seikatsu133="$(awk '{print $133}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu134="$(awk '{print $134}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu135="$(awk '{print $135}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu136="$(awk '{print $136}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu137="$(awk '{print $137}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu138="$(awk '{print $138}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu139="$(awk '{print $139}' $tmp-jyouhoudata | awk '{if($1!="_"){print "checked"}else{print "@"}}')"
+ Seikatsu140="$(awk '{print $140}' $tmp-jyouhoudata)"
+ Seikatsu144="$(awk '{print $144}' $tmp-jyouhoudata | awk '{if($1=="144"){print "checked"}else{print "@"}}')"
+ Seikatsu145="$(awk '{print $144}' $tmp-jyouhoudata | awk '{if($1=="145"){print "checked"}else{print "@"}}')"
+ Seikatsu146="$(awk '{print $146}' $tmp-jyouhoudata)"
+ Seikatsu147="$(awk '{print $147}' $tmp-jyouhoudata | awk '{if($1=="147"){print "checked"}else{print "@"}}')"
+ Seikatsu148="$(awk '{print $147}' $tmp-jyouhoudata | awk '{if($1=="148"){print "checked"}else{print "@"}}')"
+ Seikatsu149="$(awk '{print $149}' $tmp-jyouhoudata)"
+ Bikou1="$(awk '{print $141}' $tmp-jyouhoudata)"
+ Bikou2="$(awk '{print $142}' $tmp-jyouhoudata)"
+ Bikou3="$(awk '{print $143}' $tmp-jyouhoudata)"
+else
+ Seikatsu4=""
+ Seikatsu5=""
+ Seikatsu6=""
+ Seikatsu7=""
+ Seikatsu8=""
+ Seikatsu9=""
+ Seikatsu10=""
+ Seikatsu11=""
+ Seikatsu12=""
+ Seikatsu13=""
+ Seikatsu14=""
+ Seikatsu15=""
+ Seikatsu16=""
+ Seikatsu17=""
+ Seikatsu18=""
+ Seikatsu19=""
+ Seikatsu20=""
+ Seikatsu21=""
+ Seikatsu22=""
+ Seikatsu23=""
+ Seikatsu24=""
+ Seikatsu25=""
+ Seikatsu26=""
+ Seikatsu27=""
+ Seikatsu28=""
+ Seikatsu29=""
+ Seikatsu30=""
+ Seikatsu31=""
+ Seikatsu32=""
+ Seikatsu33=""
+ Seikatsu34=""
+ Seikatsu35=""
+ Seikatsu36=""
+ Seikatsu37="" 
+ Seikatsu38=""
+ Seikatsu39=""
+ Seikatsu40=""
+ Seikatsu41=""
+ Seikatsu42=""
+ Seikatsu43=""
+ Seikatsu44=""
+ Seikatsu45=""
+ Seikatsu46=""
+ Genjyou47=""
+ Genjyou48=""
+ Genjyou49=""
+ Genjyou50=""
+ Genjyou51=""
+ Genjyou52=""
+ Genjyou53=""
+ Genjyou54=""
+ Genjyou55=""
+ Genjyou56=""
+ Genjyou57=""
+ Genjyou58=""
+ Genjyou59=""
+ Genjyou60=""
+ Genjyou61=""
+ Genjyou62=""
+ Genjyou63=""
+ Genjyou64=""
+ Genjyou65=""
+ Genjyou66=""
+ Genjyou67=""
+ Genjyou68=""
+ Genjyou69=""
+ Genjyou70=""
+ Genjyou71=""
+ Genjyou72=""
+ Genjyou73=""
+ Genjyou74=""
+ Genjyou75=""
+ Genjyou76=""
+ Genjyou77=""
+ Genjyou78=""
+ Seikatsu79=""
+ Seikatsu80=""
+ Seikatsu81=""
+ Seikatsu82=""
+ Seikatsu83=""
+ Seikatsu84=""
+ Seikatsu85=""
+ Seikatsu86=""
+ Seikatsu87="" 
+ Seikatsu88=""
+ Seikatsu89=""
+ Seikatsu90=""
+ Seikatsu91=""
+ Seikatsu92=""
+ Seikatsu93=""
+ Seikatsu94=""
+ Seikatsu95=""
+ Seikatsu96=""
+ Seikatsu97=""
+ Seikatsu98=""
+ Seikatsu99=""
+ Seikatsu100=""
+ Seikatsu101=""
+ Seikatsu102=""
+ Seikatsu103=""
+ Seikatsu104=""
+ Seikatsu105=""
+ Seikatsu106=""
+ Seikatsu107=""
+ Seikatsu108="" 
+ Seikatsu109=""
+ Seikatsu110=""
+ Seikatsu111=""
+ Seikatsu112=""
+ Seikatsu113=""
+ Seikatsu114=""
+ Seikatsu115=""
+ Seikatsu116=""
+ Seikatsu117=""
+ Seikatsu118=""
+ Seikatsu119=""
+ Seikatsu120=""
+ Seikatsu121=""
+ Seikatsu122=""
+ Seikatsu123=""
+ Seikatsu124=""
+ Seikatsu125=""
+ Seikatsu126=""
+ Seikatsu127=""
+ Seikatsu128=""
+ Seikatsu129=""
+ Seikatsu130=""
+ Seikatsu131=""
+ Seikatsu132=""
+ Seikatsu133=""
+ Seikatsu134=""
+ Seikatsu135=""
+ Seikatsu136=""
+ Seikatsu137=""
+ Seikatsu138=""
+ Seikatsu139=""
+ Seikatsu140=""
+ Seikatsu141=""
+ Seikatsu142=""
+ Seikatsu143=""
+ Bikou1=""
+ Bikou2=""
+ Bikou3=""
+ Seikatsu144=""
+ Seikatsu145=""
+ Seikatsu146=""
+ Seikatsu147=""
+ Seikatsu148=""
+ Seikatsu149=""
+fi
+
+if [ "${MODE}" != "init" -a -s $tmp-kaigohoken ] ;then
+ Kaigohoken0=$(awk '{print $1}' $tmp-kaigohoken | awk '{if($1=="0"){print "checked"}else{print "@"}}')
+ Kaigohoken1=$(awk '{print $1}' $tmp-kaigohoken | awk '{if($1=="1"){print "checked"}else{print "@"}}')
+ Kaigohoken2=$(awk '{print $2}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken3=$(awk '{print $3}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken4=$(awk '{print $4}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken5=$(awk '{print $5}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken6=$(awk '{print $6}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken7=$(awk '{print $7}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken8=$(awk '{print $8}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken9=$(awk '{print $9}' $tmp-kaigohoken)
+ Kaigohoken10=$(awk '{print $11}' $tmp-kaigohoken | awk '{if($1=="10"){print "checked"}else{print "@"}}')
+ Kaigohoken11=$(awk '{print $11}' $tmp-kaigohoken | awk '{if($1=="11"){print "checked"}else{print "@"}}')
+ Kaigohoken12=$(awk '{print $12}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken13=$(awk '{print $13}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken14=$(awk '{print $14}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken15=$(awk '{print $15}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken16=$(awk '{print $16}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken17=$(awk '{print $17}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken18=$(awk '{print $18}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken19=$(awk '{print $19}' $tmp-kaigohoken)
+ Kaigohoken20=$(awk '{print $21}' $tmp-kaigohoken | awk '{if($1=="20"){print "checked"}else{print "@"}}')
+ Kaigohoken21=$(awk '{print $21}' $tmp-kaigohoken | awk '{if($1=="21"){print "checked"}else{print "@"}}')
+ Kaigohoken22=$(awk '{print $22}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken23=$(awk '{print $23}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken24=$(awk '{print $24}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken25=$(awk '{print $25}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken26=$(awk '{print $26}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken27=$(awk '{print $27}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken28=$(awk '{print $28}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken29=$(awk '{print $29}' $tmp-kaigohoken)
+ Kaigohoken30=$(awk '{print $31}' $tmp-kaigohoken | awk '{if($1=="30"){print "checked"}else{print "@"}}')
+ Kaigohoken31=$(awk '{print $31}' $tmp-kaigohoken | awk '{if($1=="31"){print "checked"}else{print "@"}}')
+ Kaigohoken32=$(awk '{print $32}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken33=$(awk '{print $33}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken34=$(awk '{print $34}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken35=$(awk '{print $35}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken36=$(awk '{print $36}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken37=$(awk '{print $37}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken38=$(awk '{print $38}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken39=$(awk '{print $39}' $tmp-kaigohoken)
+ Kaigohoken40=$(awk '{print $41}' $tmp-kaigohoken | awk '{if($1=="40"){print "checked"}else{print "@"}}')
+ Kaigohoken41=$(awk '{print $41}' $tmp-kaigohoken | awk '{if($1=="41"){print "checked"}else{print "@"}}')
+ Kaigohoken42=$(awk '{print $42}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken43=$(awk '{print $43}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken44=$(awk '{print $44}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken45=$(awk '{print $45}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken46=$(awk '{print $46}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken47=$(awk '{print $47}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken48=$(awk '{print $48}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken49=$(awk '{print $49}' $tmp-kaigohoken)
+ Kaigohoken50=$(awk '{print $51}' $tmp-kaigohoken | awk '{if($1=="50"){print "checked"}else{print "@"}}')
+ Kaigohoken51=$(awk '{print $51}' $tmp-kaigohoken | awk '{if($1=="51"){print "checked"}else{print "@"}}')
+ Kaigohoken52=$(awk '{print $52}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken53=$(awk '{print $53}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken54=$(awk '{print $54}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken55=$(awk '{print $55}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken56=$(awk '{print $56}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken57=$(awk '{print $57}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken58=$(awk '{print $58}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken59=$(awk '{print $59}' $tmp-kaigohoken)
+ Kaigohoken60=$(awk '{print $61}' $tmp-kaigohoken | awk '{if($1=="60"){print "checked"}else{print "@"}}')
+ Kaigohoken61=$(awk '{print $61}' $tmp-kaigohoken | awk '{if($1=="61"){print "checked"}else{print "@"}}')
+ Kaigohoken62=$(awk '{print $62}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken63=$(awk '{print $63}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken64=$(awk '{print $64}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken65=$(awk '{print $65}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken66=$(awk '{print $66}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken67=$(awk '{print $67}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken68=$(awk '{print $68}' $tmp-kaigohoken | awk '{if($1!="_"){print "checked"}else{print "@"}}')
+ Kaigohoken69=$(awk '{print $69}' $tmp-kaigohoken)
+else
+ Kaigohoken0=""
+ Kaigohoken1=""
+ Kaigohoken2=""
+ Kaigohoken3=""
+ Kaigohoken4=""
+ Kaigohoken5=""
+ Kaigohoken6=""
+ Kaigohoken7=""
+ Kaigohoken8=""
+ Kaigohoken9=""
+ Kaigohoken10=""
+ Kaigohoken11=""
+ Kaigohoken12=""
+ Kaigohoken13=""
+ Kaigohoken14=""
+ Kaigohoken15=""
+ Kaigohoken16=""
+ Kaigohoken17=""
+ Kaigohoken18=""
+ Kaigohoken19=""
+ Kaigohoken20=""
+ Kaigohoken21=""
+ Kaigohoken22=""
+ Kaigohoken23=""
+ Kaigohoken24=""
+ Kaigohoken25=""
+ Kaigohoken26=""
+ Kaigohoken27=""
+ Kaigohoken28=""
+ Kaigohoken29=""
+ Kaigohoken30=""
+ Kaigohoken31=""
+ Kaigohoken32=""
+ Kaigohoken33=""
+ Kaigohoken34=""
+ Kaigohoken35=""
+ Kaigohoken36=""
+ Kaigohoken37=""
+ Kaigohoken38=""
+ Kaigohoken39=""
+ Kaigohoken40=""
+ Kaigohoken41=""
+ Kaigohoken42=""
+ Kaigohoken43=""
+ Kaigohoken44=""
+ Kaigohoken45=""
+ Kaigohoken46=""
+ Kaigohoken47=""
+ Kaigohoken48=""
+ Kaigohoken49=""
+ Kaigohoken50=""
+ Kaigohoken51=""
+ Kaigohoken52=""
+ Kaigohoken53=""
+ Kaigohoken54=""
+ Kaigohoken55=""
+ Kaigohoken56=""
+ Kaigohoken57=""
+ Kaigohoken58=""
+ Kaigohoken59=""
+ Kaigohoken60=""
+ Kaigohoken61=""
+ Kaigohoken62=""
+ Kaigohoken63=""
+ Kaigohoken64=""
+ Kaigohoken65=""
+ Kaigohoken66=""
+ Kaigohoken67=""
+ Kaigohoken68=""
+ Kaigohoken69=""
+
+fi
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${userid}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${shisetsu}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###SELECT_SHISETSU### $select_shisetsu
+###RIYOUSHAID###   ${RIYOUSHAID}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHNAMEKANA### ${RIYOUSHNAMEKANA}
+###RIYOUSHASEIBETSU### ${RIYOUSHASEIBETSU}
+###DROPDOWN_ACTIVE1### active
+###LI_UNEI9### active
+FIN
+# calsedファイル
+cat << FINN > $tmp-calsed_data2
+###KOUSHINBI### ${KOUSHINBI}
+###KOUSHINSHA### ${KOUSHINSHA}
+###RIYOUSHABIRTHGENGOU### ${RIYOUSHABIRTHGENGOU}
+###RIYOUSHABIRTHYEAER### ${RIYOUSHABIRTHYEAER}
+###RIYOUSHABIRTHMONTH### ${RIYOUSHABIRTHMONTH}
+###RIYOUSHABIRTHDAY### ${RIYOUSHABIRTHDAY}
+###RIYOUSHANENREI### ${RIYOUSHANENREI}
+###Seikatsu1### ${Seikatsu1}
+###Seikatsu2### ${Seikatsu2}
+###Seikatsu3### ${Seikatsu3}
+###Seikatsu4### ${Seikatsu4}
+###Seikatsu5### ${Seikatsu5}
+###Seikatsu6### ${Seikatsu6}
+###Seikatsu7### ${Seikatsu7}
+###Seikatsu8### ${Seikatsu8}
+###Seikatsu9### ${Seikatsu9}
+###Seikatsu10### ${Seikatsu10}
+###Seikatsu11### ${Seikatsu11}
+###Seikatsu12### ${Seikatsu12}
+###Seikatsu13### ${Seikatsu13}
+###Seikatsu14### ${Seikatsu14}
+###Seikatsu15### ${Seikatsu15}
+###Seikatsu16### ${Seikatsu16}
+###Seikatsu17### ${Seikatsu17}
+###Seikatsu18### ${Seikatsu18}
+###Seikatsu19### ${Seikatsu19}
+###Seikatsu20### ${Seikatsu20}
+###Seikatsu21### ${Seikatsu21}
+###Seikatsu22### ${Seikatsu22}
+###Seikatsu23### ${Seikatsu23}
+###Seikatsu24### ${Seikatsu24}
+###Seikatsu25### ${Seikatsu25}
+###Seikatsu26### ${Seikatsu26}
+###Seikatsu27### ${Seikatsu27}
+###Seikatsu28### ${Seikatsu28}
+###Seikatsu29### ${Seikatsu29}
+###Seikatsu30### ${Seikatsu30}
+###Seikatsu31### ${Seikatsu31}
+###Seikatsu32### ${Seikatsu32}
+###Seikatsu33### ${Seikatsu33}
+###Seikatsu34### ${Seikatsu34}
+###Seikatsu35### ${Seikatsu35}
+###Seikatsu36### ${Seikatsu36}
+###Seikatsu37### ${Seikatsu37}
+###Seikatsu38### ${Seikatsu38}
+###Seikatsu39### ${Seikatsu39}
+###Seikatsu40### ${Seikatsu40}
+###Seikatsu41### ${Seikatsu41}
+###Seikatsu42### ${Seikatsu42}
+###Seikatsu43### ${Seikatsu43}
+###Seikatsu44### ${Seikatsu44}
+###Seikatsu45### ${Seikatsu45}
+###Seikatsu46### ${Seikatsu46}
+###Genjyou47### ${Genjyou47}
+###Genjyou48### ${Genjyou48}
+###Genjyou49### ${Genjyou49}
+###Genjyou50### ${Genjyou50}
+###Genjyou51### ${Genjyou51}
+###Genjyou52### ${Genjyou52}
+###Genjyou53### ${Genjyou53}
+###Genjyou54### ${Genjyou54}
+###Genjyou55### ${Genjyou55}
+###Genjyou56### ${Genjyou56}
+###Genjyou57### ${Genjyou57}
+###Genjyou58### ${Genjyou58}
+###Genjyou59### ${Genjyou59}
+###Genjyou60### ${Genjyou60}
+###Genjyou61### ${Genjyou61}
+###Genjyou62### ${Genjyou62}
+###Genjyou63### ${Genjyou63}
+###Genjyou64### ${Genjyou64}
+###Genjyou65### ${Genjyou65}
+###Genjyou66### ${Genjyou66}
+###Genjyou67### ${Genjyou67}
+###Genjyou68### ${Genjyou68}
+###Genjyou69### ${Genjyou69}
+###Genjyou70### ${Genjyou70}
+###Genjyou71### ${Genjyou71}
+###Genjyou72### ${Genjyou72}
+###Genjyou73### ${Genjyou73}
+###Genjyou74### ${Genjyou74}
+###Genjyou75### ${Genjyou75}
+###Genjyou76### ${Genjyou76}
+###Genjyou77### ${Genjyou77}
+###Genjyou78### ${Genjyou78}
+###Seikatsu79### ${Seikatsu79}
+###Seikatsu80### ${Seikatsu80}
+###Seikatsu81### ${Seikatsu81}
+###Seikatsu82### ${Seikatsu82}
+###Seikatsu83### ${Seikatsu83}
+###Seikatsu84### ${Seikatsu84}
+###Seikatsu85### ${Seikatsu85}
+###Seikatsu86### ${Seikatsu86}
+###Seikatsu87### ${Seikatsu87}
+###Seikatsu88### ${Seikatsu88}
+###Seikatsu89### ${Seikatsu89}
+###Seikatsu90### ${Seikatsu90}
+###Seikatsu91### ${Seikatsu91}
+###Seikatsu92### ${Seikatsu92}
+###Seikatsu93### ${Seikatsu93}
+###Seikatsu94### ${Seikatsu94}
+###Seikatsu95### ${Seikatsu95}
+###Seikatsu96### ${Seikatsu96}
+###Seikatsu97### ${Seikatsu97}
+###Seikatsu98### ${Seikatsu98}
+###Seikatsu99### ${Seikatsu99}
+###Seikatsu100### ${Seikatsu100}
+###Seikatsu101### ${Seikatsu101}
+###Seikatsu102### ${Seikatsu102}
+###Seikatsu103### ${Seikatsu103}
+###Seikatsu104### ${Seikatsu104}
+###Seikatsu105### ${Seikatsu105}
+###Seikatsu106### ${Seikatsu106}
+###Seikatsu107### ${Seikatsu107}
+###Seikatsu108### ${Seikatsu108}
+###Seikatsu109### ${Seikatsu109}
+###Seikatsu110### ${Seikatsu110}
+###Seikatsu111### ${Seikatsu111}
+###Seikatsu112### ${Seikatsu112}
+###Seikatsu113### ${Seikatsu113}
+###Seikatsu114### ${Seikatsu114}
+###Seikatsu115### ${Seikatsu115}
+###Seikatsu116### ${Seikatsu116}
+###Seikatsu117### ${Seikatsu117}
+###Seikatsu118### ${Seikatsu118}
+###Seikatsu119### ${Seikatsu119}
+###Seikatsu120### ${Seikatsu120}
+###Seikatsu121### ${Seikatsu121}
+###Seikatsu122### ${Seikatsu122}
+###Seikatsu123### ${Seikatsu123}
+###Seikatsu124### ${Seikatsu124}
+###Seikatsu125### ${Seikatsu125}
+###Seikatsu126### ${Seikatsu126}
+###Seikatsu127### ${Seikatsu127}
+###Seikatsu128### ${Seikatsu128}
+###Seikatsu129### ${Seikatsu129}
+###Seikatsu130### ${Seikatsu130}
+###Seikatsu131### ${Seikatsu131}
+###Seikatsu132### ${Seikatsu132}
+###Seikatsu133### ${Seikatsu133}
+###Seikatsu134### ${Seikatsu134}
+###Seikatsu135### ${Seikatsu135}
+###Seikatsu136### ${Seikatsu136}
+###Seikatsu137### ${Seikatsu137}
+###Seikatsu138### ${Seikatsu138}
+###Seikatsu139### ${Seikatsu139}
+###Seikatsu140### ${Seikatsu140}
+###Seikatsu141### ${Seikatsu141}
+###Seikatsu142### ${Seikatsu142}
+###Seikatsu143### ${Seikatsu143}
+###Bikou1### ${Bikou1}
+###Bikou2### ${Bikou2}
+###Bikou3### ${Bikou3}
+###Seikatsu144### ${Seikatsu144}
+###Seikatsu145### ${Seikatsu145}
+###Seikatsu146### ${Seikatsu146}
+###Seikatsu147### ${Seikatsu147}
+###Seikatsu148### ${Seikatsu148}
+###Seikatsu149### ${Seikatsu149}
+###Kaigohoken0### ${Kaigohoken0}
+###Kaigohoken1### ${Kaigohoken1}
+###Kaigohoken2### ${Kaigohoken2}
+###Kaigohoken3### ${Kaigohoken3}
+###Kaigohoken4### ${Kaigohoken4}
+###Kaigohoken5### ${Kaigohoken5}
+###Kaigohoken6### ${Kaigohoken6}
+###Kaigohoken7### ${Kaigohoken7}
+###Kaigohoken8### ${Kaigohoken8}
+###Kaigohoken9### ${Kaigohoken9}
+###Kaigohoken10### ${Kaigohoken10}
+###Kaigohoken11### ${Kaigohoken11}
+###Kaigohoken12### ${Kaigohoken12}
+###Kaigohoken13### ${Kaigohoken13}
+###Kaigohoken14### ${Kaigohoken14}
+###Kaigohoken15### ${Kaigohoken15}
+###Kaigohoken16### ${Kaigohoken16}
+###Kaigohoken17### ${Kaigohoken17}
+###Kaigohoken18### ${Kaigohoken18}
+###Kaigohoken19### ${Kaigohoken19}
+###Kaigohoken20### ${Kaigohoken20}
+###Kaigohoken21### ${Kaigohoken21}
+###Kaigohoken22### ${Kaigohoken22}
+###Kaigohoken23### ${Kaigohoken23}
+###Kaigohoken24### ${Kaigohoken24}
+###Kaigohoken25### ${Kaigohoken25}
+###Kaigohoken26### ${Kaigohoken26}
+###Kaigohoken27### ${Kaigohoken27}
+###Kaigohoken28### ${Kaigohoken28}
+###Kaigohoken29### ${Kaigohoken29}
+###Kaigohoken30### ${Kaigohoken30}
+###Kaigohoken31### ${Kaigohoken31}
+###Kaigohoken32### ${Kaigohoken32}
+###Kaigohoken33### ${Kaigohoken33}
+###Kaigohoken34### ${Kaigohoken34}
+###Kaigohoken35### ${Kaigohoken35}
+###Kaigohoken36### ${Kaigohoken36}
+###Kaigohoken37### ${Kaigohoken37}
+###Kaigohoken38### ${Kaigohoken38}
+###Kaigohoken39### ${Kaigohoken39}
+###Kaigohoken40### ${Kaigohoken40}
+###Kaigohoken41### ${Kaigohoken41}
+###Kaigohoken42### ${Kaigohoken42}
+###Kaigohoken43### ${Kaigohoken43}
+###Kaigohoken44### ${Kaigohoken44}
+###Kaigohoken45### ${Kaigohoken45}
+###Kaigohoken46### ${Kaigohoken46}
+###Kaigohoken47### ${Kaigohoken47}
+###Kaigohoken48### ${Kaigohoken48}
+###Kaigohoken49### ${Kaigohoken49}
+###Kaigohoken50### ${Kaigohoken50}
+###Kaigohoken51### ${Kaigohoken51}
+###Kaigohoken52### ${Kaigohoken52}
+###Kaigohoken53### ${Kaigohoken53}
+###Kaigohoken54### ${Kaigohoken54}
+###Kaigohoken55### ${Kaigohoken55}
+###Kaigohoken56### ${Kaigohoken56}
+###Kaigohoken57### ${Kaigohoken57}
+###Kaigohoken58### ${Kaigohoken58}
+###Kaigohoken59### ${Kaigohoken59}
+###Kaigohoken60### ${Kaigohoken60}
+###Kaigohoken61### ${Kaigohoken61}
+###Kaigohoken62### ${Kaigohoken62}
+###Kaigohoken63### ${Kaigohoken63}
+###Kaigohoken64### ${Kaigohoken64}
+###Kaigohoken65### ${Kaigohoken65}
+###Kaigohoken66### ${Kaigohoken66}
+###Kaigohoken67### ${Kaigohoken67}
+###Kaigohoken68### ${Kaigohoken68}
+###Kaigohoken69### ${Kaigohoken69}
+###TAIKYOCHECK### ${TAIKYOCHECK}
+FINN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+#-------------------------------------------------------------
+# プルダウンの準備
+
+# 現在の生活状況
+echo "自分で" "一部自分で" "自分でしていない" |
+tarr                 |
+rank                 |
+awk 'BEGIN{print "_ @"}{print $0}'          > $tmp-genjyou_select
+
+for i in $(seq 47 73) ; do
+  num="$(eval echo \"\$Genjyou${i}\")"
+  cat $tmp-genjyou_select                       |
+  awk '{if($1=="'${num}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'             > $tmp-genjyou${i}_select
+
+done
+#--
+## 建屋取得
+#--
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR    |
+# 1:施設ID 2:建屋ID 3:フロア
+awk '$1=="'${Shisetsu}'"{print $2}'                     |
+LANG=C sort |
+uniq |
+join1 key=1 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME -    |
+self 1 3                                                > $tmp-tateya_kari
+# 1:建屋ID 2:建屋名
+#-
+
+  cat $tmp-tateya_kari |
+# 建屋が選択されていたらselected
+awk '{if($1=="'${Tateya}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'    > $tmp-tateya_name
+
+  ## フロア取得
+  #--
+  # 建屋が選ばれていない、かつ建屋の選択肢が一つの場合はその建屋をセット
+  [ -z "${Tateya}" -a "$(gyo $tmp-tateya_name)" -ge "1" ] && Tateya="$(awk '{print $1}' $tmp-tateya_name | head -1)"
+
+  if [ -n "${Tateya}" -a "${Tateya}" != "_" ] ; then
+    cat ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+    awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $3,$3}'  |
+    sort  |
+    uniq  |
+    awk '{if($1=="'${Floor}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'  >$tmp-floor_kari
+# 1:フロア 2:フロア
+    # フロアが2つ以上の場合のみ全てという選択をつける
+    if [ "$(gyo $tmp-floor_kari)" -gt "1"  ]; then
+      cat $tmp-floor_kari |
+      awk 'BEGIN{print "@ 全て"}{print $0}'
+    else
+      cat $tmp-floor_kari
+    fi  > $tmp-floor
+  # 建屋が複数から未選択の場合
+  else
+    echo "@" "全て"
+  fi     > $tmp-floor
+# 1:フロア番号 2:フロア番号
+
+#--
+## 居室取得・入居者氏名取得
+#--
+# 施設の選択があれば施設内の、そうでなければ全入居者の居室を取得
+cat ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS  |
+awk '$(NF-2)!="9"' |
+if [ -n "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $0}'
+# 1:施設ＩＤ 2:建屋ＩＤ 3:フロア 4:ユニットＩＤ 5:居室Ｎｏ
+else
+  cat -
+fi |
+
+# 建屋の選択があった場合
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ] ; then
+  awk '$2=="'${Tateya}'"{print $0}'
+else
+  cat -
+fi |
+# 1:施設ＩＤ 2:建屋ＩＤ 3:フロア 4:ユニットＩＤ 5:居室Ｎｏ
+#-
+# フロアの選択があった場合
+if [ -n "${Floor}" -a "${Floor}" != "_" ] ; then
+  awk '$3=="'${Floor}'"{print $0}'
+else
+  cat -
+fi |
+#-
+
+# ユニットの選択があった場合
+if [ -n "${Unit}" -a "${Unit}" != "_" -a "${Unit}" != "@" ] ; then
+  awk '$4=="'${Unit}'"{print $0}'
+else
+  cat -
+fi |
+LANG=C sort       |
+uniq              |
+#awk '$8>="'${TaishouYear}'""'${TaishouMonth}'""01"{print $5,$6}' |
+if [ ! -z "${Taikyo}" -a "${Taikyo}" = "1" ] ; then
+  self 5 6
+else
+  awk '$8>="'${today}'"{print $5,$6}'
+fi   |
+#awk '$7<="'${TaishouYear}'""'${TaishouMonth}'""31"&&$8>="'${TaishouYear}'""'${TaishouMonth}'""01"{print $5,$6}' |
+#awk '$8>"'${today}'"{print $5,$6}' |
+# 1:居室Ｎｏ 2:入居者Ｎｏ
+#-
+
+LANG=C sort -k2,2 |
+join1 key=2 ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER -  |
+LANG=C sort -k1,1                                    |
+self 1/3                                             > $tmp-kyoshitsu_kari
+
+# 2人以上の場合のみ全てという選択をつける
+if [ "$(gyo $tmp-kyoshitsu_kari)" -gt "1" ] ; then
+  cat $tmp-kyoshitsu_kari  |
+  awk 'BEGIN{print "@ 全て"}{print $1,$1}' |
+  uniq |
+    awk '{if($1=="'${Kyoshitsu}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'                  |
+  uniq                     > $tmp-kyoshitsu
+
+  cat $tmp-kyoshitsu_kari  |
+  if [ -n "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ] ; then
+    awk '$1=="'${Kyoshitsu}'"{print $0}'
+    LANG=C sort -k2,2       |
+    getfirst 2 2
+  else
+#    cat -
+    LANG=C sort -k2,2       |
+    getfirst 2 2
+  fi |
+#  self 2 3    |
+  LANG=C sort |
+  delf 1      |
+#  uniq |
+  awk '{if($1=="'${RIYOUSHAID}'"){print $0,"selected"}
+        else{print $0,"@"}}' > $tmp-nyuukyosha
+# 1:居室Ｎｏ 2:居室Ｎｏ
+else
+  cat $tmp-kyoshitsu_kari |
+  awk '{print $1,$0}'     |
+  uniq                    > $tmp-kyoshitsu
+
+  cat $tmp-kyoshitsu_kari |
+#  awk '{print $2,$3}'     |
+  LANG=C sort -k2,2       |
+  getfirst 2 2            |
+  LANG=C sort             |
+  delf 1                  |
+  awk '{if($1=="'${RIYOUSHAID}'"){print $0,"selected"}
+        else{print $0,"@"}}'  > $tmp-nyuukyosha
+#  LANG=C sort                > $tmp-nyuukyosha
+
+fi
+
+if [ "${MODE}" = "init" -o "${RIYOUSHAID}" = "_" -o -z "${RIYOUSHAID}" ] ; then
+  echo "00000000 選択してください。 @" |
+  cat - $tmp-nyuukyosha        
+else
+  cat $tmp-nyuukyosha
+fi > $tmp-nyuukyosha_name
+#--------------------------------------------------------------
+
+if [ "$MODE" = "touroku" ] ; then
+
+touroku_result="$(cat ${result} | head -1 | self 2)"
+
+ if [ ${touroku_result} = "touroku_ok" ] ; then
+    message="登録が完了しました。"
+ else
+    message=$(awk '$1=="message"{print $2}' ${result})
+ fi
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" ] ; then
+	cat <<- FINN > $tmp-html2
+          <script type="text/javascript" language="javascript">
+           sonota_pop = window.open("","sonota_pop");
+           sonota_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 登録・印刷ボタンの表示
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME
+# 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$7=="SENIOR_ASSENMENT.CGI"{print $2,$9}' |
+LANG=C sort > $tmp-dispkengen_all
+# 1:施設ID 2:STATUS
+
+cat $tmp-dispkengen_all |
+if [ -s $tmp-dispkengen_all -a $(self 1 $tmp-dispkengen_all |head -1) = "0000" ] ; then
+  awk '{print $2}' |
+  head -1
+else
+  awk '$1=="'${shisetsu}'"{print $0}' |
+  LANG=C sort |
+  getlast 1 1 |
+  self 2
+fi > $tmp-dispkengen
+
+if [ $(cat $tmp-dispkengen) = 3 ];then
+  echo "###TOUROKUDISP### @" >> $tmp-calsed_data
+  echo "###PRINTDISP### @"  >> $tmp-calsed_data
+elif [ $(cat $tmp-dispkengen) = 2 ];then
+  echo "###TOUROKUDISP### @" >> $tmp-calsed_data
+  echo "###PRINTDISP### none"  >> $tmp-calsed_data
+else
+  echo "###TOUROKUDISP### none" >> $tmp-calsed_data
+  echo "###PRINTDISP### none"  >> $tmp-calsed_data
+fi
+
+
+cat $tmp-calsed_data2                |
+#sed 's/_/###SPACE###/g' -            |
+#sed 's/ _ / @ /g' -            |
+awk '{gsub(/^_$/,"@",$2);print $0}'    |
+cat $tmp-calsed_data - ${checkfile}  > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#cp -p $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# データのはめ込み
+#cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_ASSESSMENT_JYOUHOUSHEET.html    |
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_ASSESSMENT_JYOUHOUSHEET1.html   |
+  cat -\
+      ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+      ${html_dir}/KOJINJYOUHOU_SHOUSAI_ASSESSMENT_JYOUHOUSHEET2.html |
+calsed -f $tmp-calsed_data_result -                     |
+mojihame -l###USER__NAME### - ${tmp}-usermei            |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -lshisetsu_select - $tmp-shisetsu_name         |
+mojihame -ltateya_select - $tmp-tateya_name             |
+mojihame -lfloor_select - $tmp-floor                    |
+mojihame -lkyoshitsu_select - $tmp-kyoshitsu            |
+mojihame -lnyuukyosha_select - $tmp-nyuukyosha_name     |
+mojihame -lshozoku_shisetsu - $tmp-shozoku_shisetsu     |
+mojihame -lgenjyou47 - $tmp-genjyou47_select            |
+mojihame -lgenjyou48 - $tmp-genjyou48_select            |
+mojihame -lgenjyou50 - $tmp-genjyou50_select            |
+mojihame -lgenjyou51 - $tmp-genjyou51_select            |
+mojihame -lgenjyou53 - $tmp-genjyou53_select            |
+mojihame -lgenjyou54 - $tmp-genjyou54_select            |
+mojihame -lgenjyou56 - $tmp-genjyou56_select            |
+mojihame -lgenjyou58 - $tmp-genjyou58_select            |
+mojihame -lgenjyou60 - $tmp-genjyou60_select            |
+mojihame -lgenjyou61 - $tmp-genjyou61_select            |
+mojihame -lgenjyou63 - $tmp-genjyou63_select            |
+mojihame -lgenjyou65 - $tmp-genjyou65_select            |
+mojihame -lgenjyou66 - $tmp-genjyou66_select            |
+mojihame -lgenjyou68 - $tmp-genjyou68_select            |
+mojihame -lgenjyou69 - $tmp-genjyou69_select            |
+mojihame -lgenjyou71 - $tmp-genjyou71_select            |
+mojihame -lgenjyou73 - $tmp-genjyou73_select            |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+sed 's/###KAIGYO###/\n/g'                               |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+## 終了
+rm -f $tmp-*
+exit 0

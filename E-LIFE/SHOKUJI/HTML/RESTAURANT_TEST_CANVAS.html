@@ -1,0 +1,326 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="Content-Language" content="ja" />
+<meta http-equiv="Content-Script-Type" content="text/javascript" />
+<meta http-equiv="Content-Style-Type" content="text/css" />
+<meta name="viewport" content="width=device-width; initial-scale=1.0; maximum-scale=1.0; user-scalable=no;" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta http-equiv="imagetoolbar" content="no" />
+	    <title>TEST</title>
+		<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js" ></script>
+<script type="text/javascript">
+/* http://chasen.org/~taku/software/ajax/hwr/
+ * Ajax-based hand written recognition
+ *
+ * Copyright (C) 2005-2007 Taku Kudo <taku@chasen.org>
+ * This is free software with ABSOLUTELY NO WARRANTY.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
+ * 02111-1307, USA
+ *
+ */
+
+function getPosition(evt)
+{
+  evt = (evt) ?  evt : ((event) ? event : null);
+  var left = 0;
+  var top = 0;
+
+  if (evt.pageX) {
+    left = evt.pageX;
+    top  = evt.pageY;
+  } else {
+    left = evt.clientX + document.documentElement.scrollLeft;
+    top  = evt.clientY +  document.documentElement.scrollTop;
+  }
+ 
+  return {x : left, y : top}; 
+}
+
+
+onload = function ()
+{
+  var tomoe = new TOMOE();
+}
+
+function TOMOE ()
+{
+  var canvas = document.getElementById("tomoe-canvas");
+  canvas.className = "tomoe-canvas";
+  this.canvas = canvas;
+
+  var self = this;
+  canvas.onmouseup    = function(event) { self.mouseup(event); }
+  canvas.onmousedown  = function(event) { self.mousedown(event); }
+  canvas.onmousemove  = function(event) { self.mousemove(event); }
+
+  //add ipad用のイベント追加。
+  canvas.ontouchend   = function(event) { self.mouseup(event); }
+  canvas.ontouchstart = function(event) { self.mousedown(event); }
+  canvas.ontouchmove  = function(event) { self.mousemove(event); }
+
+  //add マウスがキャンバスから外れたら描画をそこで終了。PCのみで有効。
+  canvas.onmouseleave = function(event) { self.mouseleave(event);}
+
+
+
+  var clear_button = document.getElementById("tomoe-clear-button");
+  clear_button.onclick = function(event) { self.clearAll(); }
+
+  var left = 0;
+  var top = 0;
+  for (var o = canvas; o ; o = o.offsetParent) {
+    left += (o.offsetLeft - o.scrollLeft);
+    top  += (o.offsetTop - o.scrollTop);
+  }
+   
+  this.offsetLeft = left;
+  this.offsetTop  = top;
+
+  this.clearAll();
+
+}
+
+
+TOMOE.prototype.clearAll = function()
+{
+  this.clear();
+}
+
+TOMOE.prototype.clear = function()
+{
+  this.xmlhttp = null;
+  this.active = false;
+  this.sequence = [];
+  this.point_num = 0;
+  this.stroke_num = 0;
+  this.prev_x = -1;
+  this.prev_y = -1;
+  this.resultNum = 0;
+  this.resultChar = "";
+  this.exampleId = 0;
+
+  var o = this.canvas;
+  while (o.firstChild) {
+    o.removeChild(o.firstChild);
+  }
+}
+
+TOMOE.prototype.mouseup = function(event)
+{
+  this.trace(event);
+  this.finishStroke();
+}
+
+TOMOE.prototype.mouseleave = function(event)
+{
+  this.finishStroke();
+}
+
+
+TOMOE.prototype.mousemove = function(event)
+{
+  this.trace(event);
+
+}
+
+TOMOE.prototype.mousedown = function(event) 
+{
+  this.active = true;
+  this.trace(event);
+}
+
+TOMOE.prototype.finishStroke = function()
+{
+  this.active = false;
+  this.point_num = 0;
+  this.stroke_num++;
+  this.prev_x = -1;
+  this.prev_y = -1;
+}
+
+TOMOE.prototype.addPoint = function(x, y)
+{
+  var x2 = x - this.offsetLeft;
+  var y2 = y - this.offsetTop;
+
+  if (this.point_num == 0) 
+  this.sequence[this.stroke_num] = new Array;
+
+  this.sequence[this.stroke_num][this.point_num] = { x:x2, y:y2 };
+  ++this.point_num;
+
+  if (this.prev_x != -1) {
+    this.drawLine(this.prev_x, this.prev_y, x, y);
+  } else {
+    this.drawDot(x, y);
+  }  
+
+  this.prev_x = x;
+  this.prev_y = y;
+
+//alert(x + " "+ y);
+
+
+}
+
+TOMOE.prototype.trace = function (event)
+{
+  if (! this.active) return;
+
+
+  var pos = getPosition(event);
+
+  this.addPoint(pos.x, pos.y);
+
+
+}
+
+TOMOE.prototype.drawDot = function(x,y)
+{
+  var dot = document.createElement("span");
+  dot.style.left = x  + "px";
+  dot.style.top =  y  + "px";
+  dot.className = "tomoe-dot";
+  this.canvas.appendChild(dot);
+}
+
+TOMOE.prototype.drawLine = function(x1,y1,x2,y2) 
+{
+  if (x1 == x2 && y1 == y2) return;
+
+  var x_move = x2 - x1;
+  var y_move = y2 - y1;
+  var x_diff = x_move < 0 ? 1 : -1;
+  var y_diff = y_move < 0 ? 1 : -1;
+
+  if (Math.abs(x_move) >= Math.abs(y_move)){
+    for (var i = x_move; i != 0; i += x_diff) {
+      this.drawDot(x2 - i, y2 - Math.round(y_move * i / x_move));
+    }
+  } else {
+    for (var i = y_move; i != 0; i += y_diff) {
+      this.drawDot(x2 - Math.round(x_move * i / y_move), y2 - i);
+    }
+  }
+}
+
+</script>
+<!-- CSS -->
+<style type="text/css">
+#qrcode canvas { margin:0 10px 0 0; padding:0; }
+
+.tomoe-canvas {
+ width: 300px;
+ height: 300px;
+ margin: 0px;
+ background-color: aliceblue;
+ border-collapse: collapse; 
+ border-style: solid;
+ border-width: 1px;
+ border-color: #888;
+ 
+}
+
+.tomoe-button {
+  margin-left: 4px;
+  margin-top: 8px;
+}
+
+.tomoe-dot {
+  position:absolute;
+  background:#000;
+  width:3px;
+  height:3px;
+  z-index:32768;
+  overflow: hiddern;
+
+}
+
+.tomoe-table {
+  margin-left: 20px;
+  border-width: 0px;
+}
+
+.tomoe-sr, .tomoe-srs {  cursor : pointer; }
+.tomoe-sr  { background-color : seashell; color : #000; }
+.tomoe-srs { background-color : #36c; color : seashell; cursor : pointer; }
+
+.tomoe-prob {
+ margin-left: 20px;
+ line-height: 20px;
+ font-size: smaller;
+ color: darkgreen;
+}
+
+.tomoe-char {
+ width: 30px;
+ margin-left: 10px;
+ font-size: 18px;
+ line-height: 20px;
+ float:left;
+}
+
+.tomoe-result {
+ display: none;
+ float:right;
+ width: 140px;
+ height: 280px;
+ margin-left: 2px;
+ padding: 10px;
+ padding-left: 5px;
+ background-color: seashell;
+ border-collapse: collapse; 
+ border-style: solid;
+ border-width: 1px;
+ border-color: #888;
+}
+
+
+
+</style>
+</head>
+<body>
+
+<div id="wrap">
+<h1>TEST</h1>
+
+<!-- CODE -->
+<div id="qrcode"></div>
+
+<table class="tomoe-table">
+<tr><td>
+<div id="canvas-out" style="padding:5px;background:#FF0000;"> 
+<div id="tomoe-canvas" class="tomoe-canvas" ></div>
+</div>
+</td></tr>
+</table>
+
+<table class="tomoe-table">
+<tr><td>
+<input id="tomoe-clear-button" type="button" value="clear"></input>
+</td></tr>
+</table>
+
+
+<!-- / CODE -->
+</div>
+
+</body>
+</html>
+ 

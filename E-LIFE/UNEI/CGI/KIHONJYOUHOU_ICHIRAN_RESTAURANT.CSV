@@ -1,0 +1,150 @@
+#!/bin/bash
+#
+# KIHONJOUHOU_ICHIRAN.CSV
+# 基本情報一覧 QRコードCSV出力用CGI
+#
+# Written by R.Suzuki :20150710
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+if [ $(echo "${SHISETSUID}" | awk '$1~/^1/{print substr($1,1,1)}') = "1" ] ; then
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+else
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+fi
+
+
+#検索結果0件ならアラート出して終了
+if [ $(gyo "${data}") -eq 0 ] ;then
+  message="出力対象結果が0件です"
+        #注：ヒアドキュメントのインデントは必ずタブ
+	cat <<- FIN > $tmp-html_0
+	     <script type="text/javascript" language="javascript">
+	       alert('${message}');
+	     </script>
+	FIN
+
+  cat $tmp-html_0
+  rm -f $tmp-*
+  exit 0
+fi
+
+
+
+#--------------------------------------------------------------
+# 表示順による並び替え
+cat ${data}   |
+# 1:居室番号    2:利用者(入居者)ID 3:利用者(入居者)氏名 4:利用者(入居者)氏名カナ 5:性別
+# 6:生年月日    7:年齢             8:介護度             9:携帯電話番号           10:連絡先氏名
+# 11:連絡先続柄 12:電話番号1       13:電話番号2         14:住所                  15:連絡先氏名
+# 16:連絡先続柄 17:電話番号1       18:電話番号2         19:住所                  20:施設ID
+# 21:建屋ID     22:フロア          23:ユニット
+     awk '{if($1=="IKOUDATA"){print "1",$0}else{print "2",$0}}' |
+   # 表示項目による絞込み
+   # 表示順による並べ替え
+     # 表示順1：居室番号で昇順
+     if [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "1" ] ; then
+       LANG=C sort -k1,1 -k21,22 -k2,2n
+     # 表示順2：居室番号で降順
+     elif [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "2" ] ;then
+       LANG=C sort -k1,1 -k21,22nr -k2,2nr
+     # 表示順3：入居者名で昇順
+     elif [ "${HyoujiJyun}" == "2" -a "${HyoujiShoukou}" == "1" ] ;then
+       LANG=C sort -k5,5
+     # その他：入居社名で降順
+     else
+       LANG=C sort -r -k5,5
+     fi |
+#     delf 1 |
+     sed 's/IKOUDATA/移行/g' |
+     self  3 2 4   |
+     # 1:利用者(入居者)ID  2:居室番号 3:利用者(入居者)氏名
+     awk '{print "NYK"$1","$2","$3}' |
+#     sed 's/_/@/g'      |
+#     sed 's/###SPACE###/@/g' > $tmp-listdata
+     sed 's/###SPACE###/ /g'                                |
+     sed 's/_//g' |
+# tr -d '\n' |
+#tee /var/tmp/qr_lis   |
+#     sed 's/@/\r\n/g' > $tmp-listdata
+
+#      nkf --ic=UTF-8 --oc=CP932 > $tmp-listdata
+# SJISに変換。00000562の入居者など文字落ち発生（ユーザ報告済み）
+     nkf -sLw > $tmp-listdata
+#     iconv -f UTF8 -t SJIS  > $tmp-listdata
+
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && message="入居者情報出力エラー"
+
+
+#メッセージありならアラート出して終了
+if [ $message != "" ] ;then
+        #注：ヒアドキュメントのインデントは必ずタブ
+	cat <<- FIN > $tmp-html_0
+	     <script type="text/javascript" language="javascript">
+	       alert('${message}');
+	     </script>
+	FIN
+  cat $tmp-html_0
+  rm -f $tmp-*
+  exit 0
+fi
+
+#-------------------------------------------------------------f-
+
+# ダウンロードディレクトリにデータを格納
+cat  $tmp-listdata > $ap_dir/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.csv
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.csv","pdfcsv");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

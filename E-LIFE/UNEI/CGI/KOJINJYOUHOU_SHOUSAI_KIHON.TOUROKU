@@ -1,0 +1,344 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.TOUROKU
+# 介護保険情報登録
+#
+# Written by T.Osako (Tokyu-hands.co.jp) :20100615
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+cgi_dir="${home_dir}/UNEI/CGI"
+pompa_dir="${home_dir}/UNEI/POMPA/RIYOUSHA"
+input_dir="${home_dir}/UNEI/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+parammime=$2
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+# 
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+# [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名を入力してください。"
+# [ -z "${Shimeikana}" -o "${Shimeikana}" = "_" ] && error_exit "氏名カナを入力してください。"
+# [ -z "${SeinengappiYear}" -o "${SeinengappiYear}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiDay}" -o "${SeinengappiDay}" = "_" ] && error_exit "生年月日を入力してください。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+# 利用者データ
+  RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+
+# 利用者IDがなければ不正
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "データが不正です。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# チェック
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 利用者マスタ
+# 利用者基本
+#--------------------------------------------------------------
+  #####################
+  # 1:利用者テーブル
+  #####################
+
+  Shimei="$(nameread "Shimei" ${namedata} | sed 's/ //g' | sed 's/_//g')"
+  Shimeikana="$(nameread "Shimeikana" ${namedata} | sed 's/ //g' | sed 's/_//g' | zen -)"
+  GaijiKyuuji="$(nameread "GaijiKyuuji" ${namedata} | sed 's/ //g'| sed 's/_//g')"
+  USERID="$(nameread "USERID" ${namedata})"
+
+ [ -z "${GaijiKyuuji}" -o "${GaijiKyuuji}" = "${Shimei}" ] && GaijiKyuuji="_"
+
+# 追加データの作成
+  echo "${RIYOUSHAID}" "${Shimei}" "${Shimeikana}" "${GaijiKyuuji}" "1" "${cur_time}" "${USERID}">  $tmp-riyousha_master_input
+# 1:利用者ID 2:氏名 3:氏名カナ 4:外字旧字 5:削除フラグ 6:更新日時 7:UserID
+
+# 利用者マスタに登録されている氏名、氏名カナ、外字を取得
+#MasterShimei="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+#MAsterShimeikana="$(awk '$1=="'${RIYOUSHAID}'"{print $3}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+#MasterGaiji="$(awk '$1=="'${RIYOUSHAID}'"{print $4}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+
+#cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER |
+# 氏名の更新があった場合のみ利用者マスタを更新
+#if [ "${Shimei}" != "${MasterShimei}" ] ; then
+#  awk '$1=='${RIYOUSHAID}'"{print "$1,'${Shimei}'",$3,$4,$5,"'${cur_time}'","'${USERID}'"}'
+#else
+#  cat -
+#fi |
+# 氏名カナの更新があった場合のみ利用者マスタを更新
+#if [ "${Shimeikana}" != "${MasterShimeikana}" ] ; then
+#  awk '$1=='${RIYOUSHAID}'"{print $1,$2,"'${Shimeikana}'",$4,$5,"'${cur_time}'","'${USERID}'"}'
+#else
+#  cat -
+#fi |
+# 外字の更新があった場合のみ利用者マスタを更新
+#if [ "${GaijiKyuuji}" != "${MasterGaiji}" ] ; then
+#  awk '$1=="'${RIYOUSHAID}'"{print $1,$2,$3,"'${GaijiKyuuji}'","$5","'${cur_time}'","'${USERID}'"}'
+#else
+#  cat
+#fi  > $tmp-riyousha_master_input
+# 1:利用者ID 2:氏名 3:氏名カナ 4:外字旧字 5:削除フラグ 6:更新日時 7:UserID
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+  #######################
+  # 2:利用者基本テーブル
+  #######################
+
+# Seibetsu=$(nameread "Seibetsu" ${namedata})
+# SeinengappiGengou=$(nameread "SeinengappiGengou" ${namedata})
+# SeinengappiYear=$(nameread "SeinengappiYear" ${namedata})
+# SeinengappiMonth=$(nameread "SeinengappiMonth" ${namedata})
+# SeinengappiDay=$(nameread "SeinengappiDay" ${namedata})
+  Kansenshou=$(nameread "Kansenshou" ${namedata})
+  NyuukyoMaeYuubinBangou=$(nameread "NyuukyoMaeYuubinBangou" ${namedata} | sed 's/\\n//g' | sed 's/_//g')
+  NyuukyoMaeJyuusho=$(nameread "NyuukyoMaeJyuusho" ${namedata} | sed 's/\\n//g' | sed 's/_//g')
+  YuubinBangou=$(nameread "YuubinBangou" ${namedata} | sed 's/\\n//g')
+  GenJyuusho=$(nameread "GenJyuusho" ${namedata} | sed 's/\\n//g' | sed 's/_//g')
+  Tel=$(nameread "Tel" ${namedata} | sed 's/\\n//g'| sed 's/_//g')
+  Email=$(nameread "Email" ${namedata} | sed 's/\\n//g'| sed 's/_//g')
+  Shumi=$(nameread "Shumi" ${namedata} | sed 's/\\n//g'| sed 's/_//g')
+  Bikou=$(nameread "Bikou" ${namedata} | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')
+
+  [ -z "${NyuukyoMaeYuubinBangou}" ] && NyuukyoMaeYuubinBangou="_"
+  [ -z "${NyuukyoMaeJyuusho}" ] && NyuukyoMaeJyuusho="_"
+  [ -z "${YuubinBangou}" ] && YuubinBangou="_"
+  [ -z "${GenJyuusho}" ] && GenJyuusho="_"
+  [ -z "${Tel}" ] && Tel="_"
+  [ -z "${Email}" ] && Email="_"
+  [ -z "${Shumi}" ] && Shumi="_"
+
+#[ ! -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" != "_" ] && SeinengappiMonth_Maezero="$(echo ${SeinengappiMonth} | maezero 1.2)"
+#[ ! -z "${SeinengappiDay}" -o "${SeinengappiDay}" != "_" ] && SeinengappiDay_Maezero="$(echo ${SeinengappiDay} | maezero 1.2)"
+#
+#
+# echo "${SeinengappiYear}" |
+# # 元号が明治だったら
+# if [ "${SeinengappiGengou}" = "01" ] ; then
+#   awk '{print $1+"1867"}'
+# elif [ "${SeinengappiGengou}" = "02" ] ; then
+#   awk '{print $1+"1911"}'
+# elif [ "${SeinengappiGengou}" = "03" ] ; then
+#   awk '{print $1+"1925"}'
+# elif [ "${SeinengappiGengou}" = "04" ] ; then
+#   awk '{print $1+"1988"}'
+# fi |
+# 1:西暦年号
+# awk '{print $1"'${SeinengappiMonth_Maezero}'""'${SeinengappiDay_Maezero}'"}' > $tmp-seinengappi
+#
+# Seinengappi="$(head -1 $tmp-seinengappi | self 1)"
+
+# 変更されない情報はデータにあるものを使用
+awk '$1=="'${RIYOUSHAID}'"{print $0}' ${pompa_dir}/RIYOUSHA_KIHON |
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+self 1/9 |
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日
+
+  # 追加データの作成
+awk '{print $0,"'${Kansenshou}'","'${NyuukyoMaeYuubinBangou}'","'${NyuukyoMaeJyuusho}'","'${YuubinBangou}'","'${GenJyuusho}'","'${Tel}'","'${Email}'","'${Shumi}'","'${Bikou}'","1","'${cur_time}'","'${USERID}'"}' > $tmp-riyousha_kihon_input
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考                  19:削除フラグ    20:更新日時
+# 21:UserID
+
+if [ -z ${KoteiTel} ] ; then
+  :
+else
+  echo "${RIYOUSHAID}" "${KoteiTel}" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_tel_input
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+# 写真UPLOAD
+#awk '$0~/PhotoUpload/' ${parammime}  > $tmp-upload_file
+
+# 画像データがあれば処理
+#if [ -s $tmp-upload_file ] ; then
+#  mkdir -p ${pompa_dir}/RIYOUSHA/PHOTO
+#  mime-read "PhotoUpload" ${parammime} > ${pompa_dir}/PHOTO/${RIYOUSHAID}.${PhotoUpload}
+#else
+#  echo "画像なし"
+#fi
+
+#[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_KIHON RIYOUSHA_KIHON
+RIYOUSHA_MASTER RIYOUSHA_MASTER
+FIN
+
+[ -s $tmp-riyousha_tel_input ] && echo "RIYOUSHA_TEL RIYOUSHA_TEL" >> $tmp-target-table
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_master RIYOUSHA_MASTER 1 6 7 ${pompa_dir} ${input_dir}
+riyousha_kihon RIYOUSHA_KIHON  1 20 21 ${pompa_dir} ${input_dir}
+FIN
+#--------------------------------------------------------------
+[ -s $tmp-riyousha_tel_input ] && echo "riyousha_tel RIYOUSHA_TEL 1 7 8 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#cp $tmp-* /home/hands/work/okuda
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+ cp -p ${pompa_dir}/RIYOUSHA_MASTER ${data_dir}/RIYOUSHA_MASTER
+ cp -p ${pompa_dir}/RIYOUSHA_KIHON ${data_dir}/RIYOUSHA_KIHON  
+ cp -p ${pompa_dir}/RIYOUSHA_TEL ${data_dir}/RIYOUSHA_TEL
+ 
+echo "result touroku_ok" "${riyousha_no}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

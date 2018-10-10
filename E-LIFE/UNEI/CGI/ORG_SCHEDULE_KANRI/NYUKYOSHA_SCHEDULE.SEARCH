@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# NYUKYOSHA_SCHEDULE.SEARCH
+# スケジュールカレンダー表示　検索用CGI
+#
+# Written by K.Aoyama :20140107
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+error_msg=""
+
+#--------------------------------------------------------------
+function error_exit {
+  error_msg=$1
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# ユーザID
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が選択されていません"
+echo ${Riyoushaid}  >  $tmp-riyoushaid
+
+[ -z "${displayshisetsu}" -o "${displayshisetsu}" = "_" ] && echo ${shisetsu}  > $tmp-shisetsu || echo ${displayshisetsu} > $tmp-shisetsu
+
+##############################################################
+# ケアプランより取得
+##############################################################
+: > $tmp-schecule_careplan
+if [ -s ${data_dir}/CAREPLAN/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/SERVICE_YOTEI_KAIGO ] ; then
+   cat ${data_dir}/CAREPLAN/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/SERVICE_YOTEI_KAIGO   |
+# 1:サービスごとID 2:年       3:月       4:日 5:事業タイプID
+# 6:サービスコード 7:開始時間 8:終了時間 9:担当者ID
+   self 1 3/10                 |
+# 加算などのサービスは除外する。そのため、同一時間帯はマージ
+   self 2 3 4 7 8 0            |
+   getlast 1 5                 |
+   delf 1/5                    |
+# 1:順番         2:サービスごとID 3:年       4:月       5:日
+# 6:事業タイプID 7:サービスコード 8:開始時間 9:終了時間 10:担当者ID
+   rank                        |
+# 1:ID       介護サービス 2:年月日 4:開始時間 5:終了時間
+# 6:担当者ID 7:色
+   awk '{print $1$2,"介護サービス",$3$4$5,$8,$9,$10,"#4682b4","false"}'   |
+   awk '{print "l",$0}'        >   $tmp-schedule_careplan
+   cp $tmp-schedule_careplan $work_dir/schecule_careplan
+fi
+
+##############################################################
+# スケジュールより取得
+##############################################################
+: > $tmp-schedule_sanka
+if [ -s ${apdata_dir}/SCHEDULE/SCHEDULE_SANKASHA ] ; then
+   # スケジュールタイプマスタを取得
+# 1:ID 2:色
+   self 1 3 ${home_dir}/TBL/SCHEDULE/SCEDULE_TYPE_MASTER   > $tmp-schedule_type_master
+   cp $tmp-schedule_type_master $work_dir/type_master
+
+   cat ${apdata_dir}/SCHEDULE/SCHEDULE_SANKASHA |
+   LANG=C sort -k3,3                           |
+# 1:施設ID 2:スケジュールID 3:利用者ID 4:出席フラグ 5:備考
+# 6:金額
+   join0 key=3 $tmp-riyoushaid                 |
+   awk '$4=="1"'                               |
+# 1:施設ID 2:スケジュールID
+   self 1 2                                    |
+   LANG=C sort -k1,2                           |
+   uniq                  > $tmp-taishou_schedule
+
+   cp $tmp-taishou_schedule $work_dir/taishou_schedule
+
+   cat ${apdata_dir}/SCHEDULE/SCHEDULE_SHOUSAI  |
+   LANG=C sort -k1,1                            |
+# 該当施設のみ
+   join0 key=1 $tmp-shisetsu                    |
+# 1:施設ID    2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催年月日
+# 6:開始時刻  7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者１ 12:担当者２      13:追記              14:建屋
+   join0 key=1/2 $tmp-taishou_schedule         |
+# 1:施設ID   2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催年月日
+# 6:開始時刻 7:終了時刻       8:担当者１
+   self 1 2 3 4 5 6 7 11                       |
+   LANG=C sort -k3,3                           |
+# 1:施設ID     2:スケジュールID 3:スケジュールタイプ 4:色       5:スケジュール名
+# 6:開催年月日 7:開始時刻       8:終了時刻           9:担当者１
+   join1 key=3 $tmp-schedule_type_master      |
+# 1:ID       2:スケジュール名 3:開催年月日 4:開始時刻 5:終了時刻
+# 6:担当者１ 7:色
+   awk '{gsub(/\//,"",$6);print $1$2,$5,$6,$7,$8,$9,$4,"false"}'   |
+   awk '{print "l",$0}'                      > $tmp-schedule_sanka
+   cp $tmp-schedule_sanka $work_dir/schedule_sanka
+fi
+   
+##############################################################
+# 入院外泊データより取得
+##############################################################
+: > $tmp-schedule_nyuingaihaku
+[ -z "${displayshisetsu}" -o "${displayshisetsu}" = "_" ] && displayshisetsu=$shisetsu
+taishouTateya="0"$EventTateya
+if [ -s ${apdata_dir}/NYUUINGAIHAKU/${displayshisetsu}/${taishouTateya}/RIYOUSHA_NYUUINGAIHAKU ] ; then
+# 1:利用者ID    2:入院外泊ID 3:施設      4:建屋        5:居室
+# 6:種別        7:期間From   8:期間To    9:出発地      10:帰宅先
+# 11:入院外泊先 12:備考      13:欠食登録 14:有効フラグ 15:処理時間
+# 16:ユーザID
+  cat ${apdata_dir}/NYUUINGAIHAKU/${displayshisetsu}/${taishouTateya}/RIYOUSHA_NYUUINGAIHAKU  |
+  join0 key=1 $tmp-riyoushaid                 |
+# 1:利用者ID 2:入院外泊ID 3:種別       4:期間From 5:期間To
+# 6:出発時間 7:帰宅時間   8:入院外泊先 9:ユーザID
+  awk '$14!="9"{print $1,$2,$6,$7,$8,$9,$10,$11,$16}' |
+# 1:ID 2:タイトル 3:期間From 4:期間To
+  awk '{if($3=="1"){$10="入院("$8")"}else{$10="外泊("$8")"};print $1$2,$10,$4,$5,$6,$7}'  |
+  rank |
+  awk '{print "a",$1$2,$3,$4,$5,$6,$7}'                  > $tmp-schedule_nyuingaihaku
+
+fi
+#--------------------------------------------------------------
+# 出力
+
+cp ${tmp}-schedule_careplan $work_dir/schedule_careplan
+cp $tmp-schedule_sanka $work_dir/schedule_sanka
+cp $tmp-schedule_nyuingaihaku $work_dir/schedule_nyuingaihaku
+
+cat ${tmp}-schedule_careplan $tmp-schedule_sanka $tmp-schedule_nyuingaihaku
+
+
+## 終了
+rm -f $tmp-*
+exit 0

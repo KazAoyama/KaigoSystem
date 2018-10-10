@@ -1,0 +1,225 @@
+#!/bin/bash
+#
+# KIHONJYOUHOU_ICHIRAN_RESTAURANT.PDF
+# 基本情報一覧　レストランQR用PDF出力用CGI
+#
+# Written by R.Suzuki :20150/08/25
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+#data="$3"
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+
+today=$(date +"%Y%m%d")
+
+#--------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+if [ "$(echo "${SHISETSUID}" | awk '$1~/^1/{print substr($1,1,1)}')" = "1" ] ; then
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+else
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+fi
+
+########################
+#入居者の一覧作成
+#########################
+#
+#post受信した入居者一覧はカンマ区切りでつながった状態なので整形する
+echo "" | awk '{print "'$qr_nyukyosha_array'";}' |
+#カンマを半角スペースに変換
+calsed ',' ' ' |
+#縦横入れ替え
+tateyoko       |
+#あとで並びを戻すので現在の並び順を取得
+juni           |
+LANG=C sort -k2,2 >  $tmp-qr_list
+# 1:並び順 2:入居者ID
+
+#検索結果0件ならアラート出して終了
+if [ $(gyo "$tmp-qr_list") -eq 0 ] ;then
+  message="出力対象結果が0件です" 
+cat <<- FIN > $tmp-html_0
+     <script type="text/javascript" language="javascript">
+       alert('${message}');
+     </script>
+FIN
+
+cat $tmp-html_0
+
+rm -f $tmp-*
+exit 0
+fi
+
+#######################################
+#入居者の居室、入居日、退去日を取得
+#######################################
+#
+#awk '$1=="'$Shisetsu'" && $7<="'$today'" && "'$today'"<=$8 && $(NF-2)!="9"' \
+# 入居開始日<=今日を条件にいれると未来日契約の入居者がヒットしないので「入居終了日が今日以降」だけを条件にする
+awk '$1=="'$Shisetsu'" &&  $8 >= "'$today'" && $(NF-2)!="9"' \
+${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS        |
+#1:施設ID 2:建屋ID 3:フロア 4:ユニットID 5:居室 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新時間 11:更新者
+# 同じ施設内で居室移動してる場合は退去じゃないので新しいほうの居室の情報で判断
+self 6 1/NF       |
+LANG=C sort -k1,3 -k8,8 -k7,7                      |
+getlast 1 3       |
+# 1:入居者ID 2:施設ID   3:建屋ID 4:フロア 5:ユニットID 6:居室
+# 7:入居者ID 8:入居日 9:退去日 10:削除フラグ 11:更新時間
+# 12:更新者
+
+#ジョインしてQR作成対象入居者者に絞り込む
+join1 key=2 - $tmp-qr_list   >   $tmp-qr_list_add_nyukyo_info
+# 1:並び順 2:入居者ID 3:施設ID   4:建屋ID 5:フロア 6:ユニットID 7:居室
+# 8:入居者ID 9:入居日 10:退去日 11:削除フラグ 12:更新時間
+# 13:更新者
+
+
+#######################################
+#入居者の名前を取得
+#######################################
+#
+awk '$(NF-2)!="9" { print $1,$2 }'  ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER  |
+# 1:入居者ID 2:入居者氏名
+LANG=C sort -k1,1                                              |
+join1 key=2 -  $tmp-qr_list_add_nyukyo_info                    |
+# 1:並び順 2:入居者ID 3:入居者氏名 4:施設ID   5:建屋ID 6:フロア 7:ユニットID 8:居室
+# 9:入居者ID 10:入居日 11:退去日 12:削除フラグ 13:更新時間
+# 14:更新者
+#項目絞り込みと入居者IDの整形
+#awk '{print "NYK"$2,$8,$3,$1 }'                                | 
+
+#初期処理で印刷開始位置前までダミーレコードを作成し、入居者レコードの並び順にダミーレコード分を反映（ダミーレコードを加味した連番にする）
+awk 'BEGIN{ for (i = 1; i < '$PrintPos'; i++){ print "dummy","_","_",i}}{print "NYK"$2,$8,$3,$1 + (i-1)}' |
+# 1:バーコード用利用者(入居者)ID 2:居室番号,3:利用者(入居者)氏名,4:連番居室番号
+sed 's/_/@/g'                                                  |
+sed 's/###SPACE###/@/g'                                        |
+LANG=C sort -k4n,4n> $tmp-listdata
+
+
+
+: <<'#__COMENTOUT__'
+#--------------------------------------------------------------
+# 表示順による並び替え
+cat ${data}   |
+# 1:居室番号    2:利用者(入居者)ID 3:利用者(入居者)氏名 4:利用者(入居者)氏名カナ 5:性別
+# 6:生年月日    7:年齢             8:介護度             9:携帯電話番号           10:連絡先氏名
+# 11:連絡先続柄 12:電話番号1       13:電話番号2         14:住所                  15:連絡先氏名
+# 16:連絡先続柄 17:電話番号1       18:電話番号2         19:住所                  20:施設ID
+# 21:建屋ID     22:フロア          23:ユニット
+     awk '{if($1=="IKOUDATA"){print "1",$0}else{print "2",$0}}' |
+   # 表示項目による絞込み
+   # 表示順による並べ替え
+     # 表示順1：居室番号で昇順
+     if [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "1" ] ; then
+       LANG=C sort -k1,1 -k21,22 -k2,2n
+     # 表示順2：居室番号で降順
+     elif [ "${HyoujiJyun}" == "1" -a "${HyoujiShoukou}" == "2" ] ;then
+       LANG=C sort -k1,1 -k21,22nr -k2,2nr
+     # 表示順3：入居者名で昇順
+     elif [ "${HyoujiJyun}" == "2" -a "${HyoujiShoukou}" == "1" ] ;then
+       LANG=C sort -k5,5
+     # その他：入居社名で降順
+     else
+       LANG=C sort -r -k5,5
+     fi |
+#     delf 1 |
+     sed 's/IKOUDATA/移行/g' |
+#     tee $tmp-rankmae |
+     # 番号をつける
+#     rank |
+#     self 2/NF 1      |
+     self 3 2 4  |
+     rank       |
+# 1:利用者(入居者)ID 2:居室番号,3:利用者(入居者)氏名,4:連番居室番号
+     awk '{print "NYK"$2,$3,$4,$1}' |
+     sed 's/_/@/g'      |
+     sed 's/###SPACE###/@/g' > $tmp-listdata
+
+#__COMENTOUT__
+
+#------------------------------------------------------------------------------------
+
+#行数チェック用
+datacnt=$(gyo $tmp-listdata)
+echo "###DATACNT###"  "$datacnt"     > ${tmp}-calsed_result
+
+#印刷開始位置(1～70)
+echo "###PRINTOPS###"  "$PrintPos"     >> ${tmp}-calsed_result
+
+#-------------------------------------------------------------f-
+# 入力データのチェック
+
+cat ${home_dir}/UNEI/HTML/KIHONJYOUHOU_RESTAURANT_QR_PDF.html |
+mojihame -l###NYUKYOSHALIST### - $tmp-listdata |
+sed 's/###SPACE###/ /g'                                |
+sed 's/"_"/""/g'                                       |
+calsed -f $tmp-calsed_result                          > $tmp-restaurant_qrcode_list_pdf.html
+
+cp $tmp-restaurant_qrcode_list_pdf.html $work_dir/restaurant_qrcode_list_pdf.html
+cp  $tmp-listdata ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/testlistdata
+mkdir -p ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/${USERID}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.pdf
+
+#/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-restaurant_qrcode_list_pdf.html ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.pdf
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Portrait --margin-bottom 0 --margin-left 0 --margin-right 0 --margin-top 0 $tmp-restaurant_qrcode_list_pdf.html ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.pdf
+
+#暫定
+cp $tmp-restaurant_qrcode_list_pdf.html ${home_dir}/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.html
+
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+
+nowtime=$(date +"%Y%m%d%H%M%s")
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.pdf?nowtime=$nowtime","pdfprint");
+//          window.open("/E-LIFE/UNEI/DOWNLOAD/RESTAURANT/${USERID}/RESTAURANT_QR_LIST.html","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

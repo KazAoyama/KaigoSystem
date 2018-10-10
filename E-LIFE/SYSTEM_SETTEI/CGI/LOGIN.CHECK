@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+# LOGIN.CHECK : ログインチェックCGI
+#
+# Usage : LOGIN.CHECK ${namefile}
+#
+# Written by K.Aoyama(hands lab.inc)
+
+#--------------------ログ出力--------------------
+
+mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/TRACE_LOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/TRACE_LOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL/JYUUGYOUIN_MASTER"
+apptbl_dir="${app_dir}/TBL"
+input_dir="${app_dir}/INPUT"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+eval $(name-source ${namefile})
+
+curday=$(date +%Y%m%d | self 1)
+
+################# ユーザID　パスワード情報取得 ###################
+# 1:ユーザID 2:ログインID 3:パスワード
+cat ${tbl_dir}/USER_KIHON              |
+awk '$(NF-2)!="9"'                    |
+awk '$4<="'$curday'"&&"'$curday'"<=$5'         |
+awk '$6=="'${loginid}'"&&$7=="'${password}'"{print $1}'    > $tmp-user_info
+
+
+if [ "$(gyo $tmp-user_info)" = "1" ] ; then
+# ログインOK
+# 従業員情報取得
+# 1:ユーザID         2:施設ID     3:建屋ID             4:フロアID 5:ユニットID
+# 6:居宅訪問介護区分 7:管理者区分 8:介護支援専門員番号
+cat ${tbl_dir}/USER_SHISETSU          |
+awk '$(NF-2)!="9"'                    |
+self 1/8                              |
+LANG=C sort -k1,1                     |
+join1 key=1 $tmp-user_info            > $tmp-user_info_master
+
+userid=$(cat $tmp-user_info_master | self 1)
+shisetsu=$(cat $tmp-user_info_master | self 2)
+tateya=$(cat $tmp-user_info_master | self 3)
+shokushu=$(cat $tmp-user_info_master | self 6)
+
+# 本社対応
+# 本社所属で入ってきた場合は施設IDを青葉台に変更する
+# [ ${shisetsu} = "1000" ] && shisetsu="0001"
+# ケア施設対応
+cat ${home_dir}/E-LIFE/TBL/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+self 2 |
+LANG=C sort -k1,1 -u |
+head -1 > $tmp-kengen_unique
+kengenshisetsu=$(cat $tmp-kengen_unique)
+
+#[ "$kengenshisetsu" = "0000" ] && shisetsu="0001"
+#[ "$shisetsu" = "_" -o -z "$shisetsu" -o "$shisetsu" = "1000" ] && shisetsu=$kengenshisetsu
+[ "$shisetsu" = "_" -o -z "$shisetsu" ] && shisetsu=$kengenshisetsu
+
+
+cat /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR |
+awk '{print $2}' |
+getlast 1 1      > $tmp-shisetsu_tateya
+
+if [ "$(gyo $tmp-shisetsu_tateya)" = "1" ] ; then
+   tateya=$(self 1 $tmp-shisetsu_tateya)
+fi
+
+
+cat <<-FIN > $tmp-login-info
+status success
+loginid $loginid
+userid $userid
+shisetsu $shisetsu
+tateya $tateya
+shokushu $shokushu
+FIN
+
+else
+cat <<-FIN > $tmp-login-info
+status failure
+loginid $loginid
+FIN
+
+fi
+
+cat $tmp-login-info
+
+# 終了
+#rm -f $tmp-*
+
+exit 0

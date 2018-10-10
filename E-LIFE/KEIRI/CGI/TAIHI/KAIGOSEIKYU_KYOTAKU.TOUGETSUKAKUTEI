@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.TOUGETSUKAKUTEI : 介護請求居宅支援　当月確定
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.TOUGETSUKAKUTEI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# SEIKYUデータを呼び出す
+# 翌月の請求ディレクトリを作る
+YOKUGETSU=$(mdate ${seikyu_nengetsu}m/+1)
+mkdir -p ${seikyu_dir}/${shisetsu}/${YOKUGETSU}
+
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_KAIGO           |
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+awk '$27=="000000000"'                                                                   |
+awk '{$27="999999999";$29="'${current_time}'";$30="'${userid}'";print $0}'               > $tmp-mikakutei
+cp -p $tmp-mikakutei  ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_KAIGO
+self 2 $tmp-mikakutei | LANG=C sort -u > $tmp-mikakuteiList
+LANG=C sort -k1,1 ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_KAIGO      |
+join0 key=1 $tmp-mikakutei                                                                 > $tmp-mikakutei_riyohyo_kaigo
+cp -p $tmp-mikakutei_riyohyo_kaigo  ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_KAIGO
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+if [ -e ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_YOBO ];then
+  cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_YOBO            |
+  # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+  # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+  # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+  # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+  # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+  # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+  awk '$27=="000000000"'                                                                   |
+  awk '{$27="999999999";$29="'${current_time}'";$30="'${userid}'";print $0}'               > $tmp-mikakutei_yobo
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+  
+cp -p $tmp-mikakutei_yobo  ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_YOBO
+
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+# 請求書情報データ
+# 年月ごとに請求関連データをつくる
+#cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/NENGETSU_LIST                     > $tmp-nengetsu_list
+
+# 給付管理票データ作成
+echo ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.KYUFUKANRI                     |
+tarr                                                                                     |
+awk '{print substr($1,51,6)}'                                                            |
+LANG=C sort                                                                              > $tmp-kyufu_list
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.KYUFUKANRI                      |
+delf 1 2                                                                                 |
+awk '{print "2",$0}'                                                                     > $tmp-kyufukanri
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# コントロールレコード
+KYUFUKANRI_KENSU=$(gyo $tmp-kyufukanri)
+JIGYOSHO_BANGO=$(cat $tmp-kyufukanri | self 5 | tail -n1)
+echo "1" "0" "${KYUFUKANRI_KENSU}" "821" "00" "000000" "${JIGYOSHO_BANGO}" "00" "1" "${seikyu_nengetsu}" "1" > $tmp-kyufukanri_controll
+# エンドレコード
+echo "3"                                                                                > $tmp-kyufukanri_end
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# 合体
+cat $tmp-kyufukanri_controll $tmp-kyufukanri $tmp-kyufukanri_end                        |
+juni                                                                                    |
+awk '{ichi=$1;ni=$2;$1=ni;$2=ichi;print $0}'                                            > $tmp-kyufukanri_kansei
+
+# 確定データを確定データ置き場に格納する
+mkdir -p ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI
+cp -p $tmp-kyufukanri_kansei ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.KYUFUKANRI
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+# 予防給付管理
+## ※※予防の給付管理CSVデータ作成は今のとこと品川区のみ
+## 品川区の保険者番号131094
+
+if [ $(cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.YOBO_KYUFUKANRI | gyo) -ne 0 ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.YOBO_KYUFUKANRI               |
+  awk '$5=="131094"'                                                                     |
+  delf 1 2                                                                               |
+  awk '{print "2",$0}'                                                                   > $tmp-yobo_kyufukanri
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+else
+  :
+fi
+
+if [ "$(gyo $tmp-yobo_kyufukanri)" -ne 0 ];then
+  # コントロールレコード
+  YOBO_KYUFUKANRI_KENSU=$(gyo $tmp-yobo_kyufukanri)
+  YOBO_JIGYOSHO_BANGO=$(cat $tmp-yobo_kyufukanri | self 5 | tail -n1)
+  echo "1" "0" "${YOBO_KYUFUKANRI_KENSU}" "821" "00" "000000" "${YOBO_JIGYOSHO_BANGO}" "00" "1" "${seikyu_nengetsu}" "1" > $tmp-yobo_kyufukanri_controll
+  # エンドレコード
+  echo "3"                                                                                > $tmp-yobo_kyufukanri_end
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+  
+  # 合体
+  cat $tmp-yobo_kyufukanri_controll $tmp-yobo_kyufukanri $tmp-yobo_kyufukanri_end         |
+  juni                                                                                    |
+  awk '{ichi=$1;ni=$2;$1=ni;$2=ichi;print $0}'                                            > $tmp-yobo_kyufukanri_kansei
+  
+  cp -p $tmp-yobo_kyufukanri_kansei ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.YOBO_KYUFUKANRI
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+else
+  :
+fi
+
+# 訪問介護の年月も処理する年月のリストに含める
+awk '$4=="02"{print $5}' ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+cat $tmp-kyufu_list - |
+LANG=C sort -u        > $tmp-shori_nengetsu
+
+
+#
+# 給付管理以外のデータ作成（月別）に
+for month in $(cat $tmp-shori_nengetsu | yarr);do
+
+  # 訪問介護のデータを分ける
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO  |
+  awk '$5=="'${month}'"'                                                                             |
+  LANG=C sort -k3,3n -k8,8n -k4,4n                                                                   > $tmp-service_meissai
+
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.KYOTAKU_SEIKYUJOHO_7111 > $tmp-kyotaku_7111
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.SEIRVICE_SEIKYUJOHO_7111 > $tmp-houmon_7111
+  cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.KYOTAKUSEIKYU_MEISAISHO_8124 > $tmp-kyotaku_8124
+  cat $tmp-service_meissai $tmp-kyotaku_8124                                              |
+  delf 1 2                                                                                |
+  cat $tmp-houmon_7111 $tmp-kyotaku_7111 -                                                |
+  awk '{print "2",$0}'                                                                    > $tmp-seikyu_data
+   
+  # コントロールレコード
+  SEIKYU_KENSU=$(gyo $tmp-seikyu_data)
+  echo "1" "0" "${SEIKYU_KENSU}" "711" "00" "000000" "${JIGYOSHO_BANGO}" "00" "1" "${seikyu_nengetsu}" "1" > $tmp-seikyu_controll
+  # エンドレコード
+  echo "3"                                                                                > $tmp-seikyu_end
+  # 合体
+  cat $tmp-seikyu_controll $tmp-seikyu_data $tmp-seikyu_end                               |
+  juni                                                                                    |
+  awk '{ichi=$1;ni=$2;$1=ni;$2=ichi;print $0}'                                            > $tmp-seikyu_kansei
+  
+  cp -p $tmp-seikyu_kansei ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${month}.SEIKYU_DATA
+done
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# 確定ファイルを保存
+echo ${current_time} > ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/KYOTAKU_KAKUTEI_FILE
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+echo "ok"
+
+
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,505 @@
+#!/bin/bash
+#
+# NENKAN_KATSUDOUJIKAN_ICHIRAN.SEARCH
+# 年間活動時間一覧　検索用CGI
+#
+# Written by K.Aoyama
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "サービス提供事業者が不明です"
+# 対象年月
+[ -z "${TaishouNengetsu}" -o "${TaishouNengetsu}" = "_" ] && error_exit "対象年が不明です"
+# 対象項目
+[ -z "${Kaigo}" -a -z "${Yobou}" -a -z "${Jihi}" ] && error_exit "集計対象を選択して下さい"
+
+
+
+# 抽出対象は対象年月から過去1年
+mdate -e ${TaishouNengetsu}m/-11 |
+tarr                             > ${tmp}-month_12
+
+
+
+
+# 曜日取得
+echo "0" "日" > $tmp-youbi
+echo "1" "月" >> $tmp-youbi
+echo "2" "火" >> $tmp-youbi
+echo "3" "水" >> $tmp-youbi
+echo "4" "木" >> $tmp-youbi
+echo "5" "金" >> $tmp-youbi
+echo "6" "土" >> $tmp-youbi
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+# 利用者マスタ
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER  |
+self 1 2                                       > $tmp-riyousha_master
+# 1:利用者ID  2:利用者
+
+cp $tmp-riyousha_master $work_dir/riyousha_master
+
+# 自事業所から事業者マスタのＩＤを抽出
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+awk '$1=="'$shisetsu'"&&($3=="11"||$3=="61"){print $2,$3}'           > $tmp-kyoukyusha
+# 1:供給者ID  2:サービスコード種類
+
+# ヘルパー
+echo $slHelper |
+sed 's/,/ /g'  |
+tarr           |
+LANG=C sort -k1,1 -u > $tmp-helper
+# 1:ヘルパーID
+
+cp $tmp-helper $work_dir/helper
+
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+# ログイン中の施設で絞る
+# 介護と予防のみに絞る
+awk '$1=="'$shisetsu'"&&($3=="11"||$3=="61"){print $2,$3}' |
+# 1:供給者ID  2:サービスコード種類
+# 介護と予防にチェックが付いていた場合
+if [ "$Kaigo" == "1" -a "$Yobou" == "1" ] ; then
+  cat -
+# 介護のみにチェックが付いていた場合
+elif [ -z "$Yobou" -a "$Kaigo" == "1" ] ; then
+  awk '$2=="11"'
+# 予防のみにチェックが付いていた場合
+elif [ -z "$Kaigo" -a "$Yobou" == "1" ] ; then
+  awk '$2=="61"'
+else
+  cat -
+fi                                      |
+LANG=C sort -k1,1                       > $tmp-select_kyoukyusha
+# 1:供給者ID  2:サービスコード種類
+
+cp $tmp-select_kyoukyusha $work_dir/report_select_kyoukyusha
+
+#--------------------------------------------------------------
+# 訪問介護実績ファイルの取得
+# 自費サービスファイルも含める（2014/8/5）
+# 対象となる全利用者のディレクトリを検索する
+: > $tmp-jisseki_data
+ls -F ${pompa_dir}/HOUMONKAIGO |
+grep /                         |
+sed 's/\///g'                  > $tmp-houmonkaigo_jisseki_list
+ls -F ${pompa_dir}/JIHI_SERVICE |
+grep /                         |
+sed 's/\///g'                  > $tmp-jihiservice_list
+
+cat $tmp-houmonkaigo_jisseki_list $tmp-jihiservice_list |
+LANG=C sort -k1,1  |
+getlast 1 1        |
+while read path ; do
+#if [ -s ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI ] ; then
+  # 自費がチェックされていない場合
+  if [ -z "$Jihi" ] ; then
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    awk '$(NF-2)!="9"' |
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -
+
+  # 自費のみがチェックされている場合
+  elif [ -z "$Kaigo" -a -z "$Yobou" -a "$Jihi" == "1" ] ; then
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/${TaishouNengetsu}/JIHI_SERVICE |
+    awk '$(NF-2)!="9"' |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,$11,$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+    cat $tmp-jisseki_jihi
+
+  # 介護と自費がチェックされている場合
+  elif [ -z "$Yobou" -a "$Kaigo" == "1"  -a "$Jihi" == "1" ] ; then
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    awk '$(NF-2)!="9"' |
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -                  > $tmp-jisseki_kaigo_yobou
+
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/${TaishouNengetsu}/JIHI_SERVICE |
+    awk '$(NF-2)!="9"' |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,$11,$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+
+    # 介護・予防実績と自費実績を連結
+    cat $tmp-jisseki_kaigo_yobou $tmp-jisseki_jihi
+
+  # 予防と自費がチェックされている場合
+  elif [ -z "$Kaigo" -a "$Yobou" == "1" -a "$Jihi" == "1" ] ; then
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    awk '$(NF-2)!="9"' |
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -                  > $tmp-jisseki_kaigo_yobou
+
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/${TaishouNengetsu}/JIHI_SERVICE |
+    awk '$(NF-2)!="9"' |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,$11,$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+    # 介護・予防実績と自費実績を連結
+    cat $tmp-jisseki_kaigo_yobou $tmp-jisseki_jihi
+
+  # 全てがチェックされている場合
+  else
+    cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI  |
+    awk '$(NF-2)!="9"' |
+    LANG=C sort -k2,2                                     |
+    join0 key=2 $tmp-select_kyoukyusha -                  > $tmp-jisseki_kaigo_yobou
+
+    # 自費データを呼び出す
+    cat ${pompa_dir}/JIHI_SERVICE/${path}/${TaishouNengetsu}/JIHI_SERVICE |
+    awk '$(NF-2)!="9"' |
+    # 1:利用者ID  2:対象年月日 3:ID    4:実施日付    5:開始時間
+    # 6:終了時間  7:項目ID       8:内容  9:単位時間    10:費用
+    # 11:担当者   12:単価      13:税率 14:有効フラグ 15:処理時間
+    # 16:ユーザID
+    self 1 2.1.4 2.5.2 4 2/NF |
+    # 1:利用者ID 2:対象年      3:対象月    4:実施日付  5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{
+      if(length($4)=="10"){
+        print $0,substr($4,9,2);
+      }else{
+        print $0,$4;
+      }
+    }'  |
+    self 1/3 20 5/19 |
+    # 1:利用者ID 2:対象年      3:対象月    4:対象日 5:対象年月日
+    # 6:ID       7:実施日付    8:開始時間  9:終了時間  10:項目ID
+    # 11:内容    12:単位時間   13:費用     14:担当者   15:単価
+    # 16:税率    17:有効フラグ 18:処理時間 19:ユーザID
+    awk '{print $1,"jihi",$2,$3,$6,$4,$14,"_",$8,$9,$11,$12,"_ _ _ _",$17,$18,$19}' > $tmp-jisseki_jihi
+    # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+    # 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+    # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+    # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+    # 介護・予防実績と自費実績を連結
+    cat $tmp-jisseki_kaigo_yobou $tmp-jisseki_jihi
+
+  fi
+#fi
+done > $tmp-jisseki_data
+# 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+# 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+# 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+# 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+cp $tmp-jisseki_data $work_dir/jisseki_000
+
+# ヘルパー取得
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER   |
+awk '{print $1,$2}'              |
+LANG=C sort -k1,2                > $tmp-helper_name
+
+
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 利用者ID、サービス提供事業者、対象年、対象月
+# --------------------------
+#
+# 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+# 6:サービス提供日      7:担当ヘルパーID 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+# 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+# 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+
+#まず担当ヘルパー分だけ###########################################################
+
+#対象となる過去12ヶ月分を抽出
+cat ${tmp}-month_12                |
+while read kako_month; do
+  # 対象年月および担当ヘルパー、同行ヘルパーで抽出
+  awk '$3$4=="'$kako_month'"' $tmp-jisseki_data  |
+  tee $tmp-doukou_helper             |
+  LANG=C sort -k7,7                  |
+  join0 key=7 $tmp-helper            |
+  join1 key=7 $tmp-helper_name       |
+  
+  
+  # 1:利用者ID          2:供給者ID            3:対象年         4:対象月          5:レコードID
+  # 6:サービス提供日    7:担当ヘルパーID      8:担当ヘルパー名 9:同行ヘルパーID  10:サービス開始時間
+  # 11:サービス終了時間 12:サービス内容       13:単位時間      14:緊急加算フラグ 15:サービスコード項目
+  # 16:請求対象区分     17:サービスコード種類 18:有効フラグ    19:処理日         20:ユーザーID
+  delf 7                             |
+  # 1:利用者ID            2:供給者ID       3:対象年          4:対象月              5:レコードID
+  # 6:サービス提供日      7:担当ヘルパー名 8:同行ヘルパーID  9:サービス開始時間    10:サービス終了時間
+  # 11:サービス内容       12:単位時間      13:緊急加算フラグ 14:サービスコード項目 15:請求対象区分
+  # 16:サービスコード種類 17:有効フラグ    18:処理日         19:ユーザーID
+  LANG=C sort -k2,2                  |
+  
+  # 自費がチェックされている場合
+  if [ "$Jihi" == "1" ] ; then
+    echo "jihi 00" > $tmp-jihi_master
+    join1 key=2 <(tcat $tmp-select_kyoukyusha $tmp-jihi_master | LANG=C sort -k1,1)
+  else
+    join1 key=2 $tmp-select_kyoukyusha        
+  fi                                 |
+  # 1:利用者ID          2:供給者ID            3:サービスコード種類 4:対象年          5:対象月
+  # 6:レコードID        7:サービス提供日      8:担当ヘルパー名     9:同行ヘルパーID  10:サービス開始時間
+  # 11:サービス終了時間 12:サービス内容       13:単位時間          14:緊急加算フラグ 15:サービスコード項目
+  # 16:請求対象区分     17:サービスコード種類 18:有効フラグ        19:処理日         20:ユーザーID
+  #--------------------------------------------------------------
+  #ヘルパーの介護、予防ごとに活動時間計を求める
+  self 8 17 4 5 10 11                 |
+  #1:担当ヘルパー名 2:サービスコード種類 3:対象年  4:対象月 5:サービス開始時間 6:サービス終了時間
+  awk '{if($5!="_" && $6!="_"){print $1,$2,$3$4,(substr($6,1,2)*60+substr($6,4,2))-(substr($5,1,2)*60+substr($5,4,2))}
+        else{print $1,$2,$3$4,"0"}
+       }' |
+  #1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間（分）
+  awk '$2=="11" || $2=="61" || $2=="_"'           |
+  LANG=C sort -k1,3                    |
+  sm2 1 3 4 4                          >> ${tmp}-helper_nenkan
+  #1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間計（分）
+
+
+
+  ##########################################################################################
+  
+  # 同行ヘルパー ##############################################################################
+  cat $tmp-doukou_helper               |
+  awk '$8!="_"'                        |
+  LANG=C sort -k8,8                    |
+  join0 key=8 $tmp-helper           |
+  join1 key=8 $tmp-helper_name      |
+  delf 8                            |
+  # 1:利用者ID      2:サービス提供事業者 3:対象年          4:対象月               5:レコードID
+  # 6:提供日        7:担当ヘルパー       8:同行ヘルパー名  9:サービス提供開始時間 10:サービス提供終了時間
+  # 11:サービス内容 12:単位時間          13:緊急加算フラグ 14:サービスコード      15:請求区分
+  LANG=C sort -k2,2                  |
+  join1 key=2 $tmp-select_kyoukyusha        |
+  # --------------------------
+  # 1:利用者ID              2:サービス提供事業者 3:サービスタイプ 4:対象年          5:対象月
+  # 6:レコードID            7:提供日             8:担当ヘルパー   9:同行ヘルパー名  10:サービス提供開始時間
+  # 11:サービス提供終了時間 12:サービス内容      13:単位時間      14:緊急加算フラグ 15:サービスコード
+  # 16:請求区分
+  #--------------------------------------------------------------
+ 
+  #ヘルパーの介護、予防ごとに活動時間計を求める
+  self 9 17 4 5 10 11                 |
+  #同行ヘルパーコード、名前に変える
+#  LANG=C sort -k1,1                  |
+#  join1 key=1 $tmp-helper_name -     |
+#  delf 1                             |
+  #1:担当ヘルパー名 2:サービスコード種類 3:対象年  4:対象月 5:サービス開始時間 6:サービス終了時間
+  awk '{print $1,$2,$3$4,(substr($6,1,2)*60+substr($6,4,2))-(substr($5,1,2)*60+substr($5,4,2))}' |
+  #1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間（分）
+  awk '$2=="11" || $2=="61" || $2=="_"'           |
+  LANG=C sort -k1,3                    |
+#  sm2 1 3 4 4                          >> ${tmp}-doukou_helper_nenkan
+  sm2 1 3 4 4                          >> ${tmp}-doukou_helper_nenkan_doukou
+  #1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間計（分）
+done 
+######################################################################################################
+
+# 主担当と同行者実績合わせる
+cat ${tmp}-helper_nenkan ${tmp}-doukou_helper_nenkan         |
+#1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間計（分）
+LANG=C sort -k1,3                                            |
+# もう一度合わせる
+sm2 1 3 4 4                                                  > ${tmp}-moto_data
+cp ${tmp}-moto_data ${work_dir}/moto_data
+
+cat ${tmp}-moto_data    |
+# これらは空であっても12ヶ月分必要
+# mapで12ヶ月分展開するためダミーデータ作る
+for yobou_kaigo in 11 61 _; do
+  cat ${tmp}-month_12    |
+  awk '{print "aaaaa","'${yobou_kaigo}'",$0,"@" }'
+done |
+cat - ${tmp}-moto_data |
+LANG=C sort -k1,3      |
+#1:担当ヘルパー名 2:サービスコード種類　3:対象年月 4:サービス時間計（分）
+tee ${tmp}-data_for_map |
+#介護のmap展開
+awk '$2=="11"' |
+#map展開
+map  num=2  |
+#ダミーとヘッダー除く
+awk '$1!="*" && $1!="aaaaa"'   > ${tmp}-kaigo_tsukibetsu
+# 1:担当ヘルパー名 2:サービスコード種類 3～14:介護月別サービス時間計
+
+# 予防でも同じ処理
+cat ${tmp}-data_for_map |
+# map展開
+awk '$2=="61"' |
+map  num=2  |
+#ダミーとヘッダー除く
+awk '$1!="*" && $1!="aaaaa"'  >  ${tmp}-yobou_tsukibetsu
+
+# 自費でも同じ処理
+cat ${tmp}-data_for_map |
+# map展開
+awk '$2=="_"' |
+map  num=2  |
+#ダミーとヘッダー除く
+awk '$1!="*" && $1!="aaaaa"'  >  ${tmp}-jihi_tsukibetsu
+
+cp ${tmp}-jihi_tsukibetsu $work_dir/jihi_tsukibetsu
+
+cp ${tmp}-kaigo_tsukibetsu $work_dir/kaigo_tsukibetsu
+
+cp ${tmp}-yobou_tsukibetsu $work_dir/yobo_tsukibetsu
+
+# 1:担当ヘルパー名 2:サービスコード種類 3～14:予防月別サービス時間計
+# 予防、介護合わせる
+if [ -s ${tmp}-kaigo_tsukibetsu -a -s ${tmp}-yobou_tsukibetsu -a -s ${tmp}-jihi_tsukibetsu ] ;then
+  loopj num=1 ${tmp}-kaigo_tsukibetsu ${tmp}-yobou_tsukibetsu ${tmp}-jihi_tsukibetsu
+elif [ $(gyo ${tmp}-jihi_tsukibetsu ) -eq 0 -a $(gyo ${tmp}-kaigo_tsukibetsu ) -eq 0 ] ;then
+  cat ${tmp}-yobou_tsukibetsu |
+  awk '{print $1,"11","0","0","0","0","0","0","0","0","0","0","0","0",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,"_","0","0","0","0","0","0","0","0","0","0","0","0"}'
+elif [ $(gyo ${tmp}-jihi_tsukibetsu ) -eq 0 -a $(gyo ${tmp}-yobou_tsukibetsu ) -eq 0 ] ;then
+  cat ${tmp}-kaigo_tsukibetsu |
+  awk '{print $0,"61","0","0","0","0","0","0","0","0","0","0","0","0","_","0","0","0","0","0","0","0","0","0","0","0","0"}'
+elif [ $(gyo ${tmp}-kaigo_tsukibetsu ) -eq 0 -a $(gyo ${tmp}-yobou_tsukibetsu ) -eq 0 ] ;then
+  cat ${tmp}-jihi_tsukibetsu |
+  awk '{print $1,"11","0","0","0","0","0","0","0","0","0","0","0","0","61","0","0","0","0","0","0","0","0","0","0","0","0",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14}'
+elif [ $(gyo ${tmp}-kaigo_tsukibetsu ) -eq 0 ] ;then
+  #介護データないなら空白で埋める
+#  cat ${tmp}-yobou_tsukibetsu ${tmp}-jihi_tsukibetsu |
+  loopj num=1 ${tmp}-yobou_tsukibetsu ${tmp}-jihi_tsukibetsu |
+  awk '{print $1,"11","0","0","0","0","0","0","0","0","0","0","0","0",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27}' 
+elif [ $(gyo ${tmp}-yobou_tsukibetsu) -eq 0 ] ;then
+#  cat ${tmp}-kaigo_tsukibetsu ${tmp}-jihi_tsukibetsu |
+  loopj num=1 ${tmp}-kaigo_tsukibetsu ${tmp}-jihi_tsukibetsu |
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,"61","0","0","0","0","0","0","0","0","0","0","0","0",$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27}'
+elif [ $(gyo ${tmp}-jihi_tsukibetsu) -eq 0 ] ;then
+#  cat ${tmp}-kaigo_tsukibetsu ${tmp}-yobou_tsukibetsu |
+  loopj num=1 ${tmp}-kaigo_tsukibetsu ${tmp}-yobou_tsukibetsu |
+  awk '{print $0,"_","0","0","0","0","0","0","0","0","0","0","0","0"}'
+fi  |
+delf 15 28                    |
+# 1:担当ヘルパー名 2:11 3～14:介護月別サービス時間計 15～26予防月別サービス時間計 27～38自費サービス時間計
+# 合計求めておく
+# 介護年間計と予防年間計と自費年間計
+awk '{print $0,$3+$4+$5+$6+$7+$8+$9+$10+$11+$12+$13+$14,$15+$16+$17+$18+$19+$20+$21+$22+$23+$24+$25+$26,$27+$28+$29+$30+$31+$32+$33+$34+$35+$36+$37+$38}' |
+# 1:担当ヘルパー名 2:サービスコード種類 3～14:介護月別サービス時間計 15～26予防月別サービス時間計　27～38自費月別サービス時間計 39：介護サービス年間計 40:予防サービス年間計  41:自費サービス年間計
+#月ごとの介護と予防の計
+awk '{print $0,$3+$15+$27,$4+$16+$28,$5+$17+$29,$6+$18+$30,$7+$19+$31,$8+$20+$32,$9+$21+$33,$10+$22+$34,$11+$23+$35,$12+$24+$36,$13+$25+$37,$14+$26+$38,$39+$40+$41}' > ${tmp}-jisseki
+# 1:担当ヘルパー名 2:サービスコード種類 3～14:介護月別サービス時間計 15～26予防月別サービス時間計　27～38:自費サービス時間計　39：介護サービス年間計 40:予防サービス年間計 41:自費サービス年関計
+# 42～54:介護と予防と自費計
+
+cat ${tmp}-jisseki
+cp ${tmp}-jisseki ${work_dir}/search_kekka
+## 終了
+rm -f $tmp-*
+exit 0

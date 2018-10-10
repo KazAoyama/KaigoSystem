@@ -1,0 +1,279 @@
+#!/bin/bash
+#
+# WEEKPLAN_YOBO.DISPLAY : サービス計画表表示
+#
+# Usage : WEEKPLAN_YOBO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,$3,$4}'                   > $tmp-gengou_master
+cat $tmp-gengou_master                             |
+awk '{print $1,$2,substr($3,1,4)-1}'               > $tmp-gengou_list
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:和暦開始 5:和暦終了
+# 6:誕生日年 7:誕生日月   8:誕生日 9:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+# 展開情報ボタン可、不可制御
+tenkaibuttondisabled=""
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+  # 検索結果
+  init | search | tenkai)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+      cat ${result_data} |
+      awk '$1!="t"'      > $tmp-data_value
+      if [ "$(gyo $tmp-data_value)" != 0 ] ; then
+         tenkaibuttondisabled="disabled"
+      fi
+    else
+      : > $tmp-listdata
+    fi
+    : > $tmp-tenkaidata
+
+    cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+    awk '$2<="'$hdKeikakuSakuseiDate'"' |
+    getlast 1 1                         |
+    self 2 > $tmp-latest_date
+    dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+    cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+    awk '$2=="'${dispHdKeikakuSakuseiDate}'" {print $3}'   > ${tmp}-spotservice
+    service_spot=$(cat ${tmp}-spotservice)
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    if [ "$(gyo ${opt_data})" != 0 ] ; then
+      cat ${opt_data}        > $tmp-listdata
+      tenkaibuttondisabled="disabled"
+    else
+      : > $tmp-listdata
+    fi
+    : > $tmp-tenkaidata
+
+    cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+    awk '$2<="'$hdKeikakuSakuseiDate'"' |
+    getlast 1 1                         |
+    self 2 > $tmp-latest_date
+    dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+    cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/WEEKPLAN_SPOTSERVICE   |
+    awk '$2=="'${dispHdKeikakuSakuseiDate}'" {print $3}'   > ${tmp}-spotservice
+    service_spot=$(cat ${tmp}-spotservice)
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+cat ${tmp}-listdata  > ${tmp}-weekplandata
+
+
+cat ${tmp}-tenkaidata ${tmp}-weekplandata |
+awk '$1=="d"'       |
+sed "s/'/’/g"      |
+delf 1               > ${tmp}-assessmentdata
+
+cat ${tmp}-tenkaidata  ${tmp}-weekplandata |
+awk '$1=="w"'       |
+delf 1               > ${tmp}-tenkaijouhoudata
+
+
+echo "CAREPLAN_MENU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+
+#[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear="$(date +%Y)"
+#[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth="$(date +%m)"
+#formatdate="'"${hdTaishouYear}"/"${taishoumonth}"/1'"
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###KEIKAKUSAKUSEIDATE### $KeikakuSakuseiDate
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###DISABLED###  ${tenkaibuttondisabled}
+###NOWEEKSERVICE###  ${service_spot}
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###SELECT_SHISETSU### $select_shisetsu
+###HDKENSAKUDATE### $hdkensakudate
+###HDSHISETSUKENSAKU### $hdShisetsuKensaku
+###HDCAREMANAGERKENSAKU### $hdCaremanagerKensaku
+FIN
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###RETURNFORM### @" >> $tmp-calsed
+  echo "###RETURNFALSE### @" >> $tmp-calsed
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###RETURNFORM### @" >> $tmp-calsed
+  echo "###RETURNFALSE### @" >> $tmp-calsed
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###RETURNFORM### return" >> $tmp-calsed
+  echo "###RETURNFALSE### false;" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+
+cat $tmp-calsed      > $tmp-calsed_kaigyozumi
+#sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/WEEKPLAN_YOBO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###RIYOUSHAKIHON### - ${tmp}-riyousha_kihon |
+mojihame -l###TENKAIDATA### - ${tmp}-tenkaijouhoudata |
+mojihame -l###ASSESSMENTDAILY### - ${tmp}-assessmentdata    |
+mojihame -l###GENGOUMASTER### - $tmp-gengou_list                  |
+tee $work_dir/weekkaigo        |
+#sed 's/###KAIGYO###/\n/g'     |
+#sed 's/\\n/　/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

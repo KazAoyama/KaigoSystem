@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+#NYUUINGAIHAKU_SHOUSAI.SEARCH 
+# 
+# 
+#
+# Written by E.Okuda :2014/1/6
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source  /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+thismonth=$(date +%Y%m)
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+  NYUUINGAIHAKUID="$(nameread "NYUUINGAIHAKUID" $namedata)"
+
+
+# MODEによる処理の分岐
+#if [ "${MODE}" = "init" ] ; then
+
+#-------------------------------------------------------------
+# ファイルの取得
+# 1:利用者(入居者)ID 2:入院外泊ID 3:施設      4:建屋   5:居室
+# 6:種別             7:期間FROM   8:期間TO    9:出発地 10:帰宅先
+# 11:入院外泊先      12:備考      13:欠食登録
+
+  cat ${pompa_dir}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU   |
+  awk '$1=="'${RIYOUSHAID}'"&&$2=="'${NYUUINGAIHAKUID}'"&&$(NF-2)!="9"{print "NyuuinGaihakuData",$0}' > $tmp-NyuuinGaihakuData
+
+# 施設情報の取得
+  Shisetsu=$(awk '{print $4}' $tmp-NyuuinGaihakuData)
+  Tateya=$(awk '{print $5}' $tmp-NyuuinGaihakuData)
+  Kyoshitsu=$(awk '{print $6}' $tmp-NyuuinGaihakuData)
+#  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"{print "ShisetsuData",$0}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"{print "ShisetsuData",$0}' ${pompa_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+  getlast 1 6  |
+  self 1/6     > $tmp-ShisetsuData
+# 1:施設ID 2:建屋ID 3:フロア 4:ユニットID 5:居室NO
+
+# ファイルの取得
+# 1:利用者(入居者)ID 2:入院外泊ID   3:施設ID       4:建屋       5:居室
+# 6:欠食登録         7:欠食期間FROM 8:欠食食事FROM 9:欠食期間TO 10:欠食食事TO
+
+
+  cat ${pompa_dir}/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU_KESSHOKU |
+  awk '$2=="'${NYUUINGAIHAKUID}'"&&$(NF-2)!="9"{print "KesshokuData",$0}'  > $tmp-KesshokuData
+
+  cat $tmp-KesshokuData |
+# 1:利用者(入居者)ID 2:入院外泊ID   3:施設ID       4:建屋       5:居室
+# 6:欠食登録         7:欠食期間FROM 8:欠食食事FROM 9:欠食期間TO 10:欠食食事TO
+  awk '{print $10=="99999999"?"'${thismonth}'":substr($10,1,6),$10=="99999999"?"'${thismonth}'":substr($10,1,4),$10=="99999999"?"'${thismonth}'":substr($10,5,2)}' > $tmp-kesshoku_nengetu
+# 1:欠食期間TO年月
+  kesshokuto=$(awk '{print $1}' $tmp-kesshoku_nengetu)
+  kesshokutoyear=$(awk '{print $2}' $tmp-kesshoku_nengetu)
+  kesshokutomonth=$(awk '{print $3}' $tmp-kesshoku_nengetu)
+  [ -s "${seikyu_dir}/${Shisetsu}/${Tateya}/${kesshokuto}/RIYOUSHA_KESSHOKU_KAKUTEI" ] && KESSHOKUMESSAGE="※${kesshokutoyear}年${kesshokutomonth}月は請求確定済みのため欠食変更はできません"
+
+if [ -z "${KESSHOKUMESSAGE}" -o "${KESSHOKUMESSAGE}" = "_" ] ; then
+  cat $tmp-KesshokuData |
+# 1:利用者(入居者)ID 2:入院外泊ID   3:施設ID       4:建屋       5:居室
+# 6:欠食登録         7:欠食期間FROM 8:欠食食事FROM 9:欠食期間TO 10:欠食食事TO
+  awk '{print $8=="99999999"?"'${thismonth}'":substr($8,1,6),$8=="99999999"?"'${thismonth}'":substr($8,1,4),$8=="99999999"?"'${thismonth}'":substr($8,5,2)}' > $tmp-kesshoku_nengetu2
+  kesshokuto2=$(awk '{print $1}' $tmp-kesshoku_nengetu2)
+  kesshokutoyear2=$(awk '{print $2}' $tmp-kesshoku_nengetu2)
+  kesshokutomonth2=$(awk '{print $3}' $tmp-kesshoku_nengetu2)
+  [ -s "${seikyu_dir}/${Shisetsu}/${Tateya}/${kesshokuto2}/RIYOUSHA_KESSHOKU_KAKUTEI" ] && KESSHOKUMESSAGE="※${kesshokutoyear2}年${kesshokutomonth2}月以前は請求確定済みのため欠食内容を変更できません。"
+fi
+  echo "KESSHOKUMESSAGE" "${KESSHOKUMESSAGE}" |
+  cat -  $tmp-NyuuinGaihakuData $tmp-ShisetsuData $tmp-KesshokuData
+
+
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

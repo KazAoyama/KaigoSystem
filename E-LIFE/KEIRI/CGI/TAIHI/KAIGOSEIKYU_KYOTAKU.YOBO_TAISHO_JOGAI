@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.YOBO_TAISHO_JOGAI : 介護請求居宅支援　請求対象者除外
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.YOBO_TAISHO_JOGAI namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# 対象者を決める
+cat $namefile           |
+awk '$1~/taishosha_check/{print $2}' |
+sed 's/+++/ /g'         > $tmp-taishosha_moto
+# 1:入居者ID 2:年月
+cat $tmp-taishosha_moto |
+self 1                  |
+LANG=C sort -k1,1n      > ${tmp}-taishosha
+
+# SEIKYUデータを呼び出す
+cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_YOBO  |
+awk '$28!=9'                                                                   > ${tmp}-seikyu_data
+# 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+# 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+# 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+# 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+# 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+# 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+# 対象者ごとに処理をまわす
+
+for member in $(cat ${tmp}-taishosha);do
+
+  # 提供年月を決める
+  cat $tmp-taishosha_moto                      |
+  # 1:利用者ID 2:年月
+  awk '$1=="'${member}'"{print $2}'            > $tmp-nengetsu_list
+
+  for month in $(cat $tmp-nengetsu_list);do
+    nengetsu=$(echo $month)
+    NEN=$(echo $month | awk '{print substr($1,1,4)}')
+    TSUKI=$(echo $month | awk '{print substr($1,5,2)}')
+
+    JIGYOSHO_CODE=$(cat ${master_tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER | awk '$1=="'${shisetsu}'" && $3=="43"' | self 2)
+#
+    # 事業所情報を取得
+    cat ${master_tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER            |
+    # 1:事業所ID           2:サービス供給事業者番号 3:サービス供給事業者名 4:サービスコード種類 5:事業所区分
+    # 6:指定基準事業所区分 7:地域区分               8:生活保護指定         9:割引率             10:施設等の区分?????????????????????????????
+    self 1 2 6                                                         |
+    # 1:事業所ID 2:サービス供給事業者番号 3:指定基準事業所区分
+    awk '$1=="'${JIGYOSHO_CODE}'"'                                          > ${tmp}-kyotaku_jigyosho_bangou
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+    kyotaku_bangou=$(cat $tmp-kyotaku_jigyosho_bangou | self 2)
+    JIGYOSHO_KUBUN=$(cat $tmp-kyotaku_jigyosho_bangou | self 3)
+#  
+    # 元データのフラグを更新
+    # フラグ値を作る
+    new_kakutei_flag="000000000"
+    cat ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_YOBO   |
+    # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+    # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+    # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+    # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+    # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+    # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+    LANG=C sort -k2,2n -k1,1n                                                       |
+    join0 +ng key=2 <(echo $member)                       > $tmp-member_motoneta 2> $tmp-sonota_motoneta
+    cat $tmp-member_motoneta                                                        |
+tee ${work}/uun |
+    awk '{if($3=="'${NEN}'" && $4=="'${TSUKI}'"){$27="'${new_kakutei_flag}'";$29="'${current_time}'";$30="'${userid}'"};print $0}' > $tmp-new_member_neta
+    # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+    # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+    # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+    # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+    # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+    # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+ 
+    cat $tmp-new_member_neta $tmp-sonota_motoneta                                   |
+    LANG=C sort -k1,4n                                                              > $tmp-new_motoneta
+    lock_file=${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAIGOSEIKYU_KYOTAKU.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    mv $tmp-new_motoneta ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/RIYOUHYOUBEPPYOU_RECORD_YOBO
+    # ロック解除
+    rm -f ${lock_file}
+    unset lock_file
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+  
+  
+    ############################################################################################################################################
+    ##### 給付管理票のデータをつくる #####
+
+    # POMPAに保存
+    lock_file=${pompa_dir}/KAIGOSEIKYU_KYOTAKU.LOCK
+    lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.YOBO_KYUFUKANRI                  |
+    awk '$1!="'${member}'"'                                                                          > $tmp-new_pompa_kyufukanri
+    mv $tmp-new_pompa_kyufukanri ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${month}.YOBO_KYUFUKANRI
+    # ロック解除
+    rm -f ${lock_file}
+    unset lock_file
+  done
+done
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+echo "ok"
+
+rm -f ${tmp}-*
+exit 0
+

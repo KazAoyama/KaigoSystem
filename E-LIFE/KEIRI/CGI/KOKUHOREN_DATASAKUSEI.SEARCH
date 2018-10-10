@@ -1,0 +1,102 @@
+#!/bin/bash
+#
+# KOKUHOREN_DATASAKUSEI.SEARCH : 国保連データ作成.SEARCH
+#
+# Usage : KOKUHOREN_DATASAKUSEI.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+kengen_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI/POMPA/KENGEN_KANRI"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# データを呼び出して表示用に整形
+# 給付管理
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST    > $tmp-down_list
+else
+  :
+fi
+
+ls ${seikyu_dir}/${shisetsu}/${taisho_nengetsu}/KAKUTEI/ > $tmp-list
+cat $tmp-list                                              |
+awk '$1~/KYUFUKANRI/'                                      |
+awk '$1!~/YOBO/'                                           |
+sed 's/\./ /g'                                             |
+self 2 1                                                   |
+awk '{print $1,substr($2,1,4)"/"substr($2,5,2),$2}'        |
+sed 's/KYUFUKANRI/給付管理用情報/g'                        |
+awk '{print $1,$2,"未","_","K"$3}'                         > $tmp-kyufukarni
+cat $tmp-list                                              |
+awk '$1~/YOBO_KYUFUKANRI/'                                 |
+sed 's/\./ /g'                                             |
+self 2 1                                                   |
+awk '{print $1,substr($2,1,4)"/"substr($2,5,2),$2}'        |
+sed 's/YOBO_KYUFUKANRI/予防給付管理(品川区)/g'                     |
+awk '{print $1,$2,"未","_","Y"$3}'                         > $tmp-yobo_kyufukarni
+cat $tmp-list                                              |
+awk '$1~/SEIKYU_DATA/'                                     |
+sed 's/\./ /g'                                             |
+self 2 1                                                   |
+awk '{print $1,substr($2,1,4)"/"substr($2,5,2),$2}'        |
+sed 's/SEIKYU_DATA/請求書・請求明細書情報/g'               |
+awk '{print $1,$2,"未","_","S"$3}'                         > $tmp-seikyu_data
+cat $tmp-seikyu_data $tmp-kyufukarni $tmp-yobo_kyufukarni  |
+if [ -e $tmp-down_list ];then
+  LANG=C sort -k5,5                                        |
+  join2 key=5 $tmp-down_list                               |
+  awk '{if($6!="_"){$3="済";print $1,$2,$3,substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2)"/"substr($6,9,2)":"substr($6,11,2),$5}else{print $1,$2,$3,$4,$5}}'
+else
+  cat -
+fi                                                         |
+LANG=C sort -k2,2                                          > $tmp-download_list
+
+cat $tmp-download_list
+
+
+rm -f ${tmp}-*
+exit 0
+

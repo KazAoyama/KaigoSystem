@@ -1,0 +1,153 @@
+#!/bin/bash
+#
+# SHUKOU_TOUROKU_SHUSEI.DISPLAY : 嗜好登録表示.DISPLAY
+#
+# Usage : SHUKOU_TOUROKU_SHUSEI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+# eval
+eval $(name-source ${namefile})
+
+#echo $shisetsu_select >  $tmp-shisetsu
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="shusei"
+fi
+
+# 利用者マスタの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_MASTER              |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+awk '$8>="'${today}'"'                                       > $tmp-riyosha_status
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu_select}'"'                                                    |
+awk '$7=="SHUKOU_TOUROKU.CGI"{print $1,$9}'                                                                |
+LANG=C sort -u -k2,2n                                                                       |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###PRINT_BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" ] && echo "###PRINT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###PRINT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+
+if [ $(gyo "${searchfile}") -ne 0 ];then
+  # display
+  echo "###SHUSEI_DISPLAY###" "block" >> ${tmp}-calsed1
+  echo "###NEW_TOUROKU###" "none" >> ${tmp}-calsed1
+  # 渡ってきたデータの処理
+  # 対象者
+  cat ${searchfile}                         |
+  # 1:利用者id 2:嗜好1 3:嗜好2 4:嗜好ID 5:予備
+  # 6:予備 7:予備 8:予備 9:有効フラグ 10:更新日時
+  # 11:userid
+  self 1                                    |
+  join1 key=1 $tmp-riyosha_master           |
+  self 2                                    > ${tmp}-riyosha
+  echo "###SHUSEI_RIYOSHA###" "$(cat ${tmp}-riyosha)" >> ${tmp}-calsed1 
+  
+  # post用対象者
+  cat ${searchfile}                         |
+  self 1                                    > ${tmp}-hd_riyosha
+  echo "###HD_RIYOSHA###" "$(cat ${tmp}-hd_riyosha)" >> ${tmp}-calsed1 
+  
+  # 嗜好1
+  cat ${searchfile}                         |
+  self 2                                    > ${tmp}-shukou1
+  echo "###TEXT_SHUKOU1###" "$(cat ${tmp}-shukou1)" >> ${tmp}-calsed1 
+  
+  # 嗜好2
+  cat ${searchfile}                         |
+  self 3                                    > ${tmp}-shukou2
+  echo "###TEXT_SHUKOU2###" "$(cat ${tmp}-shukou2)" >> ${tmp}-calsed1 
+  
+else
+  # display
+  echo "###SHUSEI_DISPLAY###" "none" >> ${tmp}-calsed1
+  echo "###NEW_TOUROKU###" "block" >> ${tmp}-calsed1
+  # 対象者
+  echo ${riyosha_name}                      |
+  join1 key=1 $tmp-riyosha_master           |
+  self 2                                    > ${tmp}-riyosha
+  echo "###SHUSEI_RIYOSHA###" "$(cat ${tmp}-riyosha)" >> ${tmp}-calsed1 
+  
+  # post用対象者
+  echo ${riyosha_name}                      > ${tmp}-hd_riyosha
+  echo "###HD_RIYOSHA###" "$(cat ${tmp}-hd_riyosha)" >> ${tmp}-calsed1 
+  
+  # 嗜好
+  echo "###TEXT_SHUKOU1###" "" >> ${tmp}-calsed1 
+  echo "###TEXT_SHUKOU2###" "" >> ${tmp}-calsed1 
+fi
+
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###USERID### ${userid}
+###PASSWORD### ${password}
+###RIYOSHA_NAME### ${riyosha_name}
+###FLOOR_NAME### ${floor}
+###SHISETSUID### ${shisetsu}
+###SHUSEI_ID### ${ShuseiId}
+###SHISETSU_NAME### ${shisetsu}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+cat ${html_dir}/SHUKOU_TOUROKU_SHUSEI.html   |
+#mojihame -l###SHUSEI_KOUMOKU### - ${tmp}-moushiokuri_koumoku |
+calsed -f ${tmp}-calsed -                                    |
+sed 's/<br>/\n/g' 
+
+rm -f ${tmp}-*
+exit 0
+

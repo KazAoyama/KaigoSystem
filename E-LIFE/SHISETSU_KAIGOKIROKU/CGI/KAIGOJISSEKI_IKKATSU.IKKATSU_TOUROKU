@@ -1,0 +1,338 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_IKKATSU.IKKATSU_TOUROKU : 介護実績一括登録用CGI
+#
+# Usage : KAIGOJISSEKI_IKKATSU.IKKATSU_TOUROKU ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 年月日の取得
+echo ${SEARCH_ID}                 |
+sed 's/+++/ /g'                   |
+tarr                              |
+LANG=C sort -k1,1n                > $tmp-search_id
+cat ${namefile}                   |
+awk '$1~/riyosha/'                |
+sed 's/riyosha//g'                |
+self 2                            > ${tmp}-taishosha
+
+# 対象者が渡って来なかったら止める
+if [ "$(gyo ${tmp}-taishosha)" = 0 ];then
+  echo "stop" && exit 0
+else
+  :
+fi
+
+# 対象のデータを呼び出して利用者を変えて新しいデータを作る
+for ID in $(cat $tmp-search_id);do
+  type=$(echo $ID | awk '{print substr($1,1,1)}')
+  case ${type} in
+  J )
+    for member in $(cat $tmp-taishosha);do
+    month=$(echo $ID | awk '{print substr($1,2,6)}')
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU                 |
+    # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容 8:場所 9:備考 10:終了時間
+    # 11:実施者 12登録日時間 13:ID
+    LANG=C sort -k13,13                                                                 |
+    join0 key=13 <(echo $ID)                                                            > $tmp-taisho_data
+
+
+      # IDを取得
+      if [ -e "${idkanri_dir}/${month}/KAIGO_JISSEKI" ];then
+        new_num="$(getno -s 1 ${idkanri_dir}/${month}/KAIGO_JISSEKI)"
+        echo ${new_num} > ${tmp}-new_num
+        mv ${tmp}-new_num ${idkanri_dir}/${month}/KAIGO_JISSEKI
+      else
+        mkdir -p ${idkanri_dir}/${month}
+        new_num="$(echo "0000001")"
+        echo ${new_num} > ${idkanri_dir}/${month}/KAIGO_JISSEKI
+      fi
+
+
+      # データを呼び出して利用者idを変えて保存
+      cat  $tmp-taisho_data                                                             |
+      # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目
+      # 6:開始時間 7:内容 8:場所 9:備考 10:終了時間
+      # 11:実施者 12登録日時間 13:ID
+      awk '{$1="'${member}'";$13="'${new_num}'";print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"J""'${month}'"$13}'  >> $tmp-input
+
+
+      # ディスプレイ用データも同様
+      cat ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU       |
+      # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目
+      # 6:開始時間 7:内容 8:場所 9:備考 10:終了時間
+      # 11:実施者 12登録日時間 13:ID
+      LANG=C sort -k13,13                                                               |
+      join0 key=13 <(echo $ID)                                                          > $tmp-dis_taisho_data    
+      # データを呼び出して利用者idを変えて保存
+      cat  $tmp-dis_taisho_data                                                         |
+      # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目
+      # 6:開始時間 7:内容 8:場所 9:備考 10:終了時間
+      # 11:実施者 12登録日時間 13:ID
+      awk '{$1="'${member}'";$13="'${new_num}'";print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"J""'${month}'"$13}'  >> $tmp-dis_input
+      rm $tmp-taisho_data
+    done
+
+
+  ;;
+  V )
+    month=$(echo $ID | awk '{print substr($1,2,6)}')
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL           |
+    # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下)
+    # 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻
+    # 11:所要>時間 12:備考 13:実施者 14:登録時間 15:ID
+    LANG=C sort -k15,15                                                                |
+    join0 key=15 <(echo $ID)                                                            > $tmp-taisho_data
+
+
+    for member in $(cat $tmp-taishosha);do
+      if [ -e "${idkanri_dir}/${month}/VITAL" ];then
+        new_num_v="$(getno -s 1 ${idkanri_dir}/${month}/VITAL)"
+        echo ${new_num_v} > ${tmp}-new_num_v
+        mv ${tmp}-new_num_v ${idkanri_dir}/${month}/VITAL
+      else
+        mkdir -p ${idkanri_dir}/${month}
+        new_num_v="$(echo "0000001")"
+        echo ${new_num_v} > ${idkanri_dir}/${month}/VITAL
+      fi
+
+
+      # データを呼び出して利用者idを変えて保存
+      cat  $tmp-taisho_data                                                            |
+      # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下)
+      # 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻
+      # 11:所要>時間 12:備考 13:実施者 14:登録時間 15:ID
+      awk '{$1="'${member}'";$15="'${new_num_v}'";print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,"V""'${month}'"$15}'   >> $tmp-input_vital
+    done 
+  ;;
+  M )
+    month=$(echo $ID | awk '{print substr($1,2,6)}')
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI     |
+    # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象
+    # 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:>内容
+    # 11:色 12:登録日時 13:ID
+    LANG=C sort -k13,13                                                                |
+    join0 key=13 <(echo $ID)                                                            > $tmp-taisho_data
+
+
+    for member in $(cat $tmp-taishosha);do
+      if [ -e "${idkanri_dir}/${month}/MOUSHIOKURI" ];then
+        new_num_m="$(getno -s 1 ${idkanri_dir}/${month}/MOUSHIOKURI)"
+        echo ${new_num_m} > ${tmp}-new_num_m
+        mv ${tmp}-new_num_m ${idkanri_dir}/${month}/MOUSHIOKURI
+      else
+        mkdir -p ${idkanri_dir}/${month}
+        new_num_m="$(echo "0000001")"
+        echo ${new_num_m} > ${idkanri_dir}/${month}/MOUSHIOKURI
+      fi
+
+
+      # データを呼び出して利用者idを変えて保存
+      cat  $tmp-taisho_data                                                            |
+      # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象
+      # 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:>内容
+      # 11:色 12:登録日時 13:ID
+      awk '{$1="'${member}'";$13="'${new_num_m}'";print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,"M""'${month}'"$13}'      >> $tmp-moushiokuri
+  
+    done
+  ;;
+  esac
+done
+
+# -------------------------------------
+# INPUTとPOMPAを作成
+# -------------------------------------
+# ロック
+lock_file=${pompa_dir}/${shisetsu}/KAIGOJISSEKI_IKKATSU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+# -------------------------------------
+# INPUT作成
+# -------------------------------------
+# 介護実績を保存
+if [ -e $tmp-input ];then
+  # INPUTを保存
+  cp -p $tmp-input ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+fi
+
+# バイタルを保存
+if [ -e $tmp-input_vital ]; then
+  # INPUTを保存
+  cp -p $tmp-input_vital ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU_VITAL.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+fi
+
+# 申し送りを保存
+if [ -e $tmp-moushiokuri ]; then
+  # INPUTを保存
+  cp -p $tmp-moushiokuri ${input_dir}/${today}/KAIGOJISSEKI_IKKATSU_MOUSHIOKURI.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+fi
+
+# ディスプレイ用を保存
+if [ -e $tmp-dis_input ]; then
+  # INPUTを保存
+  cp -p $tmp-dis_input ${input_dir}/${today}/DISPLAY_KAIGOJISSEKI_IKKATSU.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+fi
+# -------------------------------------
+# POMPA作成
+# -------------------------------------
+# 介護実績を保存
+if [ -e ${tmp}-input ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU ${tmp}-input |
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    LANG=C sort -u                                                                   | 
+    LANG=C sort -k1,1n -k12,12n                                                      > ${tmp}-pompa_new
+    mv ${tmp}-pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+  else
+    cat ${tmp}-input                                                                 |
+    LANG=C sort -u                                                                   > ${tmp}-pompa_new
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    mv ${tmp}-pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU
+  fi
+else
+  :
+fi
+
+# ディスプレイ用データを保存
+if [ -e ${tmp}-dis_input ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU ${tmp}-dis_input |
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    LANG=C sort -u                                                                               |
+    LANG=C sort -k1,1n -k12,12n                                                                  > ${tmp}-dis_pompa_new
+    mv ${tmp}-dis_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+  else
+    cat ${tmp}-dis_input                                                                         |
+    LANG=C sort -u                                                                               > ${tmp}-dis_pompa_new
+    # 1:対象者   2:作成日        3:共有 4:介護分類 5:介護項目
+    # 6:開始時間 7:内容          8:場所 9:備考     10:終了時間
+    # 11:実施者  12:12登録日時間 13:ID
+    mv ${tmp}-dis_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.DISPLAY_KAIGOJISSEKI_IKKATSU
+  fi
+else
+  :
+fi
+
+# バイタルを保存
+if [ -e $tmp-input_vital ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL $tmp-input_vital |
+    # 1:利用者     2:作成日 3:体温    4:血圧(上)  5:血圧(下)
+    # 6:脈拍       7:呼吸   8:SAT     9:体重      10:時刻
+    # 11:所要>時間 12:備考  13:実施者 14:登録時間 15:ID
+    LANG=C sort -u                                                                               |
+    LANG=C sort -k1,1n -k14,14n  > ${tmp}-vital_pompa_new
+    mv ${tmp}-vital_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL
+  else
+    cat $tmp-input_vital         |
+    LANG=C sort -u               > ${tmp}-vital_pompa_new
+    mv ${tmp}-vital_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_VITAL
+  fi
+else
+  :
+fi
+
+# 申し送りを保存
+if [ -e $tmp-moushiokuri ];then
+  if [ -e ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI ];then
+    # 過去POMPAとINPUTをあわせる
+    cat ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI $tmp-moushiokuri |
+    # 1:利用者 2:作成日    3:申送り種別 4:時刻         5:対象
+    # 6:項目   7:記入者    8:日誌共有   9:支援経過共有 10:>内容
+    # 11:色    12:登録日時 13:ID
+    LANG=C sort -u                                                                               |
+    LANG=C sort -k1,1n -k12,12n > ${tmp}-moushiokuri_pompa_new
+    mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+  else
+    cat ${tmp}-moushiokuri      |
+    LANG=C sort -u              > ${tmp}-moushiokuri_pompa_new
+    # 1:利用者 2:作成日    3:申送り種別 4:時刻         5:対象
+    # 6:項目   7:記入者    8:日誌共有   9:支援経過共有 10:>内容
+    # 11:色    12:登録日時 13:ID
+    mv ${tmp}-moushiokuri_pompa_new ${pompa_dir}/${shisetsu}/${month}/${month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI
+  fi
+else
+  :
+fi    
+# -------------------------------------
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+# -------------------------------------
+
+cat ${tmp}-input ${tmp}-input_vital ${tmp}-moushiokuri > $tmp-kekka
+cat $tmp-kekka
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

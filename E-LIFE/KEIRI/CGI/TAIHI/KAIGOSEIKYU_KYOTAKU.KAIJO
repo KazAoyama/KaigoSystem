@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.KAIJO : 介護請求居宅支援　確定解除
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.KAIJO namefile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 翌月の請求ディレクトリ
+YOKUGETSU=$(mdate ${seikyu_nengetsu}m/+1)
+
+# SEIKYUデータを戻す
+if [ -e ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_KAIGO ];then
+  cat ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_KAIGO                 |
+  # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+  # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+  # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+  # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+  # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+  # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+  awk '$27!="999999999"'                                                                   > $tmp-mikakutei
+  cp -p $tmp-mikakutei  ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_KAIGO
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+if [ -e ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_YOBO ];then
+  cat ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_YOBO                  |
+  # 1:No.               2:利用者ID              3:利用年                    4:利用月              5:事業者サービス区分
+  # 6:事業者ID          7:事業所名              8:サービスコード            9:サービスコード名    10:単位
+  # 11:割引率           12:単位（割引後）       13:回数                     14:単位合計           15:種類限度額超
+  # 16:種類限度額内     17:基準内限度額対象単位 18:基準外対象単位           19:地域単価           20:請求額
+  # 21:給付率           22:介護保険給付額       23:個人負担額（保険対象内） 24:個人負担額（全額） 25:明細コード
+  # 26:限度額対象フラグ 27:確定フラグ           28:有効フラグ               29:登録日時           30:userid
+  awk '$27!="999999999"'                                                                   > $tmp-mikakutei_yobo
+  cp -p $tmp-mikakutei_yobo  ${seikyu_dir}/${shisetsu}/${YOKUGETSU}/RIYOUHYOUBEPPYOU_RECORD_YOBO
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# 請求書情報データ消す
+
+# 給付管理
+rm ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.KYUFUKANRI
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+# 予防給付管理
+if [ -e ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.YOBO_KYUFUKANRI ];then
+  rm ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/${seikyu_nengetsu}.YOBO_KYUFUKANRI
+else
+  :
+fi
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+#
+# 給付管理以外のデータ
+rm ${seikyu_dir}/${shisetsu}/${seikyu_nengetsu}/KAKUTEI/*.SEIKYU_DATA
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+# 確定ファイル
+rm ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/KYOTAKU_KAKUTEI_FILE
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+echo "ok"
+
+
+rm -f ${tmp}-*
+exit 0
+

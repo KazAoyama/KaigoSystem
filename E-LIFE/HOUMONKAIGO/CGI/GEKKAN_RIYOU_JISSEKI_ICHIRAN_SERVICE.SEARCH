@@ -1,0 +1,267 @@
+#!/bin/bash
+#
+# GEKKAN_RIYOU_JISSEKI_MEISAI_ICHIRAN.SEARCH
+# 月間利用実績明細一覧表印刷　検索用CGI
+#
+# Written by K.Aoyama
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "サービス提供事業者が不明です"
+# 対象年月
+[ -z "${TaishouNengetsu}" -o "${TaishouNengetsu}" = "_" ] && error_exit "対象年が不明です"
+
+# 曜日取得
+echo "1" "月" > $tmp-youbi
+echo "2" "火" >> $tmp-youbi
+echo "3" "水" >> $tmp-youbi
+echo "4" "木" >> $tmp-youbi
+echo "5" "金" >> $tmp-youbi
+echo "6" "土" >> $tmp-youbi
+echo "7" "日" >> $tmp-youbi
+
+cp $tmp-youbi $work_dir/youbi
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+# 利用者マスタ
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER  |
+self 1 2                                       > $tmp-riyousha_master
+
+cp $tmp-riyousha_master $work_dir/riyousha_master
+
+# 自事業所から事業者マスタのＩＤを抽出
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+awk '$1=="'$shisetsu'"&&($3=="11"||$3=="61"){print $2,$3}'    > $tmp-kyoukyusha
+
+# テスト
+# 施設
+#echo "0009" "11" > $tmp-kyoukyusha
+
+#--------------------------------------------------------------
+# 訪問介護実績ファイルの取得
+# 対象となる全利用者のディレクトリを検索する
+: > $tmp-jisseki_data
+ls -F ${pompa_dir}/HOUMONKAIGO |
+grep /                         |
+sed 's/\///g'                  |
+while read path ; do
+if [ -s ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI ] ; then
+   cat ${pompa_dir}/HOUMONKAIGO/${path}/SERVICE_JISSEKI >> $tmp-jisseki_data
+fi
+done
+
+# ヘルパー取得
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER   |
+awk '{print $1,$2}'              |
+LANG=C sort -k1,2                > $tmp-helper_name
+
+
+cp $tmp-jisseki_data $work_dir/jisseki_data
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 1:利用者ID      2:サービス提供事業者 3:対象年         4:対象月          5:実績ID
+# 6:日付          7:ホームヘルパーID   8:同行ヘルパーID 9:開始時間        10:終了時間
+# 11:サービス内容 12:時間              13:緊急加算区分  14:サービスコード 15:請求対象有無
+# --------------------------
+#
+cat $tmp-jisseki_data             |
+# 対象年月および担当ヘルパー、同行ヘルパーで抽出
+awk '$3$4=="'$TaishouNengetsu'"'  |
+LANG=C sort -k7,7                 |
+join1 key=7 $tmp-helper_name      |
+delf 7                            |
+LANG=C sort -k8,8                 |
+join2 +_ key=8 $tmp-helper_name   |
+delf 8                            |
+tee $work_dir/work_helper         |
+# 1:利用者ID      2:サービス提供事業者 3:対象年          4:対象月               5:レコードID
+# 6:提供日        7:担当ヘルパー名       8:同行ヘルパー名    9:サービス提供開始時間 10:サービス提供終了時間
+# 11:サービス内容 12:単位時間          13:緊急加算フラグ 14:サービスコード      15:請求区分
+LANG=C sort -k2,2                  |
+join1 key=2 $tmp-kyoukyusha        |
+tee $work_dir/work10                  |
+# --------------------------
+# 1:利用者ID              2:サービス提供事業者 3:サービスタイプ 4:対象年          5:対象月
+# 6:レコードID            7:提供日             8:担当ヘルパー名   9:同行ヘルパー    10:サービス提供開始時間
+# 11:サービス提供終了時間 12:サービス内容      13:単位時間      14:緊急加算フラグ 15:サービスコード
+# 16:請求区分
+#--------------------------------------------------------------
+# 曜日取得 
+awk '{print $4$5$7,$0}'              |
+tee $work_dir/work11                  |
+yobi 1                              |
+delf 1                              |
+LANG=C sort -k1,1                    |
+join1 key=1 $tmp-youbi               |
+delf 1                               |
+tee $work_dir/work12                  |
+# 1:曜日                  2:利用者ID              3:サービス提供事業者 4:サービスタイプ 5:対象年
+# 6:対象月                7:レコードID            8:提供日             9:担当ヘルパー名   10:同行ヘルパー
+# 11:サービス提供開始時間 12:サービス提供終了時間 13:サービス内容      14:単位時間      15:緊急加算フラグ
+# 16:サービスコード       17:請求区分
+self 2/8 1 9/NF                      |
+# 1:利用者ID              2:サービス提供事業者    3:サービスタイプ 4:対象年         5:対象月
+# 6:レコードID            7:提供日                8:曜日           9:担当ヘルパー名 10:同行ヘルパー
+# 11:サービス提供開始時間 12:サービス提供終了時間 13:サービス内容  14:単位時間      15:緊急加算フラグ
+# 16:サービスコード       17:請求区分
+LANG=C sort -k1,1                    |
+tee $work_dir/work13                  |
+join1 key=1 $tmp-riyousha_master     |
+# 1:利用者ID        2:利用者名              3:サービス提供事業者    4:サービスタイプ 5:対象年
+# 6:対象月          7:レコードID            8:提供日                9:曜日           10:担当ヘルパー名
+# 11:同行ヘルパー   12:サービス提供開始時間 13:サービス提供終了時間 14:サービス内容  15:単位時間
+# 16:緊急加算フラグ 17:サービスコード       18:請求区分
+delf 3 5 6 7 14 15 16                |
+tee $tmp-jikan_syukei                |
+# 1:利用者ID       2:利用者名     3:サービスタイプ       4:提供日               5:曜日
+# 6:担当ヘルパー名 7:同行ヘルパー 8:サービス提供開始時間 9:サービス提供終了時間 10:サービスコード
+# 11:請求区分1                                                       
+
+#利用者ID保険者番号に置き換える
+join1 key=1 <(self 1 4 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN) - |
+delf 1                                                                  |
+LANG=C sort                                                             |
+tee $work_dir/kyoukyuusha |
+#####################################################################################################
+#ここから検索条件で絞る処理
+####################################################################################################
+#対象者番号（保険者番号）の範囲が入力されていた場合
+if [ "${txtTaishouBangouFrom}" != "_" -a "${txtTaishouBangouFrom}" != "" ] ;then
+  awk '$1>="'${txtTaishouBangouFrom}'"'
+else
+  cat -
+fi   |
+tee $work_dir/kyoukyuusha2 |
+
+if [ "${txtTaishouBangouTo}" != "_" -a "${txtTaishouBangouTo}" != "" ] ;then
+  awk '$1<="'${txtTaishouBangouTo}'"'
+else
+  cat -
+fi    |
+
+#
+tee $work_dir/kyoukyuusha3 |
+
+
+
+
+
+#############################################################################################
+
+
+
+
+
+
+
+awk '{print $1,$2,$4,$5,$8"～"$9,$3$10,$6,$7,$11}'    |
+# 1:利用者ID             2:利用者名       3:提供日         4:曜日     5:サービス提供時間
+# 6:サービスタイプコード 7:担当ヘルパー名 8:同行ヘルパー名 9:請求区分
+LANG=C sort -k1,1 -k3,3n            > $tmp-meisai_list
+
+cp $tmp-meisai_list $work_dir/meisai_list
+
+cat $tmp-meisai_list |
+awk '{if(substr($6,1,2)=="11"){$10="###SPACE###"}else{$10="予防"};
+if($9=="1"){$11="対象"}else{$11="請求無"}print $0}' |
+self 1/8 11 10       > $tmp-meisai_list_res
+
+cp $tmp-meisai_list_res $work_dir/meisai_list_res
+
+cat $tmp-meisai_list |
+awk '{print $1}'     |
+count 1 1            |
+LANG=C sort -k1,1    > $tmp-all_shukei
+
+[ "$(gyo $tmp-all_shukei)" = "0" ] && echo "_" "0" > $tmp-all_shukei
+
+cat $tmp-meisai_list |
+awk '{print $1,$9}'  |
+count 1 2            > $tmp-all_shukei_seikyu
+cat $tmp-all_shukei_seikyu |
+awk '$2=="1"'        |
+self 1 3             |
+LANG=C sort -k1,1    > $tmp-all_shukei_seikyu_taishou
+[ "$(gyo $tmp-all_shukei_seikyu_taishou)" = "0" ] && echo "_" "0" > $tmp-all_shukei_seikyu_taishou
+cat $tmp-all_shukei_seikyu |
+awk '$2!="1"'        |
+self 1 3             |
+LANG=C sort -k1,1    > $tmp-all_shukei_seikyu_taishougai
+[ "$(gyo $tmp-all_shukei_seikyu_taishougai)" = "0" ] && echo "_" "0" > $tmp-all_shukei_seikyu_taishougai
+
+cp $tmp-all_shukei $work_dir/all_shukei
+cp $tmp-all_shukei_seikyu $work_dir/all_shukei_seikyu
+cp $tmp-all_shukei_seikyu_taishou $work_dir/all_shukei_seikyu_taishou
+cp $tmp-all_shukei_seikyu_taishougai $work_dir/all_shukei_seikyu_taishougai
+
+cat $tmp-jikan_syukei             |
+LANG=C sort -k1,1 -k3,3n          |
+awk '{print $1,(substr($9,1,2)*60+substr($9,4,2))-(substr($8,1,2)*60+substr($8,4,2))}'   |
+sm2 1 1 2 2                       |
+lcalc '$1,$2/60,$2%60'            |
+marume -sage 2.0                  |
+maezero 3.2                       |
+awk '{print $1,$2":"$3}'          > $tmp-shukei_list
+
+cp $tmp-shukei_list $work_dir/shukei_list
+
+# 1:利用者ID             2:利用者名       3:提供日         4:曜日     5:サービス提供時間
+# 6:サービスタイプコード 7:担当ヘルパー名 8:同行ヘルパー名 9:請求有無 10:備考
+cat $tmp-meisai_list_res |
+LANG=C sort -k1,1        |
+join2 +0 key=1 $tmp-all_shukei |
+join2 +0 key=1 $tmp-all_shukei_seikyu_taishou |
+join2 +0 key=1 $tmp-all_shukei_seikyu_taishougai |
+join2 +0 key=1 $tmp-shukei_list |
+# 1:利用者ID        2:サービス時間    3:請求対象外回数 4:介護対象回数     5:全回数
+# 6:利用者名        7:提供日          8:曜日           9:サービス提供時間 10:サービスタイプコード
+# 11:担当ヘルパー名 12:同行ヘルパー名 13:請求有無      14:備考
+self 1 6/14 5 4 3 2          |
+LANG=C sort -k1,1 -k3,3n     > $tmp-jisseki_meisai_list
+
+cp $tmp-jisseki_meisai_list $work_dir/jisseki_meisai_list
+
+cat $tmp-jisseki_meisai_list
+
+## 終了
+rm -f $tmp-*
+exit 0

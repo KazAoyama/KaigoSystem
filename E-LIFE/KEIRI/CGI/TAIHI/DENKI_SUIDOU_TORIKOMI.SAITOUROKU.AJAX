@@ -1,0 +1,463 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.SAITOUROKU.AJAX : 電気水道料金再計算登録
+#
+# Written by J.Mikami
+
+
+# ログ
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/DENKI_SUIDOU_JYOUHOU.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+ rm -f $tmp-*
+
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+#------------------------------------------------------------
+# パラメーターの取得
+
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  password
+  shisetsu
+  shisetsu_key
+  up_Shisetsu_select
+  kikan_month_select
+  syubetsu_select
+  shusei_denki_room
+  shusei_denki_shimei
+  shusei_denki_anpea
+  shusei_denki_zengetsu
+  shusei_denki_tougetsu
+  shusei_denki_shiyouryou
+  shusei_denki_kihon
+  shusei_denki_jyuryou
+  shusei_denki_seikyugaku
+  shusei_suidou_room
+  shusei_suidou_shimei
+  shusei_suidou_zengetsu
+  shusei_suidou_tougetsu
+  shusei_suidou_shiyouryou
+  shusei_suidou_jyousuidou
+  shusei_suidou_gesuidou
+  shusei_suidou_seikyugaku
+  shusei_suidou_room
+  shusei_suidou_shimei
+  shusei_suidou_zengetsu
+  shusei_suidou_tougetsu
+  shusei_suidou_shiyouryou
+  shusei_suidou_jyousuidou
+  shusei_suidou_gesuidou
+  shusei_suidou_seikyugaku 
+FIN
+  
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+#=============================================================================================================
+cookie-name                                                    |
+LANG=C sort                                                    > ${tmp}-cookie
+#------------------------------------------------------------
+
+# ディレクトリ設定
+ch_cgi_dir="${home_dir}/TEST/CGI"
+
+
+#------------------------------------------------------------
+eval $(name-source ${tmp}-cookie)
+eval $(name-source $tmp-name)
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${kikan_month_select} >${tmp}-select_month
+echo ${syubetsu_select} >${tmp}-syubetsu_select
+echo $shusei_denki_room > ${tmp}-shusei_denki_room
+echo $shusei_denki_shimei > ${tmp}-shusei_denki_shimei
+echo $shusei_denki_anpea > ${tmp}-shusei_denki_anpea
+echo $shusei_denki_zengetsu > ${tmp}-shusei_denki_zengetsu
+echo $shusei_denki_tougetsu >  ${tmp}-shusei_denki_tougetsu
+echo $shusei_denki_shiyouryou >  ${tmp}-shusei_denki_shiyouryou
+echo $shusei_denki_kihon > ${tmp}-shusei_denki_kihon
+echo $shusei_denki_jyuryou >  ${tmp}-shusei_denki_jyuryou
+echo $shusei_denki_seikyugaku >  ${tmp}-shusei_denki_seikyugaku
+echo $shusei_suidou_room > ${tmp}-shusei_suidou_room
+echo $shusei_suidou_shimei > ${tmp}-shusei_suidou_shimei
+echo $shusei_suidou_zengetsu > ${tmp}-shusei_suidou_zengetsu
+echo $shusei_suidou_tougetsu > ${tmp}-shusei_suidou_tougetsu
+echo $shusei_suidou_shiyouryou > ${tmp}-shusei_suidou_shiyouryou
+echo $shusei_suidou_jyousuidou > ${tmp}-shusei_suidou_jyousuidou
+echo $shusei_suidou_gesuidou > ${tmp}-shusei_suidou_gesuidou
+echo $shusei_suidou_seikyugaku > ${tmp}-shusei_suidou_seikyugaku
+
+#------------------------------------------------------------
+select_month="$(cat ${tmp}-select_month)"
+
+#------------------------------------------------------------
+# ディレクトリの作成
+
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select}
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select}/${kikan_month_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select}/${kikan_month_select}
+[ ! -e ${pompa_dir}/DENKI_SUIDOU ] && mkdir ${pompa_dir}/DENKI_SUIDOU
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select} ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/MAIN-DATA ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/MAIN-DATA
+[ ! -e ${pompa_dir}/DENKI_SUIDOU ] && mkdir ${pompa_dir}/DENKI_SUIDOU
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select} ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/HENKOU-DATA ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/HENKOU-DATA
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+upl key=1 ${tmp}-cookie $tmp-name                               > $tmp-name.new0
+#cp -p $tmp-name $tmp-name_origin
+mv -f $tmp-name.new0 $tmp-name
+
+#------------------------------------------------------------
+
+
+#------------------------------------------------------------
+# エラー
+
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n"        |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+#  rm -f $tmp-*
+  exit 1
+}
+
+# 税はがしして消費税分を算出のため------------------------------------------------------------
+zeiritsu="$(awk '$5!="9" && $3<="'${kikan_month_select}'" && $4>"'${kikan_month_select}'"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU | self 2)"
+zeiritsu_keisan="$(echo "${zeiritsu} + 1" | bc)"
+
+
+if [ ${syubetsu_select} = "1"  ]; then
+# 電気料金ここから//////////////////////////////////////////////////////////////////////////////////
+# 帳票用データを開く---------------------------------------------------------------
+  if [ $shusei_denki_room !=  "_"  ]; then
+  # 保存データは利用者IDないので用意する。
+  cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month} |
+  cjoin0  key=1 ${tmp}-shusei_denki_room                          |
+  self 2                                                          >${tmp}-name_id
+  # 変更データを仮保存
+  cat ${tmp}-shusei_denki_room ${tmp}-name_id  ${tmp}-shusei_denki_shimei ${tmp}-shusei_denki_anpea ${tmp}-shusei_denki_zengetsu ${tmp}-shusei_denki_tougetsu ${tmp}-shusei_denki_shiyouryou ${tmp}-shusei_denki_kihon ${tmp}-shusei_denki_jyuryou ${tmp}-shusei_denki_seikyugaku  |
+  yarr                                               >$tmp-denki_karitouroku
+  # 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+  # 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+  cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month}  |
+  # バックアップ
+  tee /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/HENKOU-DATA/DENKI_CYOUHYOU.0003.${select_month}.${cur_time}  |
+  # 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+  # 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+  # 変更対象者を抜いて仮保存
+  cjoin1 +ng key=1 ${tmp}-shusei_denki_room - > /dev/null 2> $tmp-cyouhyou_denki_ng 
+  # 変更後の変更対象者を仮保存に戻す
+  up3 key=1 $tmp-cyouhyou_denki_ng $tmp-denki_karitouroku   >$tmp-cyouhyou_denki
+  
+  # 請求用データ
+  cat $tmp-cyouhyou_denki                                         |
+  # 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+  # 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+  self 1 2 7 10                                                     |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+  awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                   |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+  calc '$4/$5' 5                                                  |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率 
+  # 6:税抜額
+  # 税抜き金額の小数点以下を切り上げにする。
+  marume +age 6.0                                                 |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率 
+  # 6:税抜額
+  # 税込み金額-税抜き金額=税額
+  calc '$4-$6' 6                                                  |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率 
+  # 6:税抜額 7:税額
+  awk '{print $1,$2,"'${kikan_month_select}'","1",$4,$6,$7,"電気使用量："$3"[kwh]","1","'${cur_time}'","'${userid}'"}' |
+  # 1:部屋番号 2:入居者ID 3:対象年月   4:税フラグ   5:請求額 
+  # 6:税抜き金額 7:税額   8:使用量-kwh 9:削除フラグ 10:更新日 
+  # 11:更新者
+  tee    /DATA/E-LIFE/SEIKYU/SHISETSU/DENKI_SUIDOU/0003/ROOM_SEIKYU_back/room_denki.${up_kikan_month_select}.${cur_time}  |
+  LANG=C sort                                                     >${tmp}-seikyu_denki
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###DENKI_ROOM### $shusei_denki_room
+###DENKI_NAME### $shusei_denki_shimei
+###DENKI_ANPEA### $shusei_denki_anpea
+###DENKI_ZENGETSU### $shusei_denki_zengetsu
+###DENKI_TOUGETSU### $shusei_denki_tougetsu
+###DENKI_SHIYOURYOU### $shusei_denki_shiyouryou
+###DEMKI_KIHON### $shusei_denki_kihon
+###DENKI_JYURYOU### $shusei_denki_jyuryou
+###DENKI_SEIKYUGAKU### $shusei_denki_seikyugaku
+FIN
+#  check_list_display=""
+#cat << FIN > ${tmp}-calsed2
+###check_list_display### ${check_list_display}
+#FIN
+   
+   # HTMLの作成
+  # 修正欄の表示しなおし
+    awk '/ajax_calc_list_table_start/,/ajax_calc_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+    calsed -f  $tmp-calsed  >${tmp}-html
+  # 一覧表示の表示しなおし
+  #  awk '/ajax_check_list_table_start/,/ajax_check_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  #  calsed -f ${tmp}-calsed2 - |
+  #  mojihame -l"Check_list_table" - $tmp-cyouhyou_denki >> ${tmp}-html
+    echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+    cat - ${tmp}-html
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+  else
+
+  cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month}  >$tmp-cyouhyou_denki
+  # バックアップ
+  tee /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/HENKOU-DATA/DENKI_CYOUHYOU.0003.${select_month}.${cur_time}  |
+
+  # 請求用データ
+  cat $tmp-cyouhyou_denki                                         |
+  # 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+  # 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+  self 1 2 7 10                                                   |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+  awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+  calc '$4/$5' 5                                                  |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+  # 6:税抜額
+  # 税抜き金額の小数点以下を切り上げにする。
+  marume +age 6.0                                                 |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+  # 6:税抜額
+  # 税込み金額-税抜き金額=税額
+  calc '$4-$6' 6                                                  |
+  # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+  # 6:税抜額 7:税額
+  awk '{print $1,$2,"'${kikan_month_select}'","1",$4,$6,$7,"電気使用量："$3"[kwh]","1","'${cur_time}'","'${userid}'"}' |
+  # 1:部屋番号 2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+  # 6:税抜き金額 7:税額   8:使用量-kwh 9:削除フラグ 10:更新日
+  # 11:更新者
+  LANG=C sort                                                      |
+  awk '$2!="_" && $2!="0"'                                         >${tmp}-seikyu_denki
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###DENKI_ROOM### $shusei_denki_room
+###DENKI_NAME### $shusei_denki_shimei
+###DENKI_ANPEA### $shusei_denki_anpea
+###DENKI_ZENGETSU### $shusei_denki_zengetsu
+###DENKI_TOUGETSU### $shusei_denki_tougetsu
+###DENKI_SHIYOURYOU### $shusei_denki_shiyouryou
+###DEMKI_KIHON### $shusei_denki_kihon
+###DENKI_JYURYOU### $shusei_denki_jyuryou
+###DENKI_SEIKYUGAKU### $shusei_denki_seikyugaku
+FIN
+#  check_list_display=""
+#cat << FIN > ${tmp}-calsed2
+###check_list_display### ${check_list_display}
+#FIN
+
+   # HTMLの作成
+  # 修正欄の表示しなおし
+    awk '/ajax_calc_list_table_start/,/ajax_calc_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+    calsed -f  $tmp-calsed  >${tmp}-html
+  # 一覧表示の表示しなおし
+  #  awk '/ajax_check_list_table_start/,/ajax_check_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  #  calsed -f ${tmp}-calsed2 - |
+  #  mojihame -l"Check_list_table" - $tmp-cyouhyou_denki >> ${tmp}-html
+    echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+    cat - ${tmp}-html
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+  fi
+# 電気料金ここまで////////////////////////////////////////////////////////////////////////////////
+else
+##水道料金ここから///////////////////////////////////////////////////////////////////////////////
+#---------------------------------------------------------------------------------
+# 帳票用データを開く
+  if [ $shusei_suidou_room !=  "_"  ]; then
+# 修正データは利用者IDないので用意する。
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month} |
+cjoin0  key=1 ${tmp}-shusei_suidou_room                          |
+self 2                                                          >$tmp-name_id
+# 変更データを仮保存
+cat ${tmp}-shusei_suidou_room $tmp-name_id ${tmp}-shusei_suidou_shimei ${tmp}-shusei_suidou_zengetsu ${tmp}-shusei_suidou_tougetsu ${tmp}-shusei_suidou_shiyouryou ${tmp}-shusei_suidou_jyousuidou ${tmp}-shusei_suidou_gesuidou ${tmp}-shusei_suidou_seikyugaku   |
+yarr                                                            >  $tmp-suidou_karitouroku 
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month}  |
+# バックアップ
+tee /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/HENKOU-DATA/SUIDOU_CYOUHYOU.0003.${select_month}.${cur_time} |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+# 変更対象者を抜いて仮保存
+cjoin1 +ng key=1 $tmp-shusei_suidou_room - > /dev/null 2> $tmp-cyouhyou_suidou_ng
+# 変更後の変更対象者を仮保存に戻す
+up3 key=1 $tmp-cyouhyou_suidou_ng $tmp-suidou_karitouroku   >$tmp-cyouhyou_suidou
+
+# 請求用データ
+cat $tmp-cyouhyou_suidou                                          |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+self 1 2 6 9                                                      |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                  |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+calc '$4/$5' 5                                                    |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額                                                  
+# 税抜き金額の小数点以下を切り上げにする
+marume +age 6.0                                                    |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額
+calc '$4-$6' 6                                                     |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜額 7:税額
+# 税込み金額-税抜き金額=税額
+awk '{print $1,$2,"'${kikan_month_select}'","1",$4,$6,$7,"水道使用量："$3"[ｍ3]","1","'${cur_time}'","'${userid}'"}' |
+# 1:部屋番号   2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+# 6:税抜き金額 7:税額     8:使用量-m3 9:削除フラグ 10:更新日
+# 11:更新者
+LANG=C sort                                                       |
+awk '$2!="_" || $2!="0"'                                           >$tmp-seikyu_suidou
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g'> ${tmp}-calsed
+###SUIDOU_ROOM### $shusei_suidou_room
+###SUIDOU_NAME### $shusei_suidou_shimei
+###SUIDOU_ZENGETSU### $shusei_suidou_zengetsu
+###SUIDOU_TOUGETSU### $shusei_suidou_tougetsu
+###SUIDOU_SHIYOURYOU### $shusei_suidou_shiyouryou
+###SUIDOU_JYOUSUIDOU### $shusei_suidou_jyousuidou
+###SUIDOU_GESUIDOU### $shusei_suidou_gesuidou
+###SUIDOU_SEIKYUGAKU### $shusei_suidou_seikyugaku
+FIN
+  check_list_display=""
+cat << FIN > ${tmp}-calsed2
+###check_list_display### ${check_list_display}
+FIN
+  # HTMLの作成
+# 修正欄の表示しなおし
+  awk '/ajax_calc_list_table_2_start/,/ajax_calc_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f ${tmp}-calsed  > ${tmp}-html
+# 一覧表示の表示しなおし
+#  awk '/ajax_check_list_table_2_start/,/ajax_check_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+#  calsed -f ${tmp}-calsed2 - |
+#  mojihame -l"Check_list_table_2" - $tmp-cyouhyou_suidou >> ${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+else
+
+cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month}   > $tmp-cyouhyou_suidou
+# バックアップ
+tee /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/HENKOU-DATA/SUIDOU_CYOUHYOU.0003.${select_month}.${cur_time} |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+
+# 請求用データ
+cat $tmp-cyouhyou_suidou                                          |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+self 1 2 6 9                                                      |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                  |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+calc '$4/$5' 5                                                    |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額
+# 税抜き金額の小数点以下を切り上げにする
+marume +age 6.0                                                    |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額
+calc '$4-$6' 6                                                     |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜額 7:税額
+# 税込み金額-税抜き金額=税額
+awk '{print $1,$2,"'${kikan_month_select}'","1",$4,$6,$7,"水道使用量："$3"[ｍ3]","1","'${cur_time}'","'${userid}'"}' |
+# 1:部屋番号   2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+# 6:税抜き金額 7:税額     8:使用量-m3 9:削除フラグ 10:更新日
+# 11:更新者
+LANG=C sort                                                         >$tmp-seikyu_suidou
+# calsedで計算結果をはめる
+cat << FIN | sed 's/ _$/ @/g'> ${tmp}-calsed
+###SUIDOU_ROOM### $shusei_suidou_room
+###SUIDOU_NAME### $shusei_suidou_shimei
+###SUIDOU_ZENGETSU### $shusei_suidou_zengetsu
+###SUIDOU_TOUGETSU### $shusei_suidou_tougetsu
+###SUIDOU_SHIYOURYOU### $shusei_suidou_shiyouryou
+###SUIDOU_JYOUSUIDOU### $shusei_suidou_jyousuidou
+###SUIDOU_GESUIDOU### $shusei_suidou_gesuidou
+###SUIDOU_SEIKYUGAKU### $shusei_suidou_seikyugaku
+FIN
+  check_list_display=""
+cat << FIN > ${tmp}-calsed2
+###check_list_display### ${check_list_display}
+FIN
+  # HTMLの作成
+# 修正欄の表示しなおし
+  awk '/ajax_calc_list_table_2_start/,/ajax_calc_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f ${tmp}-calsed  > ${tmp}-html
+# 一覧表示の表示しなおし
+#  awk '/ajax_check_list_table_2_start/,/ajax_check_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+#  calsed -f ${tmp}-calsed2 - |
+#  mojihame -l"Check_list_table_2" - $tmp-cyouhyou_suidou >> ${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+fi
+
+## 水道料金ここまで///////////////////////////////////////////////////////////////////////////////
+fi
+
+# 各ファイルを置いてくる
+#   inputはアップロードファイルを変換したもの
+#   pompaは帳票出力用のかたち
+#   共通ファイルはpompaをみじかくしたもの
+
+if [ ${syubetsu_select} = "1"  ]; then
+cat << FIN | self 1/NF > ${tmp}-file_okiba
+${tmp}-cyouhyou_denki ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/MAIN-DATA/DENKI_CYOUHYOU.${Shisetsu_select}.${kikan_month_select} 10
+${tmp}-seikyu_denki   ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select}/${kikan_month_select}/DENKI.${Shisetsu_select}.${kikan_month_select} 11
+FIN
+else
+cat << FIN | self 1/NF > ${tmp}-file_okiba
+$tmp-cyouhyou_suidou  ${pompa_dir}/DENKI_SUIDOU/${Shisetsu_select}/MAIN-DATA/SUIDOU_CYOUHYOU.${Shisetsu_select}.${kikan_month_select} 9
+$tmp-seikyu_suidou    ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${Shisetsu_select}/${kikan_month_select}/SUIDOU.${Shisetsu_select}.${kikan_month_select} 11
+FIN
+fi
+# 1:ファイル名 2:パス 3:列数
+
+# ファイル列チェック
+cat ${tmp}-file_okiba                                           |
+self 1 3                                                        |
+while read File retu_no; do
+  [ "$(retu ${File})" != "${retu_no}" ] && :                    > $tmp-err
+  [ "$(retu ${File} | gyo)" != "1" ] && :                       > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${File} | gyo)" != "0" ] && :   > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 置く
+cat ${tmp}-file_okiba                                           |
+while read File Pass Retu ; do
+  cp -p ${File} ${Pass}
+  [ "${?}" != "0" ] && :                                        > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+
+##------------------------------------------------------------
+
+## 終了
+rm -f ${tmp}-*
+exit 0

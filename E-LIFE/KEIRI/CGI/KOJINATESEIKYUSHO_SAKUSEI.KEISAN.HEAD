@@ -1,0 +1,367 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.HEAD 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# 初期化
+rm ${tmp}-err
+: > ${tmp}-while_head_make_result
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# ヘッダデータ作成
+
+# ----------------------------
+# 処理月のヘッダを呼び出して、
+# ヘッダがあるものは内容の更新、ヘッダがないものは新規で作成、以前ヘッダを作成したが更新対象者リストにいない場合は無効フラグを立てる
+
+if [ -s ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD ] ; then
+  # -----------------
+  cjoin0 key=1 <(echo "${seikyu_syori_month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+  # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+  # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+  # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+  # 16:予備             17:予備             18:予備           19:予備          20:予備
+  # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+  # 26:更新者
+  self 2         |
+  # 1:入居者ID
+  LANG=C sort -u > ${tmp}-head_ari
+  # -----------------
+
+  # -----------------
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  # -----------------
+else
+  : > ${tmp}-head_ari
+fi
+# ----------------------------
+
+# ----------------------------
+# ヘッダを新規作成するのか、ヘッダを更新するのか、ヘッダを削除するのかを決める
+
+# ヘッダ削除対象者の抽出
+#   マスタ：今月処理対象者
+#   トラン：処理月ヘッダ有効リスト
+# ng:${tmp}-head_delete
+if [ -s ${tmp}-head_ari ] ; then 
+  # -----------------------
+  self 1 ${tmp}-riyousha_kouza_settei                 |
+  LANG=C sort                                         |
+  join0 +ng key=1 - ${tmp}-head_ari 2>&1 1> /dev/null |
+  awk '{print $0,"2"}' -                              > ${tmp}-head_delete
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  # -----------------------
+else
+  # -----------------------
+  : > ${tmp}-head_delete
+  # -----------------------
+fi
+
+# 更新対象者と新規作成者の抽出
+#   マスタ：処理月ヘッダ有効リスト
+#   トラン：今月処理対象者
+# ok:${tmp}-head_koushin
+# ng:${tmp}-head_delete_new => ${tmp}-head_deleteとあてる => ${tmp}-head_new
+if [ -s ${tmp}-head_ari ] ; then
+  # -----------------------
+  self 1 ${tmp}-riyousha_kouza_settei                                |
+  LANG=C sort                                                        |
+  join0 +ng key=1 ${tmp}-head_ari - 2>&1 1> ${tmp}-head_koushin_kari |
+  join0 +ng key=1 ${tmp}-head_delete - > /dev/null                   2> ${tmp}-head_new_kari
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  # -----------------------
+
+  # -----------------------
+  # 更新ぶん
+  if [ -s ${tmp}-head_koushin_kari ] ; then
+    awk '{print $0,"1"}' ${tmp}-head_koushin_kari > ${tmp}-head_koushin
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  else
+    : > ${tmp}-head_koushin
+  fi
+  # -----------------------
+cp $tmp-head_delete ${work}/head_delete
+
+  # -----------------------
+  # 新規ぶん
+  if [ -s ${tmp}-head_new_kari ] ; then
+    awk '{print $0,"0"}' ${tmp}-head_new_kari > ${tmp}-head_new
+    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  else
+    : > ${tmp}-head_new
+  fi
+  # -----------------------
+else
+  # -----------------------
+  # 対象のヘッダがなければ対象者全員新規
+  awk '{print $1,"0"}' ${tmp}-riyousha_kouza_settei |
+  LANG=C sort                                       > ${tmp}-head_new
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+  # -----------------------
+
+  # -----------------------
+  : > ${tmp}-head_koushin
+  # -----------------------
+fi
+# ----------------------------
+
+## ----------------------------
+## ヘッダあり＋今回更新対象のリストを作成、
+##   ヘッダありリスト${tmp}-head_ariと今回処理対象リスト${tmp}-head_kakunin_listをあてる：あたらないもの＝新しくヘッダを作成する
+##   ヘッダありリスト${tmp}-head_ariと今回処理対象リスト${tmp}-head_kakunin_listをあてる：あたるもの＝ヘッダ更新
+##   今回の処理対象者リスト${tmp}-riyousha_kouza_setteiとヘッダデータ有効なリスト${tmp}-head_ariをあてる：あたらないもの＝更新対象でなくなったのでヘッダデータに削除フラグたてる
+#self 1 ${tmp}-riyousha_kouza_settei |
+#cat - ${tmp}-head_ari               |
+#LANG=C sort -u                      > ${tmp}-head_kakunin_list
+## ----------------------------
+#
+## -----------------
+## エラー判定
+#[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+## -----------------
+#
+## ----------------------------
+## ヘッダ新規作成
+#if [ -s ${tmp}-head_ari ] ; then
+#  join0 +ng key=1 ${tmp}-head_ari ${tmp}-head_kakunin_list 2>&1 1> /dev/null |
+#  awk '{print $0,"0"}' -                                                     > ${tmp}-head_new
+#  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+## -----------------
+#else
+#  awk '{print $0,"0"}' ${tmp}-head_kakunin_list  > ${tmp}-head_new
+#  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+#fi
+## ----------------------------
+#
+## ----------------------------
+## ヘッダ削除ぶん
+#if [ -s ${tmp}-head_ari ] ; then
+##  join0 +ng key=1 ${tmp}-head_kakunin_list ${tmp}-head_ari 2>&1 1> /dev/null |
+##  awk '{print $0,"2"}' -                                                     > ${tmp}-head_delete
+#
+#  join0 +ng key=1 ${tmp}-riyousha_kouza_settei ${tmp}-head_ari 2>&1 1> /dev/null |
+#  # ヘッダ新規作成は除く
+#  join0 +ng key=1 ${tmp}-head_new - 2>&1 1> /dev/null                            |
+#  awk '{print $0,"2"}' -                                                         > ${tmp}-head_delete
+#
+#  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+#else
+#  : > ${tmp}-head_delete
+#fi
+## ----------------------------
+#
+## ----------------------------
+## ヘッダ更新
+#if [ -s ${tmp}-head_ari ] ; then
+#  join0 +ng key=1 ${tmp}-head_ari ${tmp}-head_kakunin_list 2> /dev/null |
+#  awk '{print $0,"1"}' -                                                > ${tmp}-head_koushin
+#  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+#else
+#  : > ${tmp}-head_koushin
+#fi
+## ----------------------------
+
+# ----------------------------
+# ヘッダ更新するかどうかフラグファイルまとめる
+cat ${tmp}-head_new ${tmp}-head_delete ${tmp}-head_koushin |
+LANG=C sort                                                > ${tmp}-head_flg
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(HEAD)"
+# ----------------------------
+
+# ----------------------------
+cp ${tmp}-member_keiyaku ${work}/keiyaku
+# ヘッダあるものないもの処理分岐
+cat ${tmp}-head_flg |
+while read id flg ; do
+  case "${flg}" in
+    # ------------
+    # ヘッダあるので更新
+    1 )
+      cjoin0 key=1 <(echo "${seikyu_syori_month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+      cjoin0 key=2 <(echo "${id}") -              |
+      LANG=C sort -k1,2 -k25,25                   |
+      getlast 1 2                                 |
+      awk '$24!="9"' -                            |
+      self 2 1/NF                                 |
+      # 1:入居者ID        2:処理月            3:入居者ID          4:請求ステータス  5:施設ID
+      # 6:建屋ID          7:フロア            8:ユニットID        9:居室番号        10:支払合算相手ID
+      # 11:明細ファイル名 12:請求書設定フラグ 13:仮請求書出力時間 14:請求書出力時間 15:請求確定月
+      # 16:予備           17:予備             18:予備             19:予備           20:予備
+      # 21:予備           22:予備             23:予備             24:予備           25:削除フラグ
+      # 26:更新時間       27:更新者
+      LANG=C sort                                 |
+      join1 key=1 ${tmp}-riyousha_kouza_settei -  |
+      # 1:入居者ID          2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID            7:フロアID             8:ユニットID       9:居室ID           10:処理月
+      # 11:入居者ID         12:請求ステータス      13:施設ID          14:建屋ID          15:フロア
+      # 16:ユニットID       17:居室番号            18:支払合算相手ID  19:明細ファイル名  20:請求書設定フラグ
+      # 21:仮請求書出力時間 22:請求書出力時間      23:請求確定月      24:予備            25:予備
+      # 26:予備             27:予備                28:予備            29:予備            30:予備
+      # 31:予備             32:予備                33:削除フラグ      34:更新時間        35:更新者
+      # -
+      # 1-9:riyousha_kouza_settei側
+      # 10-NF:ヘッダ側
+      # -
+      awk '{if($2=="1")
+              {gassan_aite=$3;}
+            else
+              {gassan_aite="_";};
+            $13=$5;
+            $14=$6;
+            $15=$7;
+            $16=$8;
+            $17=$9;
+            $18=gassan_aite;
+            $19="SEIKYU_MEISAI.'${seikyu_syori_month}'."$1;
+            $20=$4; $33="1";
+            $34="'${current_time}'";
+            $35="'${userid}'";
+            print}' -                             |
+      delf 1/9                                    |
+      self 2 1/NF                                 |
+tee ${work}/maejoin |
+      join2 key=1 ${tmp}-member_keiyaku -         |
+tee ${work}/klich |
+      self 3/17 2 19/NF                           >> ${tmp}-while_head_make_result
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+      # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+
+      # エラー判定
+      [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+      [ -e ${tmp}-err ] && break
+    ;;
+    # ------------
+    # ------------
+    # ヘッダないので作成
+    0 )
+      # 請求対象者${tmp}-member_heyaと口座情報${riyosha_dir}/RIYOUSHA_KOUZAあてた結果をもとにヘッダ作成する
+      #-
+      # 1:入居者ID 2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID   7:フロアID             8:ユニットID       9:居室ID
+      cjoin0 key=1 <(echo "${id}") ${tmp}-riyousha_kouza_settei |
+      awk '{if($2=="1")
+              {gassan_aite=$3;}
+            else
+              {gassan_aite="_";};
+            print $0,
+                  "'${seikyu_syori_month}'",
+                  "1",
+                  gassan_aite,
+                  "SEIKYU_MEISAI.'${seikyu_syori_month}'."$1,
+                  "1",
+                  "'${current_time}'",
+                  "'${userid}'",
+                  "_"}' -                                       |
+      # 1:入居者ID        2:他入居者との一括請求 3:一括請求入居者ID 4:一括請求書フラグ 5:施設ID
+      # 6:建屋ID          7:フロアID             8:ユニットID       9:居室ID           10:処理月
+      # 11:請求ステータス 12:支払合算相手ID      13:明細ファイル名  14:削除フラグ      15:更新時間
+      # 16:更新者         17:アンスコ
+
+      # 2014/05/08追加
+      # 予備項目使って、契約状況を付与する
+      join2 key=1 ${tmp}-member_keiyaku -                       |
+      # 1:入居者ID  2:契約種類ID      3:他入居者との一括請求 4:一括請求入居者ID 5:一括請求書フラグ
+      # 6:施設ID    7:建屋ID          8:フロアID             9:ユニットID       10:居室ID
+      # 11:処理月   12:請求ステータス 13:支払合算相手ID      14:明細ファイル名  15:削除フラグ
+      # 16:更新時間 17:更新者         18:アンスコ
+      self 11 1 12 6/10 13/14 5 NF NF NF NF 2 NF NF NF NF NF NF NF 15/NF-1 >> ${tmp}-while_head_make_result
+      # 1:処理月            2:入居者ID            3:請求ステータス    4:施設ID         5:建屋ID
+      # 6:フロアID          7:ユニットID          8:居室ID            9:支払合算相手ID 10:明細ファイル名
+      # 11:一括請求書フラグ 12:(仮請求書出力時間) 13:(請求書出力時間) 14:(請求確定月)  15:(領収書出力時間)
+      # 16:契約種類ID       17:予備               18:予備             19:予備          20:予備
+      # 21:予備             22:予備               23:予備             24:削除フラグ    25:更新時間
+      # 26:更新者
+
+      # エラー判定
+      [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+      [ -e ${tmp}-err ] && break
+    ;;
+    # ------------
+    # ------------
+    2 )
+    # ヘッダがあるがリストにいないので無効にする
+    cjoin0 key=1/2 <(echo "${seikyu_syori_month} ${id}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+    awk '{$24="9";
+          $25="'${current_time}'";
+          $26="'${userid}'";
+          print}'                                                                                  >> ${tmp}-while_head_make_result
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロアID          7:ユニットID        8:居室ID          9:支払合算相手ID 10:明細ファイル名
+      # 11:一括請求書フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+
+      # エラー判定
+      [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+      [ -e ${tmp}-err ] && break
+    ;;
+    # ------------
+  esac
+done
+
+# 一括請求書フラグがアンスコの場合がある(口座情報が設定されていない場合)ので0(なし)に変更する
+LANG=C sort ${tmp}-while_head_make_result |
+awk '{if($11=="_")
+        {$11="0"};
+      print}' -                           > ${tmp}-HEAD_INPUT #ヘッダ完成更新対象!!
+# ----------------------------
+
+# ----------------------------
+# マスタ用
+cat ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD ${tmp}-HEAD_INPUT |
+LANG=C sort -k1,2 -k25,25                                        > ${tmp}-HEAD_MST
+# ----------------------------
+
+# ----------------------------
+# チェックしたい
+# 計算処理はじめに確定している処理対象の人数分ヘッダファイルを作成しているので確認する
+
+# ${tmp}-HEAD_INPUTはヘッダ削除分も含んでいるので、削除フラグ9以外の行数とヘッダの行数を確認する
+cp $tmp-member ${work}/member_member
+awk '$24!="9"' ${tmp}-HEAD_INPUT > ${work}/head_input
+taisyou_gyo="$(gyo ${tmp}-member)"
+meisai_gyo="$(awk '$24!="9"' ${tmp}-HEAD_INPUT | gyo)"
+[ "${taisyou_gyo}" != "${meisai_gyo}" ] && error_exit "処理中にエラーが発生しました(HEAD)"
+# ----------------------------
+#---------------------------------------------------------------
+
+exit 0
+

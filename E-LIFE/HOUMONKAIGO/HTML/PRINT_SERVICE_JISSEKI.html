@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>訪問介護実績入力</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" type="text/css" href="###DOMAIN###/css/bootstrap.css">
+    
+    <link rel="stylesheet" href="###DOMAIN###/css/font.css">
+    <link rel="stylesheet" href="###DOMAIN###/css/jquery-ui.css" />
+    <script src="###DOMAIN###/js/jquery-1.7.2.min.js" type="text/javascript"></script>
+    <script src="###DOMAIN###/js/jquery-ui.js"></script>
+	<script src="###DOMAIN###/js/validateUtils.js"></script>
+	<script src="###DOMAIN###/js/messageMaster.js"></script>
+	<script src="###DOMAIN###/js/jquery.ui.datepicker-ja.js"></script>
+
+ <script>
+
+
+    // 確定フラグ
+    kakuteiflg="###KAKUTEIFLG###";
+
+    // テスト設定
+        // 施設パラメータセット
+        var Douitsu="###DOUITSU_GENSAN###";
+        var servicemanager="###SERVICEMANAGER_GENSAN###";
+    // 事業所情報
+        var JigyoushaType="###JIGYOUSHATYPE###";
+        var JigyoushaScale="###SHISETSUKBN###";
+
+    // 介護度
+        var youkaigodo="###YOUKAIGODO###";
+
+
+    // 介護計画書で設定した内容を反映(担当者、対象月で検索)
+
+    datad = [
+//         ###JISSEKILIST###
+             {"id":"%1","day":"%2","start":"%3","end":"%4","code":"%5","seikyu":"%6","helper1":"%7",
+              "helper2":"%8","naiyou":"%9","unittime":"%10","kinkyu":"%11","shousai":"%12"},
+//         ###JISSEKILIST###
+       ];
+
+ Tantousha = [
+//         ###HELPERLIST###
+      { "id": "%1", "name":"%2"},
+//         ###HELPERLIST###
+     ];
+
+    Kaigonaiyoud = [
+      { "id": "1", "value":"身体介護中心"},
+      { "id": "2", "value":"生活援助中心"},
+      { "id": "4", "value":"身体介護に続き生活援助を実施"},
+      { "id": "3", "value":"通院など乗降介助中心"},
+        ];
+
+    Seikyud = [
+            {"id":"1","value":"介護保険対象"},
+            {"id":"0","value":"請求対象外"},
+        ];
+
+    ServiceKbn = [
+//                     ###SERVICECODE###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","unit":"%13","fee":"%14"},
+//                     ###SERVICECODE###
+  ];
+
+
+
+ var dataArrEventRiyoushaId = new Array();
+
+        var jissekihtml="";
+        var jissekinum=0;
+
+ jQuery(function(){
+
+//  対象年月を本日の日付を中心に計算
+        TaishouDate = new Date(###TAISHOUKIKAN###);
+        TaishouYear = TaishouDate.getFullYear();
+        TaishouFromYear = TaishouYear-1;
+        TaishouToYear = TaishouYear+1;
+        tmpTaishouMonth = TaishouDate.getMonth()+1;
+        TaishouMonth = ('00'+tmpTaishouMonth).slice(-2);
+
+        var dataArrValueFormat=new Array();
+        var dataArrPostValue=new Array();
+
+        function setJissekiFormat(y,m) {
+            dataArrValueFormat=new Array();
+            var NumOfMonth = new Date(y,m,0).getDate();
+            for(var i=0;i<NumOfMonth;i++) {
+                dataArrValueFormat.push("_");
+            }
+        }
+
+
+        for(var y=TaishouFromYear; y<=TaishouToYear; y++) {
+             if (y==TaishouYear) {
+                 $('#TaishouNen').append('<option value="'+y+'" selected>'+y+'</option>');
+             } else {
+                 $('#TaishouNen').append('<option value="'+y+'">'+y+'</option>');
+             }
+        }
+
+        for(var m=1; m<=12; m++) {
+             if (m==TaishouMonth) {
+                     valueM=('00'+m).slice(-2);
+              $('#TaishouTsuki').append('<option value="'+valueM+'" selected>'+m+'</option>');
+             } else {
+                     valueM=('00'+m).slice(-2);
+              $('#TaishouTsuki').append('<option value="'+valueM+'">'+m+'</option>');
+             }
+        }
+
+
+
+        function setHTMLFormatJisseki() {
+            jissekihtml="";
+            jissekihtml=jissekihtml+'<tr>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiDate'+jissekinum+'" name="ServiceJissekiDate'+jissekinum+'" class="ServiceJissekiDate" style="width:100%"></span>';
+            jissekihtml=jissekihtml+'<input type="hidden" id="DataID'+jissekinum+'" name="DataID'+jissekinum+'" ></td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px" id="ServiceJissekiYoubi'+jissekinum+'" name="ServiceJissekiYoubi'+jissekinum+'" class="ServiceJissekiYoubi">';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiTantouHelper'+jissekinum+'" name="ServiceJissekiTantouHelper'+jissekinum+'" class="ServiceJissekiTantouHelper"></span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiDoukouHelper'+jissekinum+'" name="ServiceJissekiDoukouHelper'+jissekinum+'" class="ServiceJissekiDoukouHelper"></span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiHakenJikanStart'+jissekinum+'" name="ServiceJissekiHakenJikanStart'+jissekinum+'" class="ServiceJissekiHakenJikanStart" style="width:80px"></span>～';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiHakenJikanEnd'+jissekinum+'" name="ServiceJissekiHakenJikanEnd'+jissekinum+'" class="ServiceJissekiHakenJikanEnd" style="width:80px"></span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiKaigoNaiyou'+jissekinum+'" name="ServiceJissekiKaigoNaiyou'+jissekinum+'" class="ServiceJissekiKaigoNaiyou"></span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiServiceKbn'+jissekinum+'" name="ServiceJissekiServiceKbn'+jissekinum+'" class="ServiceJissekiServiceKbn">';
+            jissekihtml=jissekihtml+'</span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'<td style="border:#000000 solid 1px">';
+            jissekihtml=jissekihtml+'<span id="ServiceJissekiSeikyuTaishou'+jissekinum+'" name="ServiceJissekiSeikyuTaishou'+jissekinum+'" class="ServiceJissekiSeikyuTaishou"></span>';
+            jissekihtml=jissekihtml+'</td>';
+            jissekihtml=jissekihtml+'</tr>';
+
+            $('#JissekiIchiran').append(jissekihtml);
+
+            jissekinum++;
+        }
+        
+        // デフォルトのサービス提供日設定
+        var TN=$('#TaishouNen').val();
+        var TT=$('#TaishouTsuki').val();
+
+  $.datepicker.setDefaults({
+            minDate:new Date(TN,TT-1,1),
+            maxDate:new Date(TN,TT,1-1),
+   changeYear:true,
+   changeMonth:true,
+   yearRange:"c-130:c+1",
+   dateFormat: 'yy/mm/dd',
+         dayNamesShort: ['日','月','火','水','木','金','土'],
+            dayNamesMin: ['日','月','火','水','木','金','土'],
+            yearSuffix: ''
+        });
+
+
+  function convert_wareki(year, setting){
+      var result;
+      if(setting === false){
+          return year;
+//                  ###GENGOU###
+      } else if (year > %3) {
+          result = year - %3;
+          result = '%2' + result;
+          return result;
+//                  ###GENGOU###
+      }
+  }
+
+        function setJissekiDateFMT(idx) {
+    
+        $(".ServiceJissekiDate").eq(idx).datepicker({            
+    onSelect: function(dateText, inst){
+    var ArrDate=dateText.split("/");
+       var DispDate=convert_wareki(ArrDate[0],true)+"年"+parseInt(ArrDate[1])+"月"+parseInt(ArrDate[2])+"日";
+    $(".ServiceJissekiDate").eq(idx).val(ArrDate[2]);
+        // 曜日
+                var myTbl = new Array("日","月","火","水","木","金","土");
+        var slDate= new Date(dateText);
+    $(".ServiceJissekiYoubi").eq(idx).text(myTbl[slDate.getDay()]);
+            }
+  });
+
+        }
+
+//        setJissekiDateFMT(0);
+
+
+
+
+
+
+///////////////////////////
+//データセット
+///////////////////////////
+
+            if(datad.length>0){
+                for(var f in datad) {
+                    setHTMLFormatJisseki();
+                    $('#DataID'+f).val(datad[f].id);
+                    $('#ServiceJissekiDate'+f).text(datad[f].day);
+                    $('#ServiceJissekiTantouHelper'+f).text(datad[f].helper1);
+                    $('#ServiceJissekiDoukouHelper'+f).text(datad[f].helper2);
+                    $('#ServiceJissekiHakenJikanStart'+f).text(datad[f].start);
+                    $('#ServiceJissekiHakenJikanEnd'+f).text(datad[f].end);
+                    $('#ServiceJissekiKaigoNaiyou'+f).text(datad[f].naiyou);
+                    $('#ServiceJissekiServiceKbn'+f).text(datad[f].code);
+                    $('#ServiceJissekiSeikyuTaishou'+f).text(datad[f].seikyu);
+                    dtTbl = new Array("日","月","火","水","木","金","土");
+                    dispText=String(###TAISHOUNEN###)+"/"+String(###TAISHOUTSUKI###)+"/"+String(datad[f].day);
+                    dtDate= new Date(dispText);
+                    $(".ServiceJissekiYoubi").eq(f).text(dtTbl[dtDate.getDay()]);
+                }
+            }
+
+ });
+
+ </script>
+
+    <!-- Demo page code -->
+
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em;
+        }
+    </style>
+
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+
+  </head>
+
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body class="">
+  <!--<![endif]-->
+<div class="header" style="text-align:center;min-width:1024px;font-size:20px">訪問介護サービス実績</div>
+<div class="row-fluid">
+  <table style="margin-left:2em;min-width:1024px;">
+    <tr>
+      <td style="font-size:18px">
+        <span id="TaishouNen" name="TaishouNen">###TAISHOUNEN###</span>年
+        <span id="TaishouTsuki" name="TaishouTsuki">###TAISHOUTSUKI###</span>月
+      </td>
+    </tr>
+    <tr>
+      <td style="font-size:18px">
+        利用者名：
+        <font style="">
+          <b>###RIYOUSHA###</b>
+        </font>
+      </td>
+    </tr>
+  </table>
+</div>
+<div class="container-fluid">
+  <div class="" style="min-width:1024px;">
+    <div style="height:650px;">
+      <div style="margin-top:.5em;">
+          <table id="JissekiIchiran" style="border:#000000 solid 2px;min-width:1024px;line-height:17px">
+            <tr>
+              <th class="td-success" style="width:4%; border:#000000 solid 1px;text-align:center;">日</th>
+              <th class="td-success" style="width:3%; border:#000000 solid 1px;text-align:center;">曜日</th>
+              <th class="td-success" style="width:12%; border:#000000 solid 1px;text-align:center;">担当ヘルパー</th>
+              <th class="td-success" style="width:12%; border:#000000 solid 1px;text-align:center;">同行ヘルパー</th>
+              <th class="td-success" style="width:10%; border:#000000 solid 1px;text-align:center;">派遣時間</th>
+              <th class="td-success" style="width:18%; border:#000000 solid 1px;text-align:center;">介護内容</th>
+              <th class="td-success" style="width:17%; border:#000000 solid 1px;text-align:center;">サービス区分</th>
+              <th class="td-success" style="width:10%; border:#000000 solid 1px;text-align:center;">請求対象</th>
+            </tr>
+          </table>
+      </div>
+    </div>
+  </div>
+</div>
+    <script src="###DOMAIN###/js/bootstrap.js"></script>
+    <script type="text/javascript">
+//        $("[rel=tooltip]").tooltip();
+        $(function() {
+            $('.demo-cancel-click').click(function(){return false;});
+        });
+    </script>
+    
+  </body>
+</html>
+
+

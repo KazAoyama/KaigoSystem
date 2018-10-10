@@ -1,0 +1,294 @@
+#!/bin/bash
+#
+# RIYOURYOU_MASTER_KEIYAKUKIN.TOUROKU
+# 従業員マスタ登録
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :20130123
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+input_dir="${app_dir}/INPUT/${today}/$(basename ${0})"
+pompa_dir="${app_dir}/POMPA/RIYOURYOU"
+kanri_dir="/DATA/E-LIFE/SYSTEM_SETTEI/KANRI"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+  Shisetsu=$(nameread        "Shisetsu"       $namedata)
+  YuukouNew=$(nameread       "YuukouNew"      $namedata)
+  HyoujiJunNew=$(nameread    "HyoujiJunNew"   $namedata)
+  KeiyakukinNew=$(nameread   "KeiyakukinNew"  $namedata)
+
+  USERID=$(nameread  "userid"  $namedata)
+
+ [ -z "${YuukouNew}" ] && YuukouNew="2"
+ [ -z "${HyoujiJunNew}" ] && HyoujiJunNew="_"
+ [ -z "${KeiyakukinNew}" ] && KeiyakukinNew="_"
+
+# 入力データのチェック
+ if [ "${YuukouNew}" != "2" -a "${KeiyakukinNew}" != "_" ] ; then
+   echo "${HyoujiJunNew}" |
+   awk '$1!="_"'          |
+   awk '$1!~/^[0-9]+$/{print $0}' > $tmp-hyoujijun_error1
+   [ -s $tmp-hyoujijun_error1 ] && error_exit "表示順項目には数字を入力してください。"
+ else
+  :
+ fi
+#  [ "${KeiyakukinNew}" != "_" -a "${YuukouNew}" = "_" ] && error_exit "新規入力は使用可にチェックをしてください。"
+  #--------------------------------------------------------------
+
+# 新データ以外の更新
+cat ${namedata} |
+tee $tmp-name_data |
+awk '$1~/Keiyakukin*/{print $0}' |
+awk 'gsub("Keiyakukin","")'      |
+LANG=C sort     > $tmp-keiyakukinname
+
+cat ${namedata} |
+awk '$1~/HyoujiJun*/{print $0}' |
+awk 'gsub("HyoujiJun","")'      |
+LANG=C sort     > $tmp-hyoujijyun
+
+cat ${namedata} |
+awk '$1~/Yuukou*/{print $0}' |
+awk 'gsub("Yuukou","")'      |
+LANG=C sort     > $tmp-yuukou
+
+keiyakukin_gyo=$(cat $tmp-keiyakukinname | gyo - )
+# 
+cat $tmp-hyoujijyun |
+awk '$2!="_"'       |
+awk '$2!~/^[0-9]+$/{print $0}' > $tmp-hyoujijun_error2
+
+[ -s $tmp-hyoujijun_error2 ] && error_exit "表示順項目には数字を入力してください。"
+
+[ ! -s $tmp-keiyakukinname ] && error_exit "契約金を全て削除することは出来ません。"
+[ ! -s $tmp-yuukou ] && error_exit "契約金を全て無効にすることは出来ません。"
+#--------------------------------------------------------------
+# 追加データの作成
+
+[ "${KeiyakukinNew}" != "_" ]  && echo "${Shisetsu}" "${KeiyakukinNew}" "${HyoujiJunNew}" "${YuukouNew}" "${cur_time}" "${USERID}" >  $tmp-keiyakukin_master_jyunbi
+# 1:施設/事業所コード 2:契約種類ID 3:契約種類名 4:表示順 5:有効フラグ
+# 6:更新日時          7:UserID
+
+
+# 新データがあれば利用料番号初版
+if [ -s "$tmp-keiyakukin_master_jyunbi" ] ; then
+
+    mkdir -p ${kanri_dir}
+    touch ${kanri_dir}/KEIYAKUKIN_ID
+    [ -s ${kanri_dir}/KEIYAKUKIN_ID ] || echo "001" > ${kanri_dir}/KEIYAKUKIN_ID
+
+   # 新規データならばIDをふる(利用者ID)
+   ### 管理IDの発番
+   # 今回取得するID数
+   last_no="1"
+   # 現状の最終番号
+    now_last_no=$(cat ${kanri_dir}/KEIYAKUKIN_ID)
+    # 今回の発番後に、数字が限度を超えないかチェック
+    new_last_no=$(expr ${now_last_no} + ${last_no})
+
+    # 超えてたらリセット
+    [ ${new_last_no} -gt "999" ] && echo "001" > ${kanri_dir}/KEIYAKUKIN_ID
+
+    get_no ${last_no} ${kanri_dir}/KEIYAKUKIN_ID > $tmp-id_all
+
+    # この場合取得するのは一つなのでそのまま変数に
+    keiyakukin_id="$(cat $tmp-id_all)"
+    #data_id="${today}${new_no}"
+
+cat $tmp-keiyakukin_master_jyunbi     |
+# 1:施設/事業所コード 2:契約種類名 3:有効フラグ 4:更新日時 5:UserID
+awk '{print $0,"'${keiyakukin_id}'"}' |
+self 1 NF 2/NF-1                     > $tmp-keiyakukin_master_newdata
+# 1:施設/事業所コード 2:契約種類ID 3:契約種類名 4:有効フラグ 5:更新日時
+# 6:UserID
+fi
+
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 利用料データ
+#--------------------------------------------------------------
+
+#[ "${keiyakukin_gyo}" = $(gyo $tmp-yuukou) ] || error_exit
+
+loopj -d"2" num=1 $tmp-keiyakukinname $tmp-hyoujijyun $tmp-yuukou  |
+awk '$1!="New"{print $0}' |
+# 1:契約種類ID 2:契約種類名 3:表示順  4:有効フラグ
+awk '{if($3=="_"){print $1,$2,"2"}else{print $0}
+     }' |
+awk '{print "'${Shisetsu}'",$0,"'${cur_time}'","'${USERID}'"}' |
+if [ -s $tmp-keiyakukin_master_newdata ]; then
+  cat - $tmp-keiyakukin_master_newdata 
+else
+  cat -
+fi > $tmp-keiyakukin_master_input
+
+#cp $tmp-* /home/hands/work/okuda
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOURYOU/KEIYAKUKIN_MASTER KEIYAKUKIN_MASTER
+FIN
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+keiyakukin_master KEIYAKUKIN_MASTER 2 6 7 ${pompa_dir} ${input_dir}
+FIN
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+ cp -p ${pompa_dir}/KEIYAKUKIN_MASTER ${home_dir}/E-LIFE/TBL/RIYOURYOU_MASTER/KEIYAKUKIN_MASTER
+
+echo "result ok" "${jyuugyouin_id}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

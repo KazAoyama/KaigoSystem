@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# SCHEDULE_EVENT_CALENDAR.SEARCH
+# スケジュールカレンダー表示　検索用CGI
+#
+# Written by aoyagi
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+work="/home/hands/E-LIFE/UNEI/WORK"
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+# 渡ってきたデータを取得
+if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+  dd bs=${CONTENT_LENGTH} |
+  cgi-name -d_ -i_
+else
+  :
+fi > $tmp-name
+
+cp $tmp-name ${work}/namaname
+
+# MODE取得
+MODE=$(nameread "MODE" ${tmp}-name)
+userid=$(nameread "userid" ${tmp}-name)
+shisetsu=$(nameread "shisetsu" ${tmp}-name)
+awk '$1== "shurui%5B%5D"{print $2,"selected"}' ${tmp}-name > $tmp-shurui
+awk '$1=="kubun%5B%5D"{print $2,"selected"}' ${tmp}-name   > $tmp-kubun
+
+[ ! -s $tmp-shurui ] && echo "00 selected" > $tmp-shurui
+[ ! -s $tmp-kubun ] && echo "00000 selected" > $tmp-kubun
+
+echo "00" "全て" > $tmp-shurui_all
+
+###################################
+# スケジュール種類
+###################################
+# 1:スケジュール種類ID 2:スケジュール種類名
+cat ${home_dir}/TBL/CONFIG/SCHEDULE_SHURUI |
+awk '$(NF-2)!="9"'                         |
+awk '$1=="02"||$1=="03"||$1=="04"||$1=="05"' |
+cat $tmp-shurui_all -                      |
+self 1 2                                   |
+LANG=C sort -k1,1                          |
+join2 +"@" key=1 $tmp-shurui               |
+awk '{print $1,$3,$2}'  |
+awk '{print $0}'                > ${tmp}-schedule_shurui
+
+echo "00000" "全て" > $tmp-kubun_all
+###################################
+# スケジュールタイプマスタ
+###################################
+
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCEDULE_TYPE_MASTER |
+awk '$5=="'${shisetsu}'" && $(NF-2)!="9"'   |
+LANG=C sort -k4,4                          |
+if [ "$(awk '$1=="00"' $tmp-shurui | gyo)" = 0 ];then
+  join0 key=4 $tmp-shurui                  |
+  awk '$4!="05"'
+else
+  awk '$4=="02" || $4=="03" || $4=="04"'
+fi                                         |
+cat $tmp-kubun_all -                             |
+# 1:集計グループID 2:集計グループ
+#--------------------------------------------------------------
+self 1 2     |
+LANG=C sort -k1,1                          |
+tee $work_dir/type_master                  |
+join2 +"@" key=1 $tmp-kubun                |
+awk '{print $1,$3,$2}'  |
+awk '{print $0}'    > ${tmp}-scheduletype_master
+
+#####################################
+# 部屋マスタ
+#####################################
+awk '$1=="00"||$1=="05"' $tmp-shurui > $tmp-heya_check
+if [ $(gyo $tmp-heya_check) -gt 0 ] ; then
+  cat ${home_dir}/TBL/FACILITY_MASTER/FACILITY_MASTER |
+  awk '$1=="'${shisetsu}'" && $(NF-2)!="9"'   |
+  LANG=C sort -k2,2       |
+  join2 +"@" key=2 $tmp-shurui |
+  awk '{print $2,$4,$3}' |
+  awk '{print $0}'    >> ${tmp}-scheduletype_master
+fi
+
+# HTMLを作成
+cat << FIN | sed 's/ _$/ @/g' > $tmp-option_1
+###OPTION1###
+<option value="%1" %3 >%2</option>
+###OPTION1###
+FIN
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-option_2
+###OPTION2###
+<option value="%1" %3 >%2</option>
+###OPTION2###
+FIN
+
+cat $tmp-option_1                           |
+mojihame -l###OPTION1### - $tmp-schedule_shurui > $tmp-option1.html
+
+cat $tmp-option_2                           |
+mojihame -l###OPTION2### - $tmp-scheduletype_master > $tmp-option2.html
+
+cp $tmp-option1.html ${work_dir}/option1
+
+awk '/\<ajax_start\>/,/\<shurui_option_start\>/' ${html_dir}/SCHEDULE_EVENT_CALENDAR2.html > $tmp-html_1
+awk '/\<shurui_option_end\>/,/\<kubun_option_start\>/' ${html_dir}/SCHEDULE_EVENT_CALENDAR2.html > $tmp-html_2
+awk '/\<kubun_option_end\>/,/\<ajax_end\>/' ${html_dir}/SCHEDULE_EVENT_CALENDAR2.html > $tmp-html_3
+
+cat $tmp-html_1 $tmp-option1.html $tmp-html_2 $tmp-option2.html $tmp-html_3               > $tmp-html
+cat << FIN | cat - $tmp-html
+Content-Type: text/html; charset=UTF-8;
+
+FIN
+
+
+## 終了
+rm -f $tmp-*
+exit 0

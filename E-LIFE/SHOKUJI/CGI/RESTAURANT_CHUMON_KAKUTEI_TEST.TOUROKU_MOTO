@@ -1,0 +1,737 @@
+#!/bin/bash
+#
+# RESTAURANT_CHUMON_KAKUTEI.TOUROKU : レストラン注文明細登録
+#
+# Usage : RESTAURANT_CHUMON_KAKUTEI.TOUROKU
+#
+# Written by R.Ssuzuki Date:2015/05/20
+
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d%H%M%S.%N)_$$ ; set -xv
+#exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#echo "開始：" $(date +%Y%m%d%H%M%S.%N)
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+
+#--------------------------------------------------------------
+
+
+# ディレクトリ設定
+#test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+#checkfile=$2
+#result_data=$3
+#koushin_data=$4
+
+#20150803del
+#target_day="$(date +%Y%m%d)"
+#target_month="$(date +%Y%m)"
+
+
+
+current_time="$(date +%H%M)"
+cur_time=$(date +%Y%m%d%H%M%S)
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+
+
+
+#--------------------------------------------------------
+
+#注文カートから注文番号と注文受付時刻を取得（全レコード共通値)
+# ※注文番号と注文受付時刻はPOSTで受け取る仕様にしていたが、注文確定ボタン押下時にスキャン画面をはさむため、
+# ※POSTでは情報を受け取れなくなるため、カート内に保持するようにした。
+# ※注文一覧起点でこの処理を通る場合は必ずセットされている。画面上削除されたレコードもカート上は保持してる。
+chumon_no=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 7 | getlast 1 1 )
+receive_time=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 8 | getlast 1 1 )
+
+#20150803add ※カートが空なら.CGIでエラーメッセージ表示する仕様(「:メニュー選択して」)を追加したため、注文アプリ起点の注文処理でも必ずレコードは存在する。
+target_day=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 9 | getlast 1 1 )
+target_shokuji_jikantai=$( cat ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type  | self 10 | getlast 1 1 )
+
+
+#処理対象月の設定
+target_month="$(echo $target_day | cut -c-6 )"
+
+#注文一覧で「変更」した場合はPOSTされた受信時刻をもとのまま使用する
+#セットされてないときだけ、ここで取得する
+if [ "$receive_time" = "" -o "$receive_time" = "_" ] ;then
+  receive_time=$(echo $cur_time | awk '{print substr($1,9);}')
+fi
+
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#------------------------------------------------------------
+
+
+
+
+
+
+
+
+#20150803del
+##食事時間帯（朝：昼：夕）の確認
+#if [ $current_time -gt "1644" ] ; then
+#  # 1645以降以は夕食メニュー
+#  target_shokuji_jikantai=3
+#elif [ $current_time -gt "1044" ] ; then
+#  # 1045以降以は昼食メニュー
+#  target_shokuji_jikantai=2
+#elif [ $current_time -gt "0614" ] ; then
+#  # 0615以降以は朝食メニュー
+#  target_shokuji_jikantai=1
+#else
+#  # 0614以前は夕食メニューのまま
+#  target_shokuji_jikantai=3
+#fi
+
+##週初日曜日の取得（献立テーブル特定のため）
+#week_first_day=$([ "$(date +'%w')" = "0" ] && echo "$target_day" || mdate week1 | self 7)
+
+#週初日曜日の取得（献立テーブル特定のため） ※対象日の曜日が日曜日ならそのままセット。それ以外はmdateで前週の日付一覧を取得し7番目の日を取得
+#mdateの仕様上、日曜日は７番目に登場する
+week_first_day=$([ "$(date -d $target_day +'%w')" = "0" ] && echo "$target_day" ||mdate $(mdate $(mdate -w $target_day)/-1 ) |self 7)
+
+    ##################################
+    # 入居者情報の取得
+    ##################################
+
+#echo $nyukyosha_id | awk '{print $1}' > ${tmp}-user
+
+#cat ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+#self 6 1 5 7 8 9                                          |
+##1:入居者ID,2:施設ID,3:居室,4:入居日,5:退去日,6:削除フラグ
+#LANG=C sort -k1,1                                         |
+##対象ID絞込み
+#join1 key=1 ${tmp}-user                                   |
+##入居者レコード有効判定(削除フラグ、有効期間)
+#awk '$(NF)!="9" && $4<="'$target_day'"&&"'$target_day'"<=$5' > $tmp-restaurant_chk_user
+
+#入居者レコード有効判定(削除フラグ、有効期間)
+#awk '$6=="'${nyukyosha_id}'" && $7<="'$target_day'" && "'$target_day'"<=$8 && $(NF-2)!="9"' \
+# 取得対象を対象施設内の入居者情報に限定（複数施設所属のケースを考慮） 20150907add　
+awk '$1=="'$shisetsu'" && $6=="'${nyukyosha_id}'" && $7<="'$target_day'" && "'$target_day'"<=$8 && $(NF-2)!="9"' \
+ ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS       |
+self 6 1 5 7 8 9                                          |
+#1:入居者ID,2:施設ID,3:居室,4:入居日,5:退去日,6:削除フラグ
+#LANG=C sort -k1,1                                         > $tmp-restaurant_chk_user
+#この段階ではまれに複数レコード（複数部屋契約）の可能性あり、入居日付でソート　20150907
+LANG=C sort -k4,5                                         |
+#入居者の最新入居情報のみ抽出　20150907
+getlast 1 1         > $tmp-restaurant_chk_user
+
+
+
+#cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER             |
+awk '$(NF-2)!="9"' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+#対象ID絞込み ※利用者マスタは利用者IDでソート済みの前提
+join1 key=1 - $tmp-restaurant_chk_user                       |
+#マスタの氏名以外の情報は削除
+delf 3/7                                      > $tmp-restaurant_ok_user
+#1:入居者ID,2:利用者(入居者)氏名,3:施設ID,4:居室,5:入居日,6:退去日,7:削除フラグ
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "入居者情報取得エラー"
+
+#入居者名前
+nyukyosha_name=$(cat $tmp-restaurant_ok_user | awk '{print $2}')
+
+#部屋番号
+room_no=$(cat $tmp-restaurant_ok_user | awk '{print $4}')
+
+#施設IDセット
+#20150907 複数施設対応に伴い、クッキーからの取得(ここではＰＯＳＴから取得)に変更
+#shisetsu=$(cat $tmp-restaurant_ok_user | awk '{print $3}')
+
+if [ $(gyo  $tmp-restaurant_ok_user) -lt 1 ] ; then
+  error_exit "ご利用権限がありません。"
+fi
+
+
+input_detail_dir="SHOKUJI/${shisetsu}"
+
+
+#注文一覧から修正する場合、配膳ステータスをチェック（登録・削除共通）
+if [ "$chumon_no" != ""  -a "$chumon_no" != "_" ] ; then
+
+  #この時点で注文が配膳済みに変わっていないことをチェック（3:食事時間帯、4:注文番号、5:入居者ID、9:配膳済みフラグ、10:削除フラグ）
+  haizenzumi_chk=$( awk '$3=="'${target_shokuji_jikantai}'" && $4=="'$chumon_no'" && $5=="'$nyukyosha_id'"  && $9=="1" && $(NF-2)!="9"' \
+                    ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} | gyo )
+
+  #該当注文が配膳済みになっていたらエラー処理
+  [ $haizenzumi_chk -gt 0 ] && error_exit "該当の注文は配膳済みとなっているため、変更できません。変更する場合はステータスを「未」に変えてから再度操作してください。"
+
+fi
+
+# 処理の分岐
+case "${MODE}" in
+  #登録
+  regist )
+
+##################################
+# 注文番号取得
+##################################
+
+    
+
+#注文番号がPOSTにセットされてる場合はこの処理をスキップ（注文一覧から修正する場合,既存の注文番号を使ってレコード更新する）
+if [ "$chumon_no" = ""  -o "$chumon_no" = "_" ] ; then
+
+    #入居者自身が新規登録する場合
+
+    mkdir -p ${kanri_dir}/${shisetsu}/${target_month}
+    touch ${kanri_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_ID_${target_day}_${target_shokuji_jikantai}
+    #ファイルがない場合
+    [ -s ${kanri_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_ID_${target_day}_${target_shokuji_jikantai} ] || echo "0000" > ${kanri_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_ID_${target_day}_${target_shokuji_jikantai}
+
+    #注文番号取得 (9999になったら0001から付番)
+    chumon_no="$(get_no -si 1 1  ${kanri_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_ID_${target_day}_${target_shokuji_jikantai})"
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文番号取得エラー"
+
+
+    mode_mdify="0"
+else
+
+    #修正モード（注文一覧から修正する場合）
+    mode_mdify="1"
+
+fi
+
+
+##################################
+# 食事メニューの取得
+##################################
+
+
+#メニュー表示制御マスタが存在しない場合への対処（ジョインエラー回避）
+:> $tmp-restaurant_menu
+if [ -s ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_RESTAURANT_MENU ] ; then
+  self 1 2 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_RESTAURANT_MENU |
+  LANG=C sort -k1,1 > $tmp-restaurant_menu
+fi
+
+[ $(gyo $tmp-restaurant_menu) -eq 0 ] && echo "_" "_" > $tmp-restaurant_menu
+
+#献立マスタが存在しない場合への対処（ジョインエラー回避）
+:> $tmp-restaurant_kondate
+if [ -s ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} ] ; then
+#献立ファイルありの場合
+
+  #cat ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} |
+  #取得する献立情報の絞込み（今日の該当食事時間帯分　※メインが空なら無視）
+  awk '$1=="'${target_day}'" && $3=="'${target_shokuji_jikantai}'" && $4!="_" && $(NF-2)!=9{print $14,$2,$4}END{print "dummy","dummy","dummy"}' \
+  ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} |
+  #1:メニューID、2:AB区分、3:メニュー名称
+  #  ※最終行にdummyをセットするのは献立未登録時に後続のjoin2で空マスタエラーになるのを回避するため
+  #ジョイン準備(メニューIDでソート)
+  #メニュー名を全角変換
+  zen 3 |
+  LANG=C sort -k1,1  > $tmp-restaurant-kakunin-kondate
+
+else
+#献立ファイルなしの場合
+
+  #ジョインエラー回避のためダミーレコード作成
+  echo "dummy" "dummy" "dummy" > $tmp-restaurant-kakunin-kondate
+
+fi
+
+# レストラン注文カートをレコードキー（ユニークID、入居者ID、メニューID）と更新時刻でソート
+LANG=C sort -k1,3 -k14,15 ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type    |
+# 1:連番 2:入居者ID 3:メニューID 4:入居者数量 5:ゲスト数量 6:予約フラグ(スケジュールID) 7:注文番号 8:注文受付時刻
+#  9:注文受付日付 10:食事時間帯 11:予備１ 12:予備２ 13:削除フラグ 14:更新日付 15:更新時刻
+
+# 各キーの最終更新レコードを抽出
+getlast 1 3 |
+#ジョインのためのソート
+LANG=C sort -k3,3 |
+#食事メニューとつき合わせ
+join1 key=3 ${pompa_dir}/${shisetsu}/SHOKUJI_MENU  - |
+#1:ユニークID 2:入居者ID 3:メニューID 4:メニュー名 5:食事種類 6:施設ID 7:建屋ID 8:入居者価格 9:ゲスト>１価格
+#10:ゲスト２価格 11:スタッフ価格 12:朝食 13:昼食 14:夕食 15:おやつ 16:期間From(西暦) 17:期間To(西暦)
+#18:表示色 19:表示順 20:喫食率計算対象 21:予備項目3 22:予備項目4 23:予備項目5 24:削除フラグ 25:日時 26:ユーザー 27:入居者数量 28:ゲスト数量 29:予約フラグ(スケジュールID) 
+# 30: 注文番号 31: 注文受付時刻 32:注文受付日付 33:食事時間帯 34:予備１ 35:予備２ 36:削除フラグ 37:更新日付 38:更新時刻
+# awk '$(NF-2)!="9" && $16<="'$target_day'" && "'$target_day'"<=$17 && {print $1,$5,$3,$4,$12,$13,$14,$19=="_"?"999999":$19,$27,$28 }'  |
+awk '$24!="9" && $16<="'$target_day'" && "'$target_day'"<=$17 {print $1,$5,$3,$4,$12,$13,$14,$19=="_"?"999999":$19,$27,$28,$29,$36 }'  |
+
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニュー名 5:朝食フラグ 6:昼食フラグ 7:夕食フラグ  8:表示順(>スペースは999999に変換済み)
+# 9:入居者数量 10:ゲスト数量 11:予約フラグ(スケジュールID) 12:削除フラグ
+# レストラン非表示の処理
+#join2 +"_" key=3 <(self 1 2 ${pompa_dir}/${shisetsu}/SHOKUJI_RESTAURANT_MENU) |
+join2 +"_" key=3 $tmp-restaurant_menu - |
+awk '$4!="1"' |
+delf 4        |
+#メニュー名を全角変換
+zen 4 |
+# 食事時間帯による表示メニュー判定
+if [ $target_shokuji_jikantai -eq 1 ] ; then
+awk '$5=="1"'
+elif [ $target_shokuji_jikantai -eq 2 ] ; then
+awk '$6=="1"'
+else
+awk '$7=="1"'
+fi |
+join2 +"_" key=3 $tmp-restaurant-kakunin-kondate - |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニューAB区分、5:メニュー名(献立) 6:メニュー名(食事メニュー) 7:朝食フラグ 8:昼食フラグ 9:夕食フラグ  10:表示順(スペースは999999に変換済み) 11:入居者数量 12:ゲスト数量 13:予約フラグ(スケジュールID) 14:削除フラグ
+awk '{print $1,$2,$3,$5!="_"?$4"&nbsp;"$5:$6,$7,$8,$9,$10,$11,$12,$13,$14}' |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニュー名(献立から取得の場合、メニューAB区分+HTMLエスケープ半角スペース文字+メニュー名(献立)) 5:朝食フラグ 6:昼食フラグ 7:夕食フラグ  8:表示順(>スペースは999999に変換済み) 
+# 9:入居者数量 10:ゲスト数量 11:予約フラグ(スケジュールID) 12:削除フラグ
+#食事種類、表示順でソート
+LANG=C sort -k2n,2n -k8n,8n              > $tmp-restaurant-chumon-kakunin-data
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文カート取得（または食事メニュー取得）エラー"
+
+#食事メニューの取得はここまでRESTAURANT_CHUMON_KAKUNIN.DISPLAYと同じ
+
+
+#ディレクトリ、ファイルなしエラーの回避
+mkdir -p ${pompa_dir}/${shisetsu}/${target_month}
+touch ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day}
+touch ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day}
+touch ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MENU_MATOME_${target_day}
+
+
+#####################################
+#注文明細情報の登録準備
+#####################################
+#入居者、ゲスト分に分けて登録
+cat $tmp-restaurant-chumon-kakunin-data                  |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニュー名 5:朝食フラグ 6:昼食フラグ 7:夕食フラグ  8:表示順(>スペースは999999に変換済み) 9:入居者数量
+# 10:ゲスト数量 11:予約フラグ(スケジュールID)  12:削除フラグ
+#awk '{print "'${shisetsu}'","'${target_day}'","'${target_shokuji_jikantai}'","'${chumon_no}'",$1,"'${nyukyosha_id}'","1",$2,$3,$4,$8,$9 ,"_",$11,"_","_","_","_",$12,'${cur_time}',"restaurant"; \
+#      print "'${shisetsu}'","'${target_day}'","'${target_shokuji_jikantai}'","'${chumon_no}'",$1,"'${nyukyosha_id}'","2",$2,$3,$4,$8,$10,"_",$11,"_","_","_","_",$12,'${cur_time}',"restaurant";\
+#    }' >  ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id}
+
+#20150603 入居者数量、ゲスト数量それぞれゼロなら無効フラグを立てる
+awk '{print "'${shisetsu}'","'${target_day}'","'${target_shokuji_jikantai}'","'${chumon_no}'",$1,"'${nyukyosha_id}'","1",$2,$3,$4,$8,$9 ,"_",$11,"_","_","_","_",$9==0?"9":$12,'${cur_time}',"restaurant"; \
+      print "'${shisetsu}'","'${target_day}'","'${target_shokuji_jikantai}'","'${chumon_no}'",$1,"'${nyukyosha_id}'","2",$2,$3,$4,$8,$10,"_",$11,"_","_","_","_",$10==0?"9":$12,'${cur_time}',"restaurant";\
+    }' >  ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id}
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文明細情報作成エラー"
+
+
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ 
+# 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績 14:予約フラグ(スケジュールID)
+# 15:予備１ 16:予備２ 17:予備３ 18:予備４ 19:削除フラグ 20:更新日時 21:ユーザID　
+
+#データ仕様の勘違いによるもの
+##修正モードの場合（注文一覧から修正する場合）
+#if [ $mode_mdify = "1" ] ; then
+#  #今回の更新対象となる注文明細の既存レコードを無効化するためのレコード追加
+#  cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day} |
+#  awk '$3=="'${target_shokuji_jikantai}'" && $4=="'$chumon_no'"{$(NF-2)="9" ;$(NF-1)="'${cur_time}'";print $0} ' >>  ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id}
+#
+#fi
+
+#####################################
+#注文基本情報の登録準備
+#####################################
+
+#更新対象明細から有効レコードの件数を取得
+#(明細が全部取り消されたら、基本情報を消すための処理）
+meisai_cnt=$(cat ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} | awk '$(NF-2)!=9' | gyo)
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+# 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績 14:予約フラグ(スケジュールID)
+# 15:予備１ 16:予備２ 17:予備３ 18:予備４ 19:削除フラグ 20:更新日時 21:ユーザID　
+
+if [ $meisai_cnt -eq 0 ] ; then
+#カートから明細が全部消されたら、基本情報レコードに無効フラグを立てる。
+    kihon_sakujo_flg=9;
+else
+    kihon_sakujo_flg=1;
+fi
+
+#追加レコードを作成
+echo "" | awk '{print "'${shisetsu}'","'${target_day}'","'${target_shokuji_jikantai}'","'${chumon_no}'","'${nyukyosha_id}'","'${nyukyosha_name}'","'${room_no}'","'${receive_time}'","0","'$kihon_sakujo_flg'","'${cur_time}'","restaurant" }' >  ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id}
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID　
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文基本情報作成エラー"
+
+#--------------------------------------------------------------
+#ロック対象設定 ※データファイルの単位である施設・日付ごとにロックファイル作成
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RESTAURANT_CHUMON_KIHON_${shisetsu}_${target_day} RESTAURANT_CHUMON_KIHON_${shisetsu}_${target_day}
+RESTAURANT_CHUMON_MEISAI_${shisetsu}_${target_day} RESTAURANT_CHUMON_MEISAI_${shisetsu}_${target_day}
+RESTAURANT_CHUMON_MENU_MATOME_${shisetsu}_${target_day} RESTAURANT_CHUMON_MENU_MATOME_${shisetsu}_${target_day}
+FIN
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+ # エラー（ロックに失敗）
+#    error_unlock "ロック処理失敗"
+# 20150910mod
+# ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+# ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+    error_exit "ロック処理失敗"
+
+fi
+#--------------------------------------------------------------
+
+#echo "ロック開始：" $(date +%Y%m%d%H%M%S.%N)
+
+#####################################################################
+#ロックが必要な処理
+
+
+#20160616
+#この時点で注文カートファイルが削除されていた場合は処理中止（重複登録を回避）
+#「カートファイルがない」＝同時アクセスの先行処理ですでに注文データに反映済みのため。
+#ケースとしては注文一覧からの訂正と入居者による追加の同時処理が考えられる。
+#そもそもカートがバッティングして確認画面などで「？」となるので同時に注文確定ボタンを
+#押すのはレアケース
+
+if [ ! -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+  error_unlock "同時更新エラー(二重登録回避)"
+fi
+
+
+
+
+
+#####################################
+#注文基本情報の登録 原本更新
+#####################################
+
+# 注文基本情報の原版コピーに追加。 次のキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号）で並べる
+#up3 key=1/4 ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id} |
+
+# 注文基本情報の原版コピーに追加。 
+cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day}  ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id} |
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID
+LANG=C sort -k1,4 -k11,11 |
+# 既存レコード更新の場合のレコード重複を回避するため、レコードキーと更新日時でソートし、最新のみ抽出する。
+# レコードキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 ）
+getlast 1 4 >${tmp}-restaurant_chumon_kihon_${target_day}_all 
+
+# 原本更新へ上書き
+mv -f ${tmp}-restaurant_chumon_kihon_${target_day}_all ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day}
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文基本テーブル更新エラー"
+
+#####################################
+#注文明細情報の登録 原本更新
+#####################################
+
+# 注文明細情報の原版コピーに追加。
+cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day} ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} |
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+# 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績
+# 14:予約フラグ(スケジュールID)　15:予備１ 16:予備２ 17:予備３ 18:予備４
+# 19:削除フラグ 20:更新日時 21:ユーザID　
+
+# 既存レコード更新の場合のレコード重複を回避するため、レコードキーと更新日時でソートし、最新のみ抽出する
+# ※　既存レコードの無効化（削除フラグ＝9）レコードも同時にセットするため、有効なレコードが優先されるように削除フラグでもソート →やめた
+LANG=C sort -k1,7 -k20,20  -k19,19r |
+
+# レコードキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ ）
+#LANG=C sort -k1,7 -k15,15   |
+#getlast 1 7 |
+##数量がゼロなら登録しない。2015.05.28
+#awk '$12!=0 ' > ${tmp}-restaurant_chumon_meisai_${target_day}_all
+#数量がゼロでも無効レコードとして登録 20150603
+getlast 1 7  > ${tmp}-restaurant_chumon_meisai_${target_day}_all
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文明細テーブル更新エラー"
+
+
+# 原版へ上書き
+mv -f ${tmp}-restaurant_chumon_meisai_${target_day}_all ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day}
+
+
+#####################################
+#注文メニューまとめ情報の登録 原本更新
+#####################################
+#注文明細からデータ取得
+#cat ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} |
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+# 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績
+# 14:予約フラグ(スケジュールID)　15:予備１ 16:予備２ 17:予備３ 18:予備４
+# 19:削除フラグ 20:更新日時 21:ユーザID　
+self 1/7 10 12 19   ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} | 
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+# 8:メニュー名 9:数量 10:削除フラグ 
+# 数量がゼロなら登録しない。2015.05.28
+# ※メニュー表示は30件までとする。 20150814
+# 　mojihame（hオプションで確認）は3200バイトあたりを超えるとエラーになるのでこれを超えないようにする必要がある。
+# 　１行あたり最大60バイト（liタグを含む）とすると53行程度までいけるが表示上53行だとipadの１画面に入りきらないので30行とした。
+#　　（DISPLAY処理で補足情報を１行追加するので仕様変更時は要注意。）
+#   基本的には一人当たり数メニューしか頼まないので、このメニュー表示数の制御は念のための予防措置。
+awk '$10!="9" && $9!=0 {print $1,$2,$3,$4,$7==2?"<li>[ゲ]"$8"&nbsp;×&nbsp;"$9"</li>":"<li>"$8"&nbsp;×&nbsp;"$9"</li>"}' |
+awk 'NR<=30 { if(NR==30){ADD_STR="<li>※以降省略（伝票等を参照）</li>"}else{ADD_STR=""} ; print $0 ADD_STR }' |
+
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:「メニュー名× 数量」
+#食事メニューを横ならべ#区切りにする。
+yarr -d# num=4     |
+# 「<br>#」を「<br>」に変換。
+calsed  '</li>#' '</li>'|
+# 注文メニューまとめ情報の原版コピーに追加。 次のキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号）で並べる
+LANG=C sort -k1,4 |
+upl key=1/4 ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MENU_MATOME_${target_day} - > ${tmp}-restaurant_chumon_menu_matome_${target_day}_all
+# 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5::注文メニューまとめ
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文メニューまとめテーブル更新データ作成エラー"
+
+    #以下で基本情報を基にして有効な情報のみ残す。（カートから明細が全部消されたら、基本情報レコードに無効フラグが立つので、これをもとに
+    #注文メニューまとめのレコードを消す。）
+    # 注文基本情報参照
+#    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} |
+    #有効なレコードだけ抽出
+    awk '$10!=9'  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} |
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID　
+    LANG=C sort -k1,4 -k11,11 |
+    #基本情報に有効レコードが存在するものだけ残す
+    join0 key=1/4 - <(LANG=C sort -k1,4 ${tmp}-restaurant_chumon_menu_matome_${target_day}_all) > ${tmp}-restaurant_chumon_menu_matome_${target_day}_all_new
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5::注文メニューまとめ
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文メニューまとめテーブル無効レコード除外エラー"
+
+    # 原版へ上書き
+    mv -f ${tmp}-restaurant_chumon_menu_matome_${target_day}_all_new ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MENU_MATOME_${target_day}
+
+
+    #####################################
+    #注文基本、注文明細のINPUTデータ作成
+    #####################################
+    mkdir -p ${input_dir}
+    mkdir -p ${input_dir}/${target_day}
+    mkdir -p ${input_dir}/${target_day}/${input_detail_dir}
+
+    # 注文データINPUTの更新(DISPLAYで使うためmvでなくcp)
+    cp -f ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id} ${input_dir}/${target_day}/${input_detail_dir}/RESTAURANT_CHUMON_KIHON_${target_day}.${cur_time}.$(basename $0).$$
+    cp -f ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} ${input_dir}/${target_day}/${input_detail_dir}/RESTAURANT_CHUMON_MEISAI_${target_day}.${cur_time}.$(basename $0).$$
+
+
+#    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+
+
+
+#####################################################################
+#ロックが必要な処理 ここまで
+
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+
+    ;;
+
+  #削除
+  delete )
+
+
+    #注文番号がPOSTにセットされてない場合
+    if [ "$chumon_no" = ""  -o "$chumon_no" = "_" ] ; then
+      error_exit "処理対象の注文番号が設定されていません。"     
+    fi
+
+
+    #####################################
+    #注文基本情報　無効化レコード作成
+    #####################################
+
+    #追加レコードを作成
+#    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} |
+    awk '$3=="'${target_shokuji_jikantai}'" && $4=="'$chumon_no'" && $5=="'$nyukyosha_id'"  {$(NF-2)="9" ;$(NF-1)="'${cur_time}'";print $0} ' \
+     ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} >  ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id}
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID　
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文基本情報更新データ作成エラー"
+
+    #####################################
+    #注文明細情報　無効化レコード作成
+    #####################################
+
+    #今回の更新対象となる注文明細の既存レコードを無効化するためのレコード追加
+#    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day} |
+    awk '$3=="'${target_shokuji_jikantai}'" && $4=="'$chumon_no'" && $6=="'$nyukyosha_id'"  {$(NF-2)="9" ;$(NF-1)="'${cur_time}'";print $0} ' \
+    ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day} >  ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id}
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+    # 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績
+    # 14:予約フラグ(スケジュールID)　15:予備１ 16:予備２ 17:予備３ 18:予備４
+    # 19:削除フラグ 20:更新日時 21:ユーザID　
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "注文基明細報更新データ作成エラー"
+
+
+    #--------------------------------------------------------------
+    #ロック対象設定 ※データファイルの単位である施設・日付ごとにロックファイル作成
+	cat <<- FIN | LANG=C sort -u > $tmp-target-table
+	RESTAURANT_CHUMON_KIHON_${shisetsu}_${target_day} RESTAURANT_CHUMON_KIHON_${shisetsu}_${target_day}
+	RESTAURANT_CHUMON_MEISAI_${shisetsu}_${target_day} RESTAURANT_CHUMON_MEISAI_${shisetsu}_${target_day}
+	RESTAURANT_CHUMON_MENU_MATOME_${shisetsu}_${target_day} RESTAURANT_CHUMON_MENU_MATOME_${shisetsu}_${target_day}
+	FIN
+    #--------------------------------------------------------------
+
+    #--------------------------------------------------------------
+    # データロック
+    $function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+    if [ $? -ne 0 ]; then
+     # エラー（ロックに失敗）
+      #    error_unlock "ロック処理失敗"
+      # 20150910mod
+      # ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+      # ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+      error_exit "ロック処理失敗"
+
+    fi
+    #--------------------------------------------------------------
+
+    #####################################################################
+    #ロックが必要な処理
+
+
+    #####################################
+    #注文基本情報の 原本更新
+    #####################################
+
+    # 注文基本情報の原版コピーに追加。
+    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day}  ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id} |
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID　
+    LANG=C sort -k1,4 -k11,11 |
+    # 既存レコード更新の場合のレコード重複を回避するため、レコードキーと更新日時でソートし、最新のみ抽出する。
+    # レコードキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 ）
+    getlast 1 4 >${tmp}-restaurant_chumon_kihon_${target_day}_all
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文基本テーブル更新準備エラー"
+
+    # 原本更新へ上書き
+    mv -f ${tmp}-restaurant_chumon_kihon_${target_day}_all ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day}
+
+
+
+    #####################################
+    #注文明細情報の原本更新
+    #####################################
+
+    # 注文明細情報の原版コピーに追加。
+    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day} ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} |
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ
+    # 8:食事種類 9:メニューID 10:メニュー名 11:表示順(>スペースは999999に変換済み) 12:数量  13:食事実績
+    # 14:予約フラグ(スケジュールID)　15:予備１ 16:予備２ 17:予備３ 18:予備４
+    # 19:削除フラグ 20:更新日時 21:ユーザID　
+
+    # 既存レコード更新の場合のレコード重複を回避するため、レコードキーと更新日時でソートし、最新のみ抽出する
+    # ※　既存レコードの無効化（削除フラグ＝9）レコードも同時にセットするため、有効なレコードが優先されるように削除フラグでもソート →やめた
+    LANG=C sort -k1,7 -k20,20 |
+    # レコードキー（1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:注文明細ペア番号 6:入居者ID 7:入居者ゲストフラグ ）
+    getlast 1 7  > ${tmp}-restaurant_chumon_meisai_${target_day}_all
+    #数量がゼロなら登録しない。2015.05.28
+    #    awk '$12!=0 ' > ${tmp}-restaurant_chumon_meisai_${target_day}_all
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文明細テーブル更新準備エラー"
+
+    # 原版へ上書き
+    mv -f ${tmp}-restaurant_chumon_meisai_${target_day}_all ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MEISAI_${target_day}
+
+
+    #####################################
+    #注文明細情報まとめ 原本更新
+    #####################################
+
+    # 注文基本情報参照
+#    cat  ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} |
+    #有効なレコードだけ抽出
+    awk '$10!=9'   ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_KIHON_${target_day} |
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5:入居者ID 6:入居者名 7:部屋番号 8:受付時刻 9:配膳済フラグ 10:削除フラグ 11:更新日時 12:ユーザID　
+    LANG=C sort -k1,4 -k11,11 |
+    #基本情報に有効レコードが存在するものだけ残す
+    join0 key=1/4 - <(LANG=C sort -k1,4 ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MENU_MATOME_${target_day}) > ${tmp}-restaurant_chumon_menu_matome_${target_day}_all
+    # 1:施設ID 2:注文受付日 3:食事時間帯（朝昼夜）4:注文番号 5::注文メニューまとめ
+
+    #エラーチェック
+    [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_unlock "注文メニューまとめテーブル更新準備エラー"
+
+    # 原版へ上書き
+    mv -f ${tmp}-restaurant_chumon_menu_matome_${target_day}_all ${pompa_dir}/${shisetsu}/${target_month}/RESTAURANT_CHUMON_MENU_MATOME_${target_day}
+
+
+    #####################################
+    #注文基本、注文明細のINPUTデータ作成
+    #####################################
+    mkdir -p ${input_dir}
+    mkdir -p ${input_dir}/${target_day}
+    mkdir -p ${input_dir}/${target_day}/${input_detail_dir}
+
+    # 注文データINPUTの更新(DISPLAYで使うためmvでなくcp)
+    cp -f ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id} ${input_dir}/${target_day}/${input_detail_dir}/RESTAURANT_CHUMON_KIHON_${target_day}.${cur_time}.$(basename $0).$$
+    cp -f ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id} ${input_dir}/${target_day}/${input_detail_dir}/RESTAURANT_CHUMON_MEISAI_${target_day}.${cur_time}.$(basename $0).$$
+
+    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+
+
+    #####################################################################
+    #ロックが必要な処理 ここまで
+
+    #--------------------------------------------------------------
+    # ロックの解除
+    cat $tmp-target-table |
+    while read table base ;do
+      rm -f $tmplock_dir/$base.lock
+    : ;done
+    #--------------------------------------------------------------
+
+
+    ;;
+
+
+  #その他の場合
+  * )
+    ;;
+esac
+
+#注文基本 注文明細のデータをマージして返す ※レイアウト（1行目が基本、２行メイ以降が明細）
+cat   ${tmp}-restaurant_chumon_kihon_${target_day}_${nyukyosha_id}  ${tmp}-restaurant_chumon_meisai_${target_day}_${nyukyosha_id}  
+
+
+rm -f ${tmp}-*
+
+#echo "終了：" $(date +%Y%m%d%H%M%S.%N)
+
+exit 0

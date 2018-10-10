@@ -1,0 +1,340 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.DISPLAY
+# 個人情報詳細　連絡先タブ　表示用CGI
+#
+# Written by E.Okuda　2013/12/11
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+data=$2
+result=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+  KasanKobetsukinou="$(nameread     "KasanKobetsukinou"      $namedata)"
+  KasanYakankango="$(nameread     "KasanYakankango"      $namedata)"
+  KasanIryoukikanrenkei="$(nameread     "KasanIryoukikanrenkei"      $namedata)"
+  SONOTABIKOU=$(nameread     "SONOTABIKOU"      $namedata)
+
+  RIYOUSHAID=$(nameread              "RIYOUSHAID"      $namedata)
+  NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+  NYUUKYOTATEYAID=$(nameread         "NYUUKYOTATEYAID"      $namedata)
+  NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+  NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+  NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+  RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+
+# ユーザー所属施設名所属部署名)
+  SHITSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+# 入居者所属施設名
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYAID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+  NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+[ -z "${NYUUKYOSHISETSUNAME}" -o "${NYUUKYOSHISETSUNAME}" = "_" ] && NYUUKYOSHISETSUNAME=$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###NYUUKYOSHISETSUID### ${NYUUKYOSHISETSUID}
+###NYUUKYOSHISETSUNAME### ${NYUUKYOSHISETSUNAME}
+###NYUUKYOTATEYAID### ${NYUUKYOTATEYAID}
+###NYUUKYOTATEYANAME### ${NYUUKYOTATEYANAME}
+###NYUUKYOFLOOR### ${NYUUKYOFLOOR}
+###NYUUKYOUNITID### ${NYUUKYOUNITID}
+###NYUUKYOUNITNAME### ${NYUUKYOUNITNAME}
+###NYUUKYOKYOSHITSU### ${NYUUKYOKYOSHITSU}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+### モードによる表示の分岐
+#case "${MODE}" in
+
+  # 初期表示
+#  init)  
+# ${data}
+# 1: "Kaigohoken" or "Kyotaku" or "Service"
+
+  if [ -s ${data} ] ; then
+
+# 従業員マスタの用意
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER -  |
+self 1 2 > $tmp-user_master
+
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU |
+self 1 2 > $tmp-gengou
+
+
+  cat ${data} |
+  awk '$1=="Iryouhoken"{print $0}' |
+  delf 1      > $tmp-iryouhoken_data
+
+  cat ${data} |
+  awk '$1=="Shinshou"{print $0}' |
+  delf 1     > $tmp-shinshou_data
+
+  cat ${data} |
+  awk '$1=="Kasankyuufu"{print $0}' |
+  delf 1     > $tmp-kasankyuufu_data
+  fi
+
+  if [ -s "$tmp-iryouhoken_data" ] ; then
+# 1:利用者(入居者)ID  2:利用者医療保健ID 3:種類                4:種類名            5:医療保健名称
+# 6:保険者番号        7:記号番号         8:受給者番号          9:資格取得日：元号  10:資格取得日：年
+# 11:資格取得日：月   12:資格取得日：日  13:有効期限(至)：元号 14:有効期限(至)：年 15:有効期限(至)：月
+# 16:有効期限(至)：日 17:福祉医療名
+
+  cat $tmp-iryouhoken_data |
+  # 元号名称の取得
+  cjoin2 +"_" key=13 $tmp-gengou - |
+  cjoin2 +"_" key=9 $tmp-gengou - |
+# 1:利用者(入居者)ID  2:利用者医療保健ID  3:種類              4:種類名              5:医療保健名称
+# 6:保険者番号        7:記号番号          8:受給者番号        9:資格取得日：元号    10:元号名称
+# 11:資格取得日：年   12:資格取得日：月   13:資格取得日：日   14:有効期限(至)：元号 15:元号名称
+# 16:有効期限(至)：年 17:有効期限(至)：月 18:有効期限(至)：日 19:福祉医療名
+
+  # 年月の表記
+  awk '{print $0,$10!="_"?$10$11"年"$12"月"$13"日":"_",$15!="_"?$15$16"年"$17"月"$18"日":"_"}' |
+  self 1/8 NF-1 NF 19/NF-2    |
+# 1:利用者(入居者)ID 2:利用者医療保健ID 3:種類       4:種類名     5:医療保健名称
+# 6:保険者番号       7:記号番号         8:受給者番号 9:資格取得日 10:有効期限(至)
+# 11:福祉医療名      12:更新日          13:UserId
+  # User名
+  LANG=C sort -k13,13 |
+  join2 +"@" key=13 $tmp-user_master -  |
+
+  sed 's/_/@/g' |
+  # CLASS
+  awk '{if($10!="@"&&$10<"'${today}'"){print $0,"iryouhoken_gyo_old"}
+        else if($10=="@"){print $0,"iryouhoken_gyo"}
+        else{print $0,"iryouhoken_gyo"}
+       }'         >  $tmp-listdata
+# 1:利用者(入居者)ID 2:利用者医療保健ID 3:種類       4:種類名     5:医療保健名称
+# 6:保険者番号       7:記号番号         8:受給者番号 9:資格取得日 10:有効期限(至)
+# 11:福祉医療名       12:更新日          13:UserId   14:User名    15:Class
+
+  else
+
+    : > $tmp-listdata
+
+  fi
+
+  if [ -s "$tmp-shinshou_data" ] ; then
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県     4:都道府県名 5:手帳番号
+# 6:種類             7:法別表           8:交付日：元号 9:交付日：年 10:交付日：月
+# 11:交付日：日      12:障害名称など    13:基礎疾患    14:更新日    15:UseId
+
+  cat $tmp-shinshou_data |  
+  # 元号名称の取得
+  cjoin2 +"_" key=8 $tmp-gengou - |
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県      4:都道府県名 5:手帳番号
+# 6:種類             7:法別表           8:交付日：元号  9:元号名     10:交付日：年
+# 11:交付日：月      12:交付日：日      13:障害名称など 14:基礎疾患  15:更新日
+# 16:UseId
+
+  # 年月の表記
+  awk '{print $0,$9!="_"?$9$10"年"$11"月"$12"日":"_"}' |
+  self 1/7 NF 13/NF-1    |
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県 4:都道府県名   5:手帳番号
+# 6:種類             7:法別表           8:交付日   9:障害名称など 10:基礎疾患
+# 11:更新日          12:UseId
+  sed 's/_/@/g' |
+  # CLASSの設定
+#  awk '{if($11!="_"&&$11>="'${today}'"){print $0,"shinshou_gyo"}
+#        else if($11=="_"){print $0,"shinshou_gyo"}
+#        else{print $0,"shinshou_gyo_old"}
+#       }'      |
+  awk '{print $0,"shinshou_gyo"}' |
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県 4:都道府県名   5:手帳番号
+# 6:種類             7:法別表           8:交付日   9:障害名称など 10:基礎疾患
+# 11:更新日          12:UseId          13:CLASS       
+
+  # User名
+  LANG=C sort -k12,12 |
+  join2 +"@" key=12 $tmp-user_master -     > $tmp-shinshoulist
+# 1:利用者(入居者)ID 2:利用者身障手帳ID 3:都道府県 4:都道府県名   5:手帳番号
+# 6:種類             7:法別表           8:交付日   9:障害名称など 10:基礎疾患
+# 11:更新日          12:UseId           12:User名  13:CLASS
+  else
+
+  : >$tmp-shinshoulist
+
+  fi
+#cp $tmp-* /home/hands/work/okuda
+if [ -s "$tmp-kasankyuufu_data" ] ; then
+# 1:利用者(入居者)ID 2:個別機能訓練 3:夜間看護体制 4:医療機関連携 5:看取加算同意
+# 6:その他備考
+
+  KasanKobetsukinou="$(awk '{print $2}' $tmp-kasankyuufu_data)"
+  KasanYakankango="$(awk '{print $3}' $tmp-kasankyuufu_data)"
+  KasanIryoukikanrenkei="$(awk '{print $4}' $tmp-kasankyuufu_data)"
+  KasanMitorikasan="$(awk '{print $5}' $tmp-kasankyuufu_data)"
+  SONOTABIKOU="$(awk '{print $6}' $tmp-kasankyuufu_data)"
+
+fi
+
+  if [ "${KasanKobetsukinou}" = "1" ]; then
+    echo "###KasanKobetsukinou###"    "checked"   >> $tmp-calsed_data
+  else
+    echo "###KasanKobetsukinou###"    "@"   >> $tmp-calsed_data
+  fi
+
+  if [ "${KasanYakankango}" = "1" ]; then
+    echo "###KasanYakankango###"    "checked"   >> $tmp-calsed_data
+  else
+    echo "###KasanYakankango###"    "@"   >> $tmp-calsed_data
+  fi
+
+  if [ "${KasanIryoukikanrenkei}" = "1" ]; then
+    echo "###KasanIryoukikanrenkei###"    "checked"   >> $tmp-calsed_data
+  else
+    echo "###KasanIryoukikanrenkei###"    "@"   >> $tmp-calsed_data
+  fi
+
+
+  if [ "${KasanMitorikasan}" = "1" ]; then
+    echo "###KasanMitorikasan###"    "checked"   >> $tmp-calsed_data
+  else
+    echo "###KasanMitorikasan###"    "@"   >> $tmp-calsed_data
+  fi
+
+  if [ "${SONOTABIKOU}" != "_" ]; then
+    echo "###SONOTABIKOU###"    "${SONOTABIKOU}"   >> $tmp-calsed_data
+  else
+    echo "###SONOTABIKOU###"   "@"   >> $tmp-calsed_data
+  fi
+
+  #TODO 加算給付同意 
+
+
+#esac
+
+#-------------------------------------------------------------
+
+echo "###SONOTABIKOU###"    "${SONOTABIKOU}"   >> $tmp-calsed_data
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+if [ "$MODE" = "touroku" ] ; then
+
+touroku_result="$(cat ${result} | head -1 | self 2)"
+
+ if [ ${touroku_result} = "touroku_ok" ] ; then
+    message="登録が完了しました。"
+ else
+    message=$(awk '$1=="message"{print $2}' ${result})
+ fi
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" ] ; then
+	cat <<- FINN > $tmp-html2
+          <script type="text/javascript" language="javascript">
+           sonota_pop = window.open("","sonota_pop");
+           sonota_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1=""
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_SONOTA.html         |
+calsed -f $tmp-calsed_data_result -                          |
+mojihame -liryou_hoken_list - $tmp-listdata                   |
+mojihame -lshinshou_list - $tmp-shinshoulist                   |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+sed 's/###KAIGYO###/\n/g'                              |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

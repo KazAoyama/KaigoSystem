@@ -1,0 +1,1981 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>展開情報設定</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+    <link rel="stylesheet" type="text/css" href="/css/bootstrap.css">    
+    <link rel="stylesheet" type="text/css" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/font.css">
+    <script src="/js/jquery-1.7.2.min.js" type="text/javascript"></script>
+	<script src="/js/validateUtils.js"></script>
+	<script src="/js/messageMaster.js"></script>
+
+    <script>
+    window.onunload = function(){};
+
+	// データセット部
+	// サービス区分（サービスコード種類、サービスコード区分、サービス名、最小時間、最大時間、対象介護度、対象事業規模、対象事業者種類、、サ責２級、同一減算、朝夜加算、深夜加算、単位、欠員減算、ユニットケア、夜間体制、集計単位）
+	kaigoservice=[
+//                     ###SERVICECODE###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","fee":"%13","ketsuin":"%14","facilityunit":"%15","nightcare":"%16","calcunit":"%17"},
+//                     ###SERVICECODE###
+//                     ###SERVICECODE2###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","fee":"%13","ketsuin":"%14","facilityunit":"%15","nightcare":"%16","calcunit":"%17"},
+//                     ###SERVICECODE2###
+		];
+
+	// 供給者データ（供給者ID、供給者名、提供サービスコード種類、事業規模、事業種類、特定事業所加算倍率、サービス提供責任者２級フラグ、同一、欠員、ユニットケア、夜間、サービス提供体制強化、特別管理、緊急看護）
+	kyoukyusha=[
+//                     ###KYOUKYUSHA###
+                 {"id":"%1","value":"%2","jigyoushatype":"%3","scale":"%4","facilitytype":"%5","areatanka":"%6","servicemanager":"%7","douitsu":"%8","ketsuin":"%9","facilityunit":"%10","nightcare":"%11","kyouka":"%12","kanri":"%13","kinkan":"%14"},
+//                     ###KYOUKYUSHA###
+		];
+
+	// サービス種類データ（サービス種類ID、サービス種類名）
+	servicetype=[
+//                     ###SERVICETYPE###
+                 {"id":"%1","value":"%2"},
+//                     ###SERVICETYPE###
+		];
+
+        // 訪問介護エキストラ
+        houmonkaigoextra=[
+//                     ###HOUMONKAIGOEXTRA###
+                 {"jigyoushatype":"%1","id":"%2","basic":"%3","a":"%4","b":"%5","c":"%6","d":"%7","e":"%8","f":"%9","g":"%10"},
+//                     ###HOUMONKAIGOEXTRA###
+                ];
+
+	// 要介護度（表示用介護度、システム使用用介護度）
+	youkaigodod=[
+//                     ###KAIGODO###
+			{"youkaigo":"%2","kaigodo":"%1","riyougendo":"%3"},
+//                     ###KAIGODO###
+		];
+
+// 展開情報設定
+	tenkaid=[
+//                       ###TENKAIDATA###
+	                { "sort":"%1","naiyou":"%2","kaisu":"%3","tani":"%4","kingaku":"%5","jikofutan":"%6","gendogaku":"%7","jigyoushatype":"%8","id":"%9","weekyoubi":"%10","start":"%11","end":"%12","kyoukyusha":"%13","hoken":"%14","plusfee":"%15","kasan":"%16"},
+//                       ###TENKAIDATA### 
+		];
+
+	var servicemanager="";
+	
+    // 自己負担割合
+    var jikofutanwariai=0.1;
+
+
+	$(document).ready(function() {
+		//施設リストプルダウンの「本社」を非表示
+		var shisetsuList = $(".shisetsulist a").get();
+		var shisetsuListLength = shisetsuList.length;
+		for (var i=0; i<shisetsuList.length; i++) {
+			var shisetsuListObj = $(shisetsuList).get(i);
+			if ($(shisetsuListObj).text() == "本社") {
+				$(shisetsuListObj).parent().css("display", "none");
+				shisetsuListLength -= 1; 
+			}
+		}
+		//施設リストプルダウンの中身が0個の場合、吹き出しを非表示
+		if (shisetsuListLength == 0) {
+			$("#shisetsuList_ul").css("display", "none");
+		}
+        // メニュー上のボタン制御
+        $("#home").click(function(){
+            document.frmBack.submit();
+        });
+
+
+		// 介護度、利用限度額表示
+             if(youkaigodod.length>0) {
+		$('#Youkaigodo').val(youkaigodod[0].youkaigo);
+		$('#RiyouGendo').val(youkaigodod[0].riyougendo);
+             } else {
+                alert("介護認定データがありません。");
+             }
+		// 介護保険をデフォルトチェック
+		$("#HokenKbn").prop({'checked':'checked'});
+
+
+		var tokuteijigyoushaplus=0;
+
+
+        function controlKaigoServicePulldown(idx) {
+			$('.KaigoService').eq(idx).children().remove();
+    		var StartTime=$(".EventStartTime").eq(idx).val().split(":");
+    		var EndTime=$(".EventEndTime").eq(idx).val().split(":");
+    		var StartMinutes=StartTime[0]*60+parseInt(StartTime[1]);
+    		var EndMinutes=EndTime[0]*60+parseInt(EndTime[1]);
+    		var KikanMinutes=parseInt(EndMinutes)-parseInt(StartMinutes);
+			var JigyoushaType;
+			var JigyoushaScale;
+			var JigyoushaFacilityType;
+
+			for (var kk in kyoukyusha) {
+				if(kyoukyusha[kk].id==$(".Kyoukyusha").eq(idx).val()) {
+					JigyoushaType=kyoukyusha[kk].jigyoushatype;
+				    JigyoushaScale=kyoukyusha[kk].scale;
+				    JigyoushaFacilityType=kyoukyusha[kk].facilitytype;
+				    areatanka=kyoukyusha[kk].areatanka;
+				    servicemanager=kyoukyusha[kk].servicemanager;
+                                    douitsu=kyoukyusha[kk].douitsu;
+                                    ketsuin=kyoukyusha[kk].ketsuin;
+                                    facilityunit=kyoukyusha[kk].facilityunit;
+                                    nightcare=kyoukyusha[kk].nightcare;
+                                    kyouka=kyoukyusha[kk].kyouka;
+                                    kanri=kyoukyusha[kk].kanri;
+                                    kinkan=kyoukyusha[kk].kinkan;
+				    if(JigyoushaType=="15") {
+                 	               $('.JakunenKasan').eq(idx).removeAttr('disabled');
+	                               $('.NyuyokuKasan').eq(idx).removeAttr('disabled');
+	                               $('.KinouKasan').eq(idx).removeAttr('disabled');
+	                               $('.KoukuKasan').eq(idx).removeAttr('disabled');
+	                               $('.EiyouKasan').eq(idx).removeAttr('disabled');
+	                               $('.SougeiKasan').eq(idx).attr('disabled','disabled');
+	                               $('.RyouyoushokuKasan').eq(idx).attr('disabled','disabled');
+                                    } else if(JigyoushaType=="16") {
+                 	               $('.JakunenKasan').eq(idx).removeAttr('disabled');
+	                               $('.NyuyokuKasan').eq(idx).removeAttr('disabled');
+	                               $('.KoukuKasan').eq(idx).removeAttr('disabled');
+	                               $('.EiyouKasan').eq(idx).removeAttr('disabled');
+	                               $('.SougeiKasan').eq(idx).attr('disabled','disabled');
+	                               $('.KinouKasan').eq(idx).attr('disabled','disabled');
+	                               $('.RyouyoushokuKasan').eq(idx).attr('disabled','disabled');
+//                                    } else if(JigyoushaType=="21") {
+//                 	               $('.JakunenKasan').eq(idx).removeAttr('disabled');
+//	                               $('.SougeiKasan').eq(idx).removeAttr('disabled');
+//	                               $('.KinouKasan').eq(idx).removeAttr('disabled');
+//	                               $('.RyouyoushokuKasan').eq(idx).removeAttr('disabled');
+//	                               $('.NyuyokuKasan').eq(idx).attr('disabled','disabled');
+//	                               $('.KoukuKasan').eq(idx).attr('disabled','disabled');
+//	                               $('.EiyouKasan').eq(idx).attr('disabled','disabled');
+                                    } else if(JigyoushaType=="72") {
+                 	               $('.JakunenKasan').eq(idx).removeAttr('disabled');
+	                               $('.NyuyokuKasan').eq(idx).removeAttr('disabled');
+	                               $('.KinouKasan').eq(idx).removeAttr('disabled');
+	                               $('.KoukuKasan').eq(idx).removeAttr('disabled');
+	                               $('.EiyouKasan').eq(idx).removeAttr('disabled');
+	                               $('.SougeiKasan').eq(idx).attr('disabled','disabled');
+	                               $('.RyouyoushokuKasan').eq(idx).attr('disabled','disabled');
+                                    } else {
+   	                               $('.JakunenKasan').eq(idx).attr('disabled','disabled');
+	                               $('.SougeiKasan').eq(idx).attr('disabled','disabled');
+	                               $('.NyuyokuKasan').eq(idx).attr('disabled','disabled');
+	                               $('.KinouKasan').eq(idx).attr('disabled','disabled');
+	                               $('.KoukuKasan').eq(idx).attr('disabled','disabled');
+	                               $('.EiyouKasan').eq(idx).attr('disabled','disabled');
+	                               $('.RyouyoushokuKasan').eq(idx).attr('disabled','disabled');
+                                    }
+    				break;
+				}
+			}
+
+			for (var ks in kaigoservice) {
+				if(kaigoservice[ks].jigyoushatype==JigyoushaType) {
+//  通所介護
+					if(kaigoservice[ks].jigyoushatype==15) {
+					    if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+						} else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            if(kaigoservice[ks].min!="_") {
+                                                               if(kaigoservice[ks].min==kyouka) {
+                                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                               }
+                                                            } else {
+                                                               $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                            }
+                                                        }
+                                                }
+//  通所リハビリ
+					} else if(kaigoservice[ks].jigyoushatype==16) {
+					    if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilitytype=="1"&&(JigyoushaFacilityType=="4"||JigyoushaFacilityType=="7")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+					    } else if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilitytype=="2"&&(JigyoushaFacilityType=="5"||JigyoushaFacilityType=="8")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+					    } else if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilitytype=="3"&&(JigyoushaFacilityType=="6"||JigyoushaFacilityType=="9")) {
+							if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+							    $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+							}
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            if(kaigoservice[ks].min!="_") {
+                                                               if(kaigoservice[ks].min==kyouka) {
+                                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                               }
+                                                            } else {
+                                                               $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                            }
+                                                        }
+					    }
+                                        } else if(kaigoservice[ks].jigyoushatype==11) {
+//  訪問介護
+                                             if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].servicemanager==servicemanager&&kaigoservice[ks].douitsu==douitsu) {
+						if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+                                                   if((StartTime[0]<22&&StartTime[0]>17)||(StartTime[0]>5&&StartTime[0]<8)) {
+                                                     if(kaigoservice[ks].asayoru=='2') {
+						       $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   } else if(StartTime[0]>21||StartTime[0]<6) {
+                                                     if(kaigoservice[ks].shinya=='2') {
+						       $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   } else {
+                                                     if(kaigoservice[ks].asayoru=='1'&&kaigoservice[ks].shinya=='1') {
+						       $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                     }
+                                                   }
+                                                } else {
+                //　時間に関係ない項目（通院介助など）
+                                                       if(kaigoservice[ks].min==="_"&&kaigoservice[ks].max==="_") {
+						            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                       }
+                                                }
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                             }
+                                        } else if(kaigoservice[ks].jigyoushatype==12) {
+//  訪問入浴
+                                             if(kaigoservice[ks].servicemanager=="ADD") {
+                                               // 提供体制加算
+                                               if(kaigoservice[ks].min!="_") {
+                                                  if(kaigoservice[ks].min==kyouka) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                  }
+                                               } else {
+                                                 $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                               }
+                                             } else {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                             }
+//  訪問看護
+                                        } else if(kaigoservice[ks].jigyoushatype==13) {
+                                             if(kaigoservice[ks].scale==JigyoushaScale&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+						if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+						     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                } else {
+						     if(kaigoservice[ks].min==="_"&&kaigoservice[ks].max==="_") {
+							 $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+						     }
+                                                }
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            // 提供体制加算
+                                                            if(kaigoservice[ks].min!="_") {
+                                                               if(kaigoservice[ks].min==kyouka) {
+                                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                               }
+                                                            } else if(kaigoservice[ks].max!="_") {
+                                                            // 特別管理加算
+                                                               if(kaigoservice[ks].max==kanri) {
+                                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                               }
+                                                            } else if(kaigoservice[ks].kaigodo!="_") {
+                                                            // 緊急管理加算
+                                                               if(kaigoservice[ks].kaigodo==kinkan) {
+                                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                               }
+                                                            } else {
+                                                               $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                            }
+                                                        }
+                                             }
+//  短期入所生活
+                                        } else if(kaigoservice[ks].jigyoushatype==21) {
+                                           if((JigyoushaFacilityType=="1" || JigyoushaFacilityType=="5" || JigyoushaFacilityType=="7")&&kaigoservice[ks].facilitytype=="1") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType=="2" || JigyoushaFacilityType=="6" || JigyoushaFacilityType=="8")&&kaigoservice[ks].facilitytype=="2") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType == "3" || JigyoushaFacilityType == "5" || JigyoushaFacilityType == "6")&&kaigoservice[ks].facilitytype=="3") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+                                           } else if ((JigyoushaFacilityType == "4" || JigyoushaFacilityType == "7" || JigyoushaFacilityType == "8")&&kaigoservice[ks].facilitytype=="4") {
+                                             if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                } else if ((kaigoservice[ks].ketsuin=="2" || kaigoservice[ks].ketsuin=="3")&&ketsuin=="2") {
+                                                   if(kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+					    } else {
+                                                //加算
+                                                if(kaigoservice[ks].servicemanager=="ADD") {
+                                                   // 提供体制加算
+                                                   if(kaigoservice[ks].min!="_") {
+                                                       if(kaigoservice[ks].min==kyouka) {
+                                                          $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                       }
+                                                   } else {
+                                                       $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                           }
+//  短期入所療養老短
+                                        } else if(kaigoservice[ks].jigyoushatype==22) {
+                                           // 日割りのものをまず抽出（時間が設定されているもの）
+                                           if(kaigoservice[ks].min=="_"&&kaigoservice[ks].max=="_") {
+                                             // 施設区分によって制御
+                                             if(JigyoushaFacilityType==kaigoservice[ks].facilitytype) {
+                                               // 介護度、ユニットケア体制、夜勤体制
+                                               if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].facilityunit==facilityunit&&kaigoservice[ks].nightcare==nightcare) {
+                                                   // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                   if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                               }
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                            }
+                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                            if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max&&kaigoservice[ks].nightcare==nightcare) {
+                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {                                               
+                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+                                          }
+//  短期入所療養療養型
+                                        } else if(kaigoservice[ks].jigyoushatype==23) {
+                                           // 日割りのものをまず抽出（時間が設定されているもの）
+                                           if(kaigoservice[ks].min=="_"&&kaigoservice[ks].max=="_") {
+                                             // 施設区分によって制御
+                                             if(JigyoushaFacilityType==kaigoservice[ks].facilitytype) {
+                                               // 介護度、夜勤体制
+                                               if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].nightcare==nightcare) {
+                                                   // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                   if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                     $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                               }
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                            }
+                                          } else {
+                                            // 時間による制御&&夜間勤務制御
+                                            if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max&&kaigoservice[ks].nightcare==nightcare) {
+                                                // 欠員は"1"（欠員無し)かそれ以外("1"以外)か
+                                                if(kaigoservice[ks].ketsuin=="1"&&ketsuin=="1") {                                               
+                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                } else if (kaigoservice[ks].ketsuin!="1"&&ketsuin!="1") {
+                                                  $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                }
+                                            }
+                                          }
+//  訪問リハ
+                                        } else if(kaigoservice[ks].jigyoushatype==14) {
+                                             if(kaigoservice[ks].douitsu==douitsu&&kaigoservice[ks].facilitytype==JigyoushaFacilityType) {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                //加算
+                                                if(kaigoservice[ks].servicemanager=="ADD") {
+                                                   // 提供体制加算
+                                                   if(kaigoservice[ks].min!="_") {
+                                                       if(kaigoservice[ks].min==kyouka) {
+                                                           $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                                   } else {
+                                                      $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                }
+                                             }
+//  居宅療養
+                                        } else if(kaigoservice[ks].jigyoushatype==31) {
+                                             $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+//  定期巡回・随時対応
+                                        } else if(kaigoservice[ks].jigyoushatype==76) {
+                                           if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                             $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                           }
+//  夜間訪問介護
+                                        } else if(kaigoservice[ks].jigyoushatype==71) {
+                                           $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+//  認知通所介護
+                                        } else if(kaigoservice[ks].jigyoushatype==72) {
+                                           if(kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo&&kaigoservice[ks].ketsuin==ketsuin) {
+                                             if(kaigoservice[ks].min<=KikanMinutes&&KikanMinutes<kaigoservice[ks].max) {
+                                              $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                             }
+					    } else {
+                                                //加算
+                                                if(kaigoservice[ks].servicemanager=="ADD") {
+                                                   // 提供体制加算
+                                                   if(kaigoservice[ks].min!="_") {
+                                                       if(kaigoservice[ks].min==kyouka) {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                       }
+                                                   } else {
+                                                       $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                   }
+                                                 }
+                                           }
+//  小規模多機能
+                                        } else if(kaigoservice[ks].jigyoushatype==73) {
+                                             if(kaigoservice[ks].douitsu==douitsu&&kaigoservice[ks].ketsuin==ketsuin&&kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                             }
+//  認知症対応型（短期利用以外)
+                                        } else if(kaigoservice[ks].jigyoushatype==32) {
+                                             if(kaigoservice[ks].ketsuin==ketsuin&&kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                             }
+//  認知症対応型（短期利用)
+                                        } else if(kaigoservice[ks].jigyoushatype==38) {
+                                             if(kaigoservice[ks].ketsuin==ketsuin&&kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                             }
+//  複合型
+                                        } else if(kaigoservice[ks].jigyoushatype==77) {
+                                             if(kaigoservice[ks].ketsuin==ketsuin&&kaigoservice[ks].kaigodo==youkaigodod[0].kaigodo) {
+                                                $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					    } else {
+                                                        //加算
+                                                        if(kaigoservice[ks].servicemanager=="ADD") {
+                                                            $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+                                                        }
+                                             }
+					} else {
+//  訪問介護、訪問看護、通所介護、通所リハビリ以外
+					    $('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");						
+					}
+				} else {
+//　時間や規模などに関係ない項目
+				    if(kaigoservice[ks].jigyoushatype==JigyoushaType&&kaigoservice[ks].scale=="_"&&kaigoservice[ks].facilitytype=="_"&&kaigoservice[ks].servicemanager=="_") {
+				    	$('.KaigoService').eq(idx).append("<option value=\""+kaigoservice[ks].jigyoushatype+kaigoservice[ks].id+"\">"+kaigoservice[ks].value+"</option>");
+					}
+				}
+			}            
+        }
+
+
+
+
+		// 現状、終了時刻のテキストボックスからフォーカスが離れた際にサービスのプルダウン項目制御が行われる。
+		// 供給者の事業者タイプ、事業者の規模、施設種類、介護度、時間によってフィルタリングされる。
+		$(".EventEndTime").live('blur',function() {
+                    var idx=$(".EventEndTime").index(this);
+//                    //setInputControl_end(idx);
+		    controlKaigoServicePulldown(idx);
+		});
+
+		$(".EventStartTime").live('blur',function() {
+                    var idx=$(".EventStartTime").index(this);
+//                    //setInputControl_start(idx);
+		    controlKaigoServicePulldown(idx);
+		});
+
+
+        //　時刻入力制御
+
+              function setInputControl_start(num) {
+                if($(".EventStartTime").eq(num).val().match(/:/)){
+                                if($(".EventStartTime").eq(num).val().length<4||$(".EventStartTime").eq(num).val().length>5) {
+                                alert("文字数に誤りがあります。");
+                    $(".EventStartTime").eq(num).val("");
+                    return false;
+                                } else {
+                    var strHour=$(".EventStartTime").eq(num).val().split(':')[0];
+                    var strMinute=$(".EventStartTime").eq(num).val().split(':')[1];
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".EventStartTime").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $("#EventStartTime").val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+                                var strsei=strHour+":"+strMinute;
+                                $(".EventStartTime").eq(num).val(strsei);
+                }
+                        } else {
+                                if($(".EventStartTime").eq(num).val().length<3||$(".EventStartTime").eq(num).val().length>4) {
+                                alert("文字数に誤りがあります。");
+                    $(".EventStartTime").eq(num).val("");
+                    return false;
+                                } else {
+                                        var strlen=parseInt($(".EventStartTime").eq(num).val().length);
+                                        var sentoulen=strlen-2;
+                    var strHour=$(".EventStartTime").eq(num).val().substr(0,sentoulen);
+                    var strMinute=$(".EventStartTime").eq(num).val().substr(sentoulen,strlen);
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".EventStartTime").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".EventStartTime").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+                                var strsei=strHour+":"+strMinute;
+                                $(".EventStartTime").eq(num).val(strsei);
+                        }
+                        }
+                }
+
+              function setInputControl_end(num) {
+        //　時刻入力制御
+                if($(".EventEndTime").eq(num).val().match(/:/)){
+                                if($(".EventEndTime").eq(num).val().length<4||$(".EventEndTime").eq(num).val().length>5) {
+                                alert("文字数に誤りがあります。");
+                    $(".EventEndTime").eq(num).val("");
+                    return false;
+                                } else {
+                    var strHour=$(".EventEndTime").eq(num).val().split(':')[0];
+                    var strMinute=$(".EventEndTime").eq(num).val().split(':')[1];
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".EventEndTime").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".EventEndTime").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+                                var strsei=strHour+":"+strMinute;
+                                $(".EventEndTime").eq(num).val(strsei);
+                }
+                        } else {
+                                if($(".EventEndTime").eq(num).val().length<3||$(".EventEndTime").eq(num).val().length>4) {
+                                alert("文字数に誤りがあります。");
+                    $(".EventEndTime").eq(num).val("");
+                    return false;
+                                } else {
+                                        var strlen=parseInt($(".EventEndTime").eq(num).val().length);
+                                        var sentoulen=strlen-2;
+                    var strHour=$(".EventEndTime").eq(num).val().substr(0,sentoulen);
+                    var strMinute=$(".EventEndTime").eq(num).val().substr(sentoulen,strlen);
+                    if(parseInt(strHour)<0||parseInt(strHour)>23){
+                        alert("時間は0～23までの間の数値で入力してください");
+                        $(".EventEndTime").eq(num).val("");
+                        return false;
+                    }
+                    if(parseInt(strMinute)<0||parseInt(strMinute)>59){
+                        alert("分は0～59までの間の数値で入力してください");
+                        $(".EventEndTime").eq(num).val("");
+                        return false;
+                    }
+                    strHour=(parseInt(strHour)<10?"0":"")+parseInt(strHour);
+                    strMinute=(parseInt(strMinute)<10?"0":"")+parseInt(strMinute);
+                                var strsei=strHour+":"+strMinute;
+                                $(".EventEndTime").eq(num).val(strsei);
+                        }
+                        }
+               }
+
+//  サービスタイプを選択すると、事業者がフィルタリングされる
+        $(".ServiceType").live('change',function() {
+            var idx=$(".ServiceType").index(this);
+            if(kyoukyusha.length>0) {
+                $(".Kyoukyusha").eq(idx).children().remove();
+                for(var k in kyoukyusha) {
+                    if(kyoukyusha[k].jigyoushatype==$('.ServiceType').eq(idx).val()) {
+                        $(".Kyoukyusha").eq(idx).append('<option value="'+kyoukyusha[k].id+'">'+kyoukyusha[k].value+'</option>');
+                    }
+                }
+            }
+            controlKaigoServicePulldown(idx);
+        });
+
+        $(".Kyoukyusha").live('change',function() {
+            var idx=$(".Kyoukyusha").index(this);
+		    controlKaigoServicePulldown(idx);
+		    getValueCountID(idx);
+        });
+
+        $('.KaigoService').live('change',function() {
+            var idx=$('.KaigoService').index(this);
+		    getValueCountID(idx);
+        });
+
+        var calcTani=0;
+        var calcFuzuiHiyou=0;
+        var calcGendogaku=0;
+        var calcJikoFutan=0;
+        var calcKingaku=0;
+
+		jQuery("#calc").live('click',function() {
+           calcTani=0;
+           calcFuzuiHiyou=0;
+           calcGendogaku=0;
+           calcJikoFutan=0;
+           calcKingaku=0;
+           $('.ServiceTani').each(function(i) {
+               calcTani=calcTani+parseInt($('.ServiceTani').eq(i).val());    
+           });
+           $('.FuzuiHiyou').each(function(i) {
+               calcFuzuiHiyou=calcFuzuiHiyou+parseInt($('.FuzuiHiyou').eq(i).val());
+           });
+
+           $('.ServiceGendogakuTaisho').each(function(i) {
+               calcGendogaku=calcGendogaku+parseInt($('.ServiceGendogakuTaisho').eq(i).val());
+           });
+
+           $('.ServiceJikofutan').each(function(i) {
+               calcJikoFutan=calcJikoFutan+parseInt($('.ServiceJikofutan').eq(i).val());
+           });
+
+           $('.ServiceKingaku').each(function(i) {
+               calcKingaku=calcKingaku+parseInt($('.ServiceKingaku').eq(i).val());
+           });
+
+           var JikoFutanGoukeigaku=calcJikoFutan+parseInt(calcFuzuiHiyou);
+           var HiyouGoukeiKingaku=calcKingaku+parseInt(calcFuzuiHiyou);
+
+           $('#TaniGoukei').val(calcTani);
+           $('#HiyouGoukei').val(HiyouGoukeiKingaku);
+           $('#GendogakuTaishouGoukei').val(calcGendogaku);
+           $('#JikoFutanGoukei').val(JikoFutanGoukeigaku);
+		});
+		
+
+		function setKaigoServicePulldown(num) {
+		  if(kaigoservice.length>0) {
+            for (var i in kaigoservice) {
+		      $('.KaigoService').eq(num).append("<option value=\""+kaigoservice[i].jigyoushatype+kaigoservice[i].id+"\">"+kaigoservice[i].value+"</option>");
+		    }		      
+		  }
+        }
+
+        setKaigoServicePulldown(0);
+		
+		function setKyokyushaPulldown(num) {
+          if(kyoukyusha.length>0) {
+            for (var j in kyoukyusha) {
+		      $('.Kyoukyusha').eq(num).append("<option value=\""+kyoukyusha[j].id+"\">"+kyoukyusha[j].value+"</option>");
+		    }
+		  }
+        }
+
+        setKyokyushaPulldown(0);
+
+        function setServiceTypePulldown(num) {
+          if(servicetype.length>0) {
+            for (var t in servicetype) {
+		      $('.ServiceType').eq(num).append("<option value=\""+servicetype[t].id+"\">"+servicetype[t].value+"</option>");
+            }
+          }
+        }
+
+        setServiceTypePulldown(0);
+
+        var tenkaihtml="";
+        var tenkainum=1;
+
+		// 一覧に追加される
+	    jQuery('#add').click(function(){
+            tenkaihtml="";
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+           	tenkaihtml=tenkaihtml+'<input id="Sort'+tenkainum+'" name="Sort'+tenkainum+'" type="number" step="1" min="1" placeholder="1" style="width:40px" value="">';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<textarea id="ServiceNaiyou'+tenkainum+'" name="ServiceNaiyou'+tenkainum+'" style="width:100%" rows=4 maxlength="50" placeholder="最大50文字"></textarea>';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input id="HokenKbn'+tenkainum+'" name="HokenKbn'+tenkainum+'" type="checkbox" value="1">';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<select id="ServiceType'+tenkainum+'" name="ServiceType'+tenkainum+'" class="ServiceType" style="width:120px"><option value=""></option></select>';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<select id="Kyoukyusha'+tenkainum+'" name="Kyoukyusha'+tenkainum+'" class="Kyoukyusha" style="width:200px"><option value=""></option></select>';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input name="EventStartTime'+tenkainum+'" style="width:80px" type="time" id="EventStartTime'+tenkainum+'" class="EventStartTime" />～';
+            tenkaihtml=tenkaihtml+'<input name="EventEndTime'+tenkainum+'" style="width:80px" type="time" id="EventEndTime'+tenkainum+'" class="EventEndTime" />';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<select id="KaigoService'+tenkainum+'" name="KaigoService'+tenkainum+'" class="KaigoService" style="width:160px"><option value=""></option></select>';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style="border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<table id="tblWeekYoubi'+tenkainum+'" name="tblWeekYoubi'+tenkainum+'" class="tblWeekYoubi">';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td><input type="hidden" id="totalWeekYoubi'+tenkainum+'" name="totalWeekYoubi'+tenkainum+'" class="totalWeekYoubi"></td><td style="border-right:#bbbbbb solid 1px;">全</td><td>日</td><td>月</td><td>火</td><td>水</td><td>木</td><td>金</td><td>土</td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;">毎週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;border-right:#bbbbbb solid 1px;"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSun'+tenkainum+'" name="valueHeader" class="AllSun" value="0"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllMon'+tenkainum+'" name="valueHeader" class="AllMon" value="1"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllTue'+tenkainum+'" name="valueHeader" class="AllTue" value="2"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllWed'+tenkainum+'" name="valueHeader" class="AllWed" value="3"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllThu'+tenkainum+'" name="valueHeader" class="AllThu" value="4"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllFri'+tenkainum+'" name="valueHeader" class="AllFri" value="5"></td>';
+            tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSat'+tenkainum+'" name="valueHeader" class="AllSat" value="6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td>1週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FirstAll'+tenkainum+'" name="valueHeader" class="FirstAll" value="a"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstSun'+tenkainum+'" name="YoubiWeekVal" class="FirstSun" value="a0"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstMon'+tenkainum+'" name="YoubiWeekVal" class="FirstMon" value="a1"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstTue'+tenkainum+'" name="YoubiWeekVal" class="FirstTue" value="a2"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstWed'+tenkainum+'" name="YoubiWeekVal" class="FirstWed" value="a3"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstThu'+tenkainum+'" name="YoubiWeekVal" class="FirstThu" value="a4"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstFri'+tenkainum+'" name="YoubiWeekVal" class="FirstFri" value="a5"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstSat'+tenkainum+'" name="YoubiWeekVal" class="FirstSat" value="a6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td>2週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="SecondAll'+tenkainum+'" name="valueHeader" class="SecondAll" value="b"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondSun'+tenkainum+'" name="YoubiWeekVal" class="SecondSun" value="b0"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondMon'+tenkainum+'" name="YoubiWeekVal" class="SecondMon" value="b1"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondTue'+tenkainum+'" name="YoubiWeekVal" class="SecondTue" value="b2"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondWed'+tenkainum+'" name="YoubiWeekVal" class="SecondWed" value="b3"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondThu'+tenkainum+'" name="YoubiWeekVal" class="SecondThu" value="b4"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondFri'+tenkainum+'" name="YoubiWeekVal" class="SecondFri" value="b5"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondSat'+tenkainum+'" name="YoubiWeekVal" class="SecondSat" value="b6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td>3週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="ThirdAll'+tenkainum+'" name="valueHeader" class="ThirdAll" value="c"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdSun'+tenkainum+'" name="YoubiWeekVal" class="ThirdSun" value="c0"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdMon'+tenkainum+'" name="YoubiWeekVal" class="ThirdMon" value="c1"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdTue'+tenkainum+'" name="YoubiWeekVal" class="ThirdTue" value="c2"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdWed'+tenkainum+'" name="YoubiWeekVal" class="ThirdWed" value="c3"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdThu'+tenkainum+'" name="YoubiWeekVal" class="ThirdThu" value="c4"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdFri'+tenkainum+'" name="YoubiWeekVal" class="ThirdFri" value="c5"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdSat'+tenkainum+'" name="YoubiWeekVal" class="ThirdSat" value="c6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td>4週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FourthAll'+tenkainum+'" name="valueHeader" class="FourthAll" value="d"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthSun'+tenkainum+'" name="YoubiWeekVal" class="FourthSun" value="d0"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthMon'+tenkainum+'" name="YoubiWeekVal" class="FourthMon" value="d1"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthTue'+tenkainum+'" name="YoubiWeekVal" class="FourthTue" value="d2"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthWed'+tenkainum+'" name="YoubiWeekVal" class="FourthWed" value="d3"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthThu'+tenkainum+'" name="YoubiWeekVal" class="FourthThu" value="d4"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthFri'+tenkainum+'" name="YoubiWeekVal" class="FourthFri" value="d5"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthSat'+tenkainum+'" name="YoubiWeekVal" class="FourthSat" value="d6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'<tr>';
+            tenkaihtml=tenkaihtml+'<td>5週</td>';
+            tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FifthAll'+tenkainum+'" name="valueHeader" class="FifthAll" value="e"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthSun'+tenkainum+'" name="YoubiWeekVal" class="FifthSun" value="e0"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthMon'+tenkainum+'" name="YoubiWeekVal" class="FifthMon" value="e1"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthTue'+tenkainum+'" name="YoubiWeekVal" class="FifthTue" value="e2"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthWed'+tenkainum+'" name="YoubiWeekVal" class="FifthWed" value="e3"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthThu'+tenkainum+'" name="YoubiWeekVal" class="FifthThu" value="e4"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthFri'+tenkainum+'" name="YoubiWeekVal" class="FifthFri" value="e5"></td>';
+            tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthSat'+tenkainum+'" name="YoubiWeekVal" class="FifthSat" value="e6"></td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+            tenkaihtml=tenkaihtml+'</table>';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input type="hidden" id="hdKasanNaiyou'+tenkainum+'" name="hdKasanNaiyou'+tenkainum+'" class="hdKasanNaiyou" />';
+   	        tenkaihtml=tenkaihtml+'若年性認知加算<input id="JakunenKasan'+tenkainum+'" name="JakunenKasan'+tenkainum+'" class="JakunenKasan" type="checkbox" value="1" disabled><br />';
+	        tenkaihtml=tenkaihtml+'<input id="SougeiKasan'+tenkainum+'" name="SougeiKasan'+tenkainum+'" class="SougeiKasan" type="hidden" value="" disabled>';
+	        tenkaihtml=tenkaihtml+'入浴加算<input id="NyuyokuKasan'+tenkainum+'" name="NyuyokuKasan'+tenkainum+'" class="NyuyokuKasan" type="checkbox" value="1" disabled><br />';
+	        tenkaihtml=tenkaihtml+'機能訓練加算<input id="KinouKasan'+tenkainum+'" name="KinouKasan'+tenkainum+'" class="KinouKasan" type="checkbox" value="1" disabled><br />';
+	        tenkaihtml=tenkaihtml+'口腔機能加算<input id="KoukuKasan'+tenkainum+'" name="KoukuKasan'+tenkainum+'" class="KoukuKasan" type="checkbox" value="1" disabled><br />';
+	        tenkaihtml=tenkaihtml+'栄養改善加算<input id="EiyouKasan'+tenkainum+'" name="EiyouKasan'+tenkainum+'" class="EiyouKasan" type="checkbox" value="1" disabled><br />';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;" class="tdTaniGoukei">';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input type="hidden" id="ServiceKaisu'+tenkainum+'" name="ServiceKaisu'+tenkainum+'" class="ServiceKaisu">';
+            tenkaihtml=tenkaihtml+'<input id="ServiceTani'+tenkainum+'" name="ServiceTani'+tenkainum+'" class="ServiceTani" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0"><br />(<input id="ServiceGendogakuTaisho'+tenkainum+'" name="ServiceGendogakuTaisho'+tenkainum+'" class="ServiceGendogakuTaisho" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0">)';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input id="ServiceKingaku'+tenkainum+'" name="ServiceKingaku'+tenkainum+'" class="ServiceKingaku" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0"><br />(<input id="ServiceJikofutan'+tenkainum+'" name="ServiceJikofutan'+tenkainum+'" class="ServiceJikofutan" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0">)';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+            tenkaihtml=tenkaihtml+'<input type="number" step="1" min="0" placeholder="10000" id="FuzuiHiyou'+tenkainum+'" name="FuzuiHiyou'+tenkainum+'" class="FuzuiHiyou" style="width:60px;display:none" value="0">';
+            tenkaihtml=tenkaihtml+'</td>';
+            tenkaihtml=tenkaihtml+'</tr>';
+
+	        jQuery('#ServiceIchiran').append(tenkaihtml);
+            setServiceTypePulldown(tenkainum);
+            setKyokyushaPulldown(tenkainum);
+            setKaigoServicePulldown(tenkainum);
+
+            tenkainum++;
+	    });
+
+        if(tenkaid.length>0) {
+            jQuery('#ServiceIchiran').children().remove();
+            tenkainum=0;
+            var tenkaiheader="";
+            tenkaiheader=tenkaiheader+'<tr>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderSort" style="width:3%;background-color:#dddddd; border:#bbbbbb solid 1px;">表示順</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderNaiyou" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス内容</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderHoken" style="width:3%;background-color:#dddddd; border:#bbbbbb solid 1px;">保険</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceType" style="width:5%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス種類</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderKyoukyu" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">供給者</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceTime" style="width:10%;background-color:#dddddd; border:#bbbbbb solid 1px;">提供時刻</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceKoumoku" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス区分</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceYoubiWeek" style="width:14%; border:#bbbbbb solid 1px;background-color:#dddddd;">実施週曜日</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceKasan" style="width:12%; border:#bbbbbb solid 1px;background-color:#dddddd;">加算</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceKaisu" style="width:3%; border:#bbbbbb solid 1px;background-color:#dddddd;">回数/月</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceTani" style="width:7%; border:#bbbbbb solid 1px;background-color:#dddddd;">単位(内限度額対象)</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderServiceTani" style="width:7%; border:#bbbbbb solid 1px;background-color:#dddddd;">費用(内自己負担)</th>';
+            tenkaiheader=tenkaiheader+'<th id="HeaderFuzuiHiyou" style="width:3%; border:#bbbbbb solid 1px;background-color:#dddddd;display:none">付随費用単価</th>';
+            tenkaiheader=tenkaiheader+'</tr>';
+            
+            jQuery('#ServiceIchiran').append(tenkaiheader);
+
+            for(var tkd in tenkaid) {
+               tenkaihtml="";
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input id="Sort'+tenkainum+'" name="Sort'+tenkainum+'" type="number" step="1" min="1" placeholder="1" style="width:40px" value="'+tenkaid[tkd].sort+'">';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<textarea id="ServiceNaiyou'+tenkainum+'" name="ServiceNaiyou'+tenkainum+'" style="width:100%" rows=4 maxlength="50" placeholder="最大50文字">'+tenkaid[tkd].naiyou+'</textarea>';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input id="HokenKbn'+tenkainum+'" name="HokenKbn'+tenkainum+'" type="checkbox" value="1">';                   
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<select id="ServiceType'+tenkainum+'" name="ServiceType'+tenkainum+'" class="ServiceType" style="width:120px"><option value=""></option></select>';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<select id="Kyoukyusha'+tenkainum+'" name="Kyoukyusha'+tenkainum+'" class="Kyoukyusha" style="width:200px"><option value=""></option></select>';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input name="EventStartTime'+tenkainum+'" style="width:80px" type="time" id="EventStartTime'+tenkainum+'" class="EventStartTime" />～';
+               tenkaihtml=tenkaihtml+'<input name="EventEndTime'+tenkainum+'" style="width:80px" type="time" id="EventEndTime'+tenkainum+'" class="EventEndTime" />';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<select id="KaigoService'+tenkainum+'" name="KaigoService'+tenkainum+'" class="KaigoService" style="width:160px"><option value=""></option></select>';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style="border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<table id="tblWeekYoubi'+tenkainum+'" name="tblWeekYoubi'+tenkainum+'" class="tblWeekYoubi">';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td><input type="hidden" id="totalWeekYoubi'+tenkainum+'" name="totalWeekYoubi'+tenkainum+'" class="totalWeekYoubi"></td><td style="border-right:#bbbbbb solid 1px;">全</td><td>日</td><td>月</td><td>火</td><td>水</td><td>木</td><td>金</td><td>土</td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;">毎週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;border-right:#bbbbbb solid 1px;"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSun'+tenkainum+'" name="valueHeader" class="AllSun" value="0"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllMon'+tenkainum+'" name="valueHeader" class="AllMon" value="1"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllTue'+tenkainum+'" name="valueHeader" class="AllTue" value="2"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllWed'+tenkainum+'" name="valueHeader" class="AllWed" value="3"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllThu'+tenkainum+'" name="valueHeader" class="AllThu" value="4"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllFri'+tenkainum+'" name="valueHeader" class="AllFri" value="5"></td>';
+               tenkaihtml=tenkaihtml+'<td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSat'+tenkainum+'" name="valueHeader" class="AllSat" value="6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td>1週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FirstAll'+tenkainum+'" name="valueHeader" class="FirstAll" value="a"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstSun'+tenkainum+'" name="YoubiWeekVal" class="FirstSun" value="a0"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstMon'+tenkainum+'" name="YoubiWeekVal" class="FirstMon" value="a1"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstTue'+tenkainum+'" name="YoubiWeekVal" class="FirstTue" value="a2"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstWed'+tenkainum+'" name="YoubiWeekVal" class="FirstWed" value="a3"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstThu'+tenkainum+'" name="YoubiWeekVal" class="FirstThu" value="a4"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstFri'+tenkainum+'" name="YoubiWeekVal" class="FirstFri" value="a5"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FirstSat'+tenkainum+'" name="YoubiWeekVal" class="FirstSat" value="a6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td>2週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="SecondAll'+tenkainum+'" name="valueHeader" class="SecondAll" value="b"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondSun'+tenkainum+'" name="YoubiWeekVal" class="SecondSun" value="b0"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondMon'+tenkainum+'" name="YoubiWeekVal" class="SecondMon" value="b1"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondTue'+tenkainum+'" name="YoubiWeekVal" class="SecondTue" value="b2"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondWed'+tenkainum+'" name="YoubiWeekVal" class="SecondWed" value="b3"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondThu'+tenkainum+'" name="YoubiWeekVal" class="SecondThu" value="b4"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondFri'+tenkainum+'" name="YoubiWeekVal" class="SecondFri" value="b5"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="SecondSat'+tenkainum+'" name="YoubiWeekVal" class="SecondSat" value="b6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td>3週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="ThirdAll'+tenkainum+'" name="valueHeader" class="ThirdAll" value="c"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdSun'+tenkainum+'" name="YoubiWeekVal" class="ThirdSun" value="c0"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdMon'+tenkainum+'" name="YoubiWeekVal" class="ThirdMon" value="c1"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdTue'+tenkainum+'" name="YoubiWeekVal" class="ThirdTue" value="c2"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdWed'+tenkainum+'" name="YoubiWeekVal" class="ThirdWed" value="c3"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdThu'+tenkainum+'" name="YoubiWeekVal" class="ThirdThu" value="c4"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdFri'+tenkainum+'" name="YoubiWeekVal" class="ThirdFri" value="c5"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="ThirdSat'+tenkainum+'" name="YoubiWeekVal" class="ThirdSat" value="c6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td>4週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FourthAll'+tenkainum+'" name="valueHeader" class="FourthAll" value="d"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthSun'+tenkainum+'" name="YoubiWeekVal" class="FourthSun" value="d0"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthMon'+tenkainum+'" name="YoubiWeekVal" class="FourthMon" value="d1"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthTue'+tenkainum+'" name="YoubiWeekVal" class="FourthTue" value="d2"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthWed'+tenkainum+'" name="YoubiWeekVal" class="FourthWed" value="d3"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthThu'+tenkainum+'" name="YoubiWeekVal" class="FourthThu" value="d4"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthFri'+tenkainum+'" name="YoubiWeekVal" class="FourthFri" value="d5"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FourthSat'+tenkainum+'" name="YoubiWeekVal" class="FourthSat" value="d6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'<tr>';
+               tenkaihtml=tenkaihtml+'<td>5週</td>';
+               tenkaihtml=tenkaihtml+'<td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FifthAll'+tenkainum+'" name="valueHeader" class="FifthAll" value="e"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthSun'+tenkainum+'" name="YoubiWeekVal" class="FifthSun" value="e0"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthMon'+tenkainum+'" name="YoubiWeekVal" class="FifthMon" value="e1"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthTue'+tenkainum+'" name="YoubiWeekVal" class="FifthTue" value="e2"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthWed'+tenkainum+'" name="YoubiWeekVal" class="FifthWed" value="e3"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthThu'+tenkainum+'" name="YoubiWeekVal" class="FifthThu" value="e4"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthFri'+tenkainum+'" name="YoubiWeekVal" class="FifthFri" value="e5"></td>';
+               tenkaihtml=tenkaihtml+'<td><input type="checkbox" id="FifthSat'+tenkainum+'" name="YoubiWeekVal" class="FifthSat" value="e6"></td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+               tenkaihtml=tenkaihtml+'</table>';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input type="hidden" id="hdKasanNaiyou'+tenkainum+'" name="hdKasanNaiyou'+tenkainum+'" class="hdKasanNaiyou" />';
+   	           tenkaihtml=tenkaihtml+'若年性認知加算<input id="JakunenKasan'+tenkainum+'" name="JakunenKasan'+tenkainum+'" class="JakunenKasan" type="checkbox" value="1" disabled><br />';
+	           tenkaihtml=tenkaihtml+'<input id="SougeiKasan'+tenkainum+'" name="SougeiKasan'+tenkainum+'" class="SougeiKasan" type="hidden" value="" disabled>';
+	           tenkaihtml=tenkaihtml+'入浴加算<input id="NyuyokuKasan'+tenkainum+'" name="NyuyokuKasan'+tenkainum+'" class="NyuyokuKasan" type="checkbox" value="1" disabled><br />';
+	           tenkaihtml=tenkaihtml+'機能訓練加算<input id="KinouKasan'+tenkainum+'" name="KinouKasan'+tenkainum+'" class="KinouKasan" type="checkbox" value="1" disabled><br />';
+	           tenkaihtml=tenkaihtml+'口腔機能加算<input id="KoukuKasan'+tenkainum+'" name="KoukuKasan'+tenkainum+'" class="KoukuKasan" type="checkbox" value="1" disabled><br />';
+	           tenkaihtml=tenkaihtml+'栄養改善加算<input id="EiyouKasan'+tenkainum+'" name="EiyouKasan'+tenkainum+'" class="EiyouKasan" type="checkbox" value="1" disabled><br />';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;" class="tdTaniGoukei">';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input type="hidden" id="ServiceKaisu'+tenkainum+'" name="ServiceKaisu'+tenkainum+'" class="ServiceKaisu">';
+               tenkaihtml=tenkaihtml+'<input id="ServiceTani'+tenkainum+'" name="ServiceTani'+tenkainum+'" class="ServiceTani" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0"><br />(<input id="ServiceGendogakuTaisho'+tenkainum+'" name="ServiceGendogakuTaisho'+tenkainum+'" class="ServiceGendogakuTaisho" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0">)';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;">';
+               tenkaihtml=tenkaihtml+'<input id="ServiceKingaku'+tenkainum+'" name="ServiceKingaku'+tenkainum+'" class="ServiceKingaku" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0"><br />(<input id="ServiceJikofutan'+tenkainum+'" name="ServiceJikofutan'+tenkainum+'" class="ServiceJikofutan" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0">)';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'<td style=" border:#bbbbbb solid 1px;display:none">';
+               tenkaihtml=tenkaihtml+'<input type="number" step="1" min="0" placeholder="10000" id="FuzuiHiyou'+tenkainum+'" name="FuzuiHiyou'+tenkainum+'" class="FuzuiHiyou" style="width:60px" value="0">';
+               tenkaihtml=tenkaihtml+'</td>';
+               tenkaihtml=tenkaihtml+'</tr>';
+
+               jQuery('#ServiceIchiran').append(tenkaihtml);
+
+               setServiceTypePulldown(tenkainum);
+               setKyokyushaPulldown(tenkainum);
+               setKaigoServicePulldown(tenkainum);
+               $('#Sort'+tenkainum).val(tenkaid[tkd].sort);
+               $('#ServiceNaiyou'+tenkainum).text(tenkaid[tkd].naiyou);
+               if(tenkaid[tkd].hoken=="1") {
+                   $('#HokenKbn'+tenkainum).attr('checked','checked');
+               }
+               $('#Kyoukyusha'+tenkainum).val(tenkaid[tkd].kyoukyusha);
+               $('#EventStartTime'+tenkainum).val(tenkaid[tkd].start);
+               $('#EventEndTime'+tenkainum).val(tenkaid[tkd].end);
+               var wholecode=tenkaid[tkd].jigyoushatype+tenkaid[tkd].id;
+               $('#KaigoService'+tenkainum).val(wholecode);
+               var weekyoubisplit=tenkaid[tkd].weekyoubi.split(",");
+               for (var wy=0; wy<weekyoubisplit.length; wy++) {
+                   var tmpWeek=weekyoubisplit[wy].charAt(0);
+                   var tmpYoubi=weekyoubisplit[wy].charAt(1);
+                   var setWeek="";
+                   var setYoubi="";
+                   if(tmpWeek=="a") {
+                      setWeek="First";
+                   } else if(tmpWeek=="b") {
+                      setWeek="Second";
+                   } else if(tmpWeek=="c") {
+                      setWeek="Third";
+                   } else if(tmpWeek=="d") {
+                      setWeek="Fourth";
+                   } else if(tmpWeek=="e") {
+                      setWeek="Fifth";
+                   }
+                   if(tmpYoubi=="0") {
+                      setYoubi="Sun";
+                   } else if(tmpYoubi=="1") {
+                      setYoubi="Mon";
+                   } else if(tmpYoubi=="2") {
+                      setYoubi="Tue";
+                   } else if(tmpYoubi=="3") {
+                      setYoubi="Wed";
+                   } else if(tmpYoubi=="4") {
+                      setYoubi="Thu";
+                   } else if(tmpYoubi=="5") {
+                      setYoubi="Fri";
+                   } else if(tmpYoubi=="6") {
+                      setYoubi="Sat";
+                   }
+                   $('#'+setWeek+setYoubi+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/若/g)) {
+                   $('#JakunenKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/送/g)) {
+                   $('#SougeiKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/入/g)) {
+                   $('#NyuyokuKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/機/g)) {
+                   $('#KinouKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/口/g)) {
+                   $('#KoukuKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/栄/g)) {
+                   $('#EiyouKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].kasan.match(/療/g)) {
+                   $('#RyouyoushokuKasan'+tenkainum).attr('checked','checked');
+              }
+              if(tenkaid[tkd].jigyoushatype=="15") {
+                   $('#JakunenKasan'+tenkainum).removeAttr('disabled');
+                   $('#SougeiKasan'+tenkainum).removeAttr('disabled');
+                   $('#NyuyokuKasan'+tenkainum).removeAttr('disabled');
+                   $('#KinouKasan'+tenkainum).removeAttr('disabled');
+                   $('#KoukuKasan'+tenkainum).removeAttr('disabled');
+                   $('#EiyouKasan'+tenkainum).removeAttr('disabled');
+                   $('#RyouyoushokuKasan'+tenkainum).attr('disabled','disabled');
+//                   $('#RyouyoushokuKasan'+tenkainum).removeAttr('disabled');
+              } else if(tenkaid[tkd].jigyoushatype=="16"){
+                   $('#JakunenKasan'+tenkainum).removeAttr('disabled');
+                   $('#SougeiKasan'+tenkainum).attr('disabled','disabled');
+                   $('#NyuyokuKasan'+tenkainum).removeAttr('disabled');
+                   $('#KinouKasan'+tenkainum).attr('disabled','disabled');
+                   $('#KoukuKasan'+tenkainum).removeAttr('disabled');
+                   $('#EiyouKasan'+tenkainum).removeAttr('disabled');
+                   $('#RyouyoushokuKasan'+tenkainum).attr('disabled','disabled');
+//              } else if(tenkaid[tkd].jigyoushatype=="21"){
+//                   $('#JakunenKasan'+tenkainum).removeAttr('disabled');
+//                   $('#SougeiKasan'+tenkainum).removeAttr('disabled');
+//                   $('#NyuyokuKasan'+tenkainum).attr('disabled','disabled');
+//                   $('#KinouKasan'+tenkainum).removeAttr('disabled');
+//                   $('#KoukuKasan'+tenkainum).attr('disabled','disabled');
+//                   $('#EiyouKasan'+tenkainum).attr('disabled','disabled');
+//                   $('#RyouyoushokuKasan'+tenkainum).attr('disabled','disabled');
+//                   $('#RyouyoushokuKasan'+tenkainum).removeAttr('disabled');
+              } else if(tenkaid[tkd].jigyoushatype=="72") {
+                   $('#JakunenKasan'+tenkainum).removeAttr('disabled');
+	           $('#SougeiKasan'+tenkainum).attr('disabled','disabled');
+	           $('#NyuyokuKasan'+tenkainum).removeAttr('disabled');
+	           $('#KinouKasan'+tenkainum).removeAttr('disabled');
+	           $('#KoukuKasan'+tenkainum).removeAttr('disabled');
+	           $('#EiyouKasan'+tenkainum).removeAttr('disabled');
+	           $('#RyouyoushokuKasan'+tenkainum).attr('disabled','disabled');
+              } else {
+                   $('#JakunenKasan'+tenkainum).attr('disabled','disabled');
+                   $('#SougeiKasan'+tenkainum).attr('disabled','disabled');
+                   $('#NyuyokuKasan'+tenkainum).attr('disabled','disabled');
+                   $('#KinouKasan'+tenkainum).attr('disabled','disabled');
+                   $('#KoukuKasan'+tenkainum).attr('disabled','disabled');
+                   $('#EiyouKasan'+tenkainum).attr('disabled','disabled');
+                   $('#RyouyoushokuKasan'+tenkainum).attr('disabled','disabled');
+              }
+              $('#ServiceTani'+tenkainum).val(tenkaid[tkd].tani);
+              $('#ServiceGendogakuTaisho'+tenkainum).val(tenkaid[tkd].gendogaku);
+              $('#ServiceKingaku'+tenkainum).val(tenkaid[tkd].kingaku);
+              $('#ServiceJikofutan'+tenkainum).val(tenkaid[tkd].jikofutan);
+              $('.tdTaniGoukei').eq(tenkainum).text(tenkaid[tkd].kaisu);
+              $('.ServiceKaisu').eq(tenkainum).val(tenkaid[tkd].kaisu);
+              if(tenkaid[tkd].plusfee!="") {
+              $('#FuzuiHiyou'+tenkainum).val(tenkaid[tkd].plusfee);
+              }
+               
+              tenkainum++;
+            }
+        }
+
+
+
+
+		$(document).on('click','#Get',function(){
+			var AllEvents=calendar.fullCalendar('clientEvents');
+			var ArrTitles="";
+		    AllEvents.forEach(function(val,idx){
+				ArrTitles=ArrTitles+","+val.title;
+			});
+		    $('#parameters').val(ArrTitles);
+		    var paramtest=$('#parameters').val();
+		    alert(paramtest);
+		    return false;
+		});
+
+        var dataArrYoubiWeek = new Array();
+        $('#regist').live('click',function(){
+			//バリデーションチェック
+//			var message = "";
+//			message += validationCheck();
+//			if (message != "") {
+//				alert(message);
+//				return false;
+//			}
+            //  週、曜日の値をセット
+            $('.tblWeekYoubi').each(function(i){
+                dataArrYoubiWeek = new Array();
+                $('.tblWeekYoubi').eq(i).children().children().children().children('*[name=YoubiWeekVal]:checked').each(function(){
+                    dataArrYoubiWeek.push($(this).val());
+                })
+                $('.totalWeekYoubi').eq(i).val(dataArrYoubiWeek);
+//                alert($('.totalWeekYoubi').eq(i).val());
+                var kasancheck="";
+                if($('#JakunenKasan'+i+':checked').val()=="1") {
+                    kasancheck=kasancheck+'若';
+                }
+                if($('#SougeiKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'送';
+                    } else {
+                        kasancheck=kasancheck+',送';
+                    }
+                }
+                if($('#NyuyokuKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'入';
+                    } else {
+                        kasancheck=kasancheck+',入';
+                    }
+                }
+                if($('#KinouKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'機';
+                    } else {
+                        kasancheck=kasancheck+',機';
+                    }
+                }
+                if($('#KoukuKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'口';
+                    } else {
+                        kasancheck=kasancheck+',口';
+                    }
+                }
+                if($('#EiyouKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'栄';
+                    } else {
+                        kasancheck=kasancheck+',栄';
+                    }
+                }
+                if($('#RyouyoushokuKasan'+i+':checked').val()=="1") {
+                    if(kasancheck=="") {
+                        kasancheck=kasancheck+'療';
+                    } else {
+                        kasancheck=kasancheck+',療';
+                    }
+                }
+                $('.hdKasanNaiyou').eq(i).val(kasancheck);
+            })
+            $('#tenkaiNum').val(tenkainum);
+            $('#MODE').val('regist');
+            frmTenkaijouhou.action="TENKAIJOUHOU_SETTEI_KAIGO.CGI";
+            frmTenkaijouhou.method="POST";
+            frmTenkaijouhou.submit();
+            window.open('../HTML/WAIT.html','waitwindow','width=200,height=100,left=300,top=300');
+        });
+
+        function getValueCountID(id) {
+           var tblidx=id;
+           var count=0;
+           $('.tblWeekYoubi').eq(tblidx).children().children().children().children('*[name=YoubiWeekVal]:checked').each(function(){
+               count++;
+           });
+           $('.tdTaniGoukei').eq(tblidx).text(count);
+           var servicefee=0;
+           for (var i in kaigoservice) {
+               var kaigoid=kaigoservice[i].jigyoushatype+kaigoservice[i].id;
+               if($('.KaigoService').eq(tblidx).val()==kaigoid) {
+                   if(kaigoservice[i].jigyoushatype=="11"&&kaigoservice[i].fee=="_"){
+                      var ST=$(".EventStartTime").eq(tblidx).val().split(":");
+                      var ET=$(".EventEndTime").eq(tblidx).val().split(":");
+                      var SM=ST[0]*60+parseInt(ST[1]);
+                      var EM=ET[0]*60+parseInt(ET[1]);
+                      var KM=parseInt(EM)-parseInt(SM);
+                      var calcKM=KM/30;
+                      var taniKM=Math.floor(calcKM);
+                      for(var e in houmonkaigoextra) {
+                        if(kaigoservice[i].id==houmonkaigoextra[e].id) {
+                          servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                          break;
+                        }
+                      } 
+                   } else {
+                     servicefee=kaigoservice[i].fee;
+                   }
+                   shukeiflg=kaigoservice[i].calcunit;
+                   break;
+               }
+           }
+           for (var k in kyoukyusha) {
+               if($('.Kyoukyusha').eq(tblidx).val()==kyoukyusha[k].id) {
+                   areatanka=kyoukyusha[k].areatanka;
+                   break;
+               }
+           }
+           
+           var tanigoukei=0;
+           if(shukeiflg=="m") {
+              tanigoukei=servicefee;
+           } else {
+              tanigoukei=servicefee*count;
+           }
+           var kingakugoukei=Math.floor(tanigoukei*areatanka);
+           var jikofutankingaku=Math.floor(kingakugoukei*jikofutanwariai);
+
+           $('.ServiceTani').eq(tblidx).val(tanigoukei);
+           $('.ServiceGendogakuTaisho').eq(tblidx).val(tanigoukei);
+           $('.ServiceKingaku').eq(tblidx).val(kingakugoukei);
+           $('.ServiceJikofutan').eq(tblidx).val(jikofutankingaku);
+           $('.ServiceKaisu').eq(tblidx).val(count);
+        }
+        function getValueCount(obj) {
+           var tblParent=$(obj).parent().parent().parent().parent();
+           var tblidx=$('.tblWeekYoubi').index(tblParent);
+           var count=0;
+           $('.tblWeekYoubi').eq(tblidx).children().children().children().children('*[name=YoubiWeekVal]:checked').each(function(){
+               count++;
+           });
+           $('.tdTaniGoukei').eq(tblidx).text(count);
+           var servicefee=0;
+           for (var i in kaigoservice) {
+               var kaigoid=kaigoservice[i].jigyoushatype+kaigoservice[i].id;
+               if($('.KaigoService').eq(tblidx).val()==kaigoid) {
+                   if(kaigoservice[i].jigyoushatype=="11"&&kaigoservice[i].fee=="_"){
+                      var ST=$(".EventStartTime").eq(tblidx).val().split(":");
+                      var ET=$(".EventEndTime").eq(tblidx).val().split(":");
+                      var SM=ST[0]*60+parseInt(ST[1]);
+                      var EM=ET[0]*60+parseInt(ET[1]);
+                      var KM=parseInt(EM)-parseInt(SM);
+                      var calcKM=KM/30;
+                      var taniKM=Math.floor(calcKM);
+                      for(var e in houmonkaigoextra) {
+                        if(kaigoservice[i].id==houmonkaigoextra[e].id) {
+                          servicefee=Math.round((parseInt(houmonkaigoextra[e].basic)+parseInt(taniKM*houmonkaigoextra[e].a)+parseInt(houmonkaigoextra[e].b))*houmonkaigoextra[e].c*houmonkaigoextra[e].d*houmonkaigoextra[e].e*houmonkaigoextra[e].f*houmonkaigoextra[e].g);
+                          break;
+                        }
+                      } 
+                   } else {
+                     servicefee=kaigoservice[i].fee;
+                   }
+                   shukeiflg=kaigoservice[i].calcunit;
+                   break;
+               }
+           }
+           for (var k in kyoukyusha) {
+               if($('.Kyoukyusha').eq(tblidx).val()==kyoukyusha[k].id) {
+                   areatanka=kyoukyusha[k].areatanka;
+                   break;
+               }
+           }
+           
+           var tanigoukei=0;
+           if(shukeiflg=="m") {
+              tanigoukei=servicefee;
+           } else {
+              tanigoukei=servicefee*count;
+           }
+           var kingakugoukei=Math.floor(tanigoukei*areatanka);
+           var jikofutankingaku=Math.floor(kingakugoukei*jikofutanwariai);
+
+           $('.ServiceTani').eq(tblidx).val(tanigoukei);
+           $('.ServiceGendogakuTaisho').eq(tblidx).val(tanigoukei);
+           $('.ServiceKingaku').eq(tblidx).val(kingakugoukei);
+           $('.ServiceJikofutan').eq(tblidx).val(jikofutankingaku);
+           $('.ServiceKaisu').eq(tblidx).val(count);
+        }
+
+        
+        $("*[name=valueHeader]").live('change',function(){
+        });
+
+        // 単位合計を算出＆自己負担額を算出
+        $("*[name=YoubiWeekVal]").live('change',function(){
+            getValueCount(this);
+        });
+
+        $('.AllSun').live('change',function(){
+             var index=$('.AllSun').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstSun').eq(index).attr('checked',true);
+             $('.SecondSun').eq(index).attr('checked',true);
+             $('.ThirdSun').eq(index).attr('checked',true);
+             $('.FourthSun').eq(index).attr('checked',true);
+             $('.FifthSun').eq(index).attr('checked',true);
+            } else {
+             $('.FirstSun').eq(index).removeAttr('checked');
+             $('.SecondSun').eq(index).removeAttr('checked');
+             $('.ThirdSun').eq(index).removeAttr('checked');
+             $('.FourthSun').eq(index).removeAttr('checked');
+             $('.FifthSun').eq(index).removeAttr('checked');
+            }
+            getValueCount(this);
+        });
+
+        $('.AllMon').live('change',function(){
+             var index=$('.AllMon').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstMon').eq(index).attr('checked',true);
+             $('.SecondMon').eq(index).attr('checked',true);
+             $('.ThirdMon').eq(index).attr('checked',true);
+             $('.FourthMon').eq(index).attr('checked',true);
+             $('.FifthMon').eq(index).attr('checked',true);
+            } else {
+             $('.FirstMon').eq(index).removeAttr('checked');
+             $('.SecondMon').eq(index).removeAttr('checked');
+             $('.ThirdMon').eq(index).removeAttr('checked');
+             $('.FourthMon').eq(index).removeAttr('checked');
+             $('.FifthMon').eq(index).removeAttr('checked');
+            }
+            getValueCount(this);
+        });
+
+        $('.AllTue').live('change',function(){
+             var index=$('.AllTue').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstTue').eq(index).attr('checked',true);
+             $('.SecondTue').eq(index).attr('checked',true);
+             $('.ThirdTue').eq(index).attr('checked',true);
+             $('.FourthTue').eq(index).attr('checked',true);
+             $('.FifthTue').eq(index).attr('checked',true);
+            } else {
+             $('.FirstTue').eq(index).removeAttr('checked',true);
+             $('.SecondTue').eq(index).removeAttr('checked',true);
+             $('.ThirdTue').eq(index).removeAttr('checked',true);
+             $('.FourthTue').eq(index).removeAttr('checked',true);
+             $('.FifthTue').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.AllWed').live('change',function(){
+             var index=$('.AllWed').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstWed').eq(index).attr('checked',true);
+             $('.SecondWed').eq(index).attr('checked',true);
+             $('.ThirdWed').eq(index).attr('checked',true);
+             $('.FourthWed').eq(index).attr('checked',true);
+             $('.FifthWed').eq(index).attr('checked',true);
+            } else {
+             $('.FirstWed').eq(index).removeAttr('checked',true);
+             $('.SecondWed').eq(index).removeAttr('checked',true);
+             $('.ThirdWed').eq(index).removeAttr('checked',true);
+             $('.FourthWed').eq(index).removeAttr('checked',true);
+             $('.FifthWed').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.AllThu').live('change',function(){
+             var index=$('.AllThu').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstThu').eq(index).attr('checked',true);
+             $('.SecondThu').eq(index).attr('checked',true);
+             $('.ThirdThu').eq(index).attr('checked',true);
+             $('.FourthThu').eq(index).attr('checked',true);
+             $('.FifthThu').eq(index).attr('checked',true);
+            } else {
+             $('.FirstThu').eq(index).removeAttr('checked',true);
+             $('.SecondThu').eq(index).removeAttr('checked',true);
+             $('.ThirdThu').eq(index).removeAttr('checked',true);
+             $('.FourthThu').eq(index).removeAttr('checked',true);
+             $('.FifthThu').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.AllFri').live('change',function(){
+             var index=$('.AllFri').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstFri').eq(index).attr('checked',true);
+             $('.SecondFri').eq(index).attr('checked',true);
+             $('.ThirdFri').eq(index).attr('checked',true);
+             $('.FourthFri').eq(index).attr('checked',true);
+             $('.FifthFri').eq(index).attr('checked',true);
+            } else {
+             $('.FirstFri').eq(index).removeAttr('checked',true);
+             $('.SecondFri').eq(index).removeAttr('checked',true);
+             $('.ThirdFri').eq(index).removeAttr('checked',true);
+             $('.FourthFri').eq(index).removeAttr('checked',true);
+             $('.FifthFri').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.AllSat').live('change',function(){
+             var index=$('.AllSat').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstSat').eq(index).attr('checked',true);
+             $('.SecondSat').eq(index).attr('checked',true);
+             $('.ThirdSat').eq(index).attr('checked',true);
+             $('.FourthSat').eq(index).attr('checked',true);
+             $('.FifthSat').eq(index).attr('checked',true);
+            } else {
+             $('.FirstSat').eq(index).removeAttr('checked',true);
+             $('.SecondSat').eq(index).removeAttr('checked',true);
+             $('.ThirdSat').eq(index).removeAttr('checked',true);
+             $('.FourthSat').eq(index).removeAttr('checked',true);
+             $('.FifthSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+
+        $('.FirstAll').live('change',function(){
+             var index=$('.FirstAll').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FirstSun').eq(index).attr('checked',true);
+             $('.FirstMon').eq(index).attr('checked',true);
+             $('.FirstTue').eq(index).attr('checked',true);
+             $('.FirstWed').eq(index).attr('checked',true);
+             $('.FirstThu').eq(index).attr('checked',true);
+             $('.FirstFri').eq(index).attr('checked',true);
+             $('.FirstSat').eq(index).attr('checked',true);
+            } else {
+             $('.FirstSun').eq(index).removeAttr('checked',true);
+             $('.FirstMon').eq(index).removeAttr('checked',true);
+             $('.FirstTue').eq(index).removeAttr('checked',true);
+             $('.FirstWed').eq(index).removeAttr('checked',true);
+             $('.FirstThu').eq(index).removeAttr('checked',true);
+             $('.FirstFri').eq(index).removeAttr('checked',true);
+             $('.FirstSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.SecondAll').live('change',function(){
+             var index=$('.SecondAll').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.SecondSun').eq(index).attr('checked',true);
+             $('.SecondMon').eq(index).attr('checked',true);
+             $('.SecondTue').eq(index).attr('checked',true);
+             $('.SecondWed').eq(index).attr('checked',true);
+             $('.SecondThu').eq(index).attr('checked',true);
+             $('.SecondFri').eq(index).attr('checked',true);
+             $('.SecondSat').eq(index).attr('checked',true);
+            } else {
+             $('.SecondSun').eq(index).removeAttr('checked',true);
+             $('.SecondMon').eq(index).removeAttr('checked',true);
+             $('.SecondTue').eq(index).removeAttr('checked',true);
+             $('.SecondWed').eq(index).removeAttr('checked',true);
+             $('.SecondThu').eq(index).removeAttr('checked',true);
+             $('.SecondFri').eq(index).removeAttr('checked',true);
+             $('.SecondSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.ThirdAll').live('change',function(){
+             var index=$('.ThirdAll').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.ThirdSun').eq(index).attr('checked',true);
+             $('.ThirdMon').eq(index).attr('checked',true);
+             $('.ThirdTue').eq(index).attr('checked',true);
+             $('.ThirdWed').eq(index).attr('checked',true);
+             $('.ThirdThu').eq(index).attr('checked',true);
+             $('.ThirdFri').eq(index).attr('checked',true);
+             $('.ThirdSat').eq(index).attr('checked',true);
+            } else {
+             $('.ThirdSun').eq(index).removeAttr('checked',true);
+             $('.ThirdMon').eq(index).removeAttr('checked',true);
+             $('.ThirdTue').eq(index).removeAttr('checked',true);
+             $('.ThirdWed').eq(index).removeAttr('checked',true);
+             $('.ThirdThu').eq(index).removeAttr('checked',true);
+             $('.ThirdFri').eq(index).removeAttr('checked',true);
+             $('.ThirdSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.FourthAll').live('change',function(){
+             var index=$('.FourthAll').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FourthSun').eq(index).attr('checked',true);
+             $('.FourthMon').eq(index).attr('checked',true);
+             $('.FourthTue').eq(index).attr('checked',true);
+             $('.FourthWed').eq(index).attr('checked',true);
+             $('.FourthThu').eq(index).attr('checked',true);
+             $('.FourthFri').eq(index).attr('checked',true);
+             $('.FourthSat').eq(index).attr('checked',true);
+            } else {
+             $('.FourthSun').eq(index).removeAttr('checked',true);
+             $('.FourthMon').eq(index).removeAttr('checked',true);
+             $('.FourthTue').eq(index).removeAttr('checked',true);
+             $('.FourthWed').eq(index).removeAttr('checked',true);
+             $('.FourthThu').eq(index).removeAttr('checked',true);
+             $('.FourthFri').eq(index).removeAttr('checked',true);
+             $('.FourthSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+
+        $('.FifthAll').live('change',function(){
+             var index=$('.FifthAll').index(this);
+            if($(this).attr('checked') == "checked") {
+             $('.FifthSun').eq(index).attr('checked',true);
+             $('.FifthMon').eq(index).attr('checked',true);
+             $('.FifthTue').eq(index).attr('checked',true);
+             $('.FifthWed').eq(index).attr('checked',true);
+             $('.FifthThu').eq(index).attr('checked',true);
+             $('.FifthFri').eq(index).attr('checked',true);
+             $('.FifthSat').eq(index).attr('checked',true);
+            } else {
+             $('.FifthSun').eq(index).removeAttr('checked',true);
+             $('.FifthMon').eq(index).removeAttr('checked',true);
+             $('.FifthTue').eq(index).removeAttr('checked',true);
+             $('.FifthWed').eq(index).removeAttr('checked',true);
+             $('.FifthThu').eq(index).removeAttr('checked',true);
+             $('.FifthFri').eq(index).removeAttr('checked',true);
+             $('.FifthSat').eq(index).removeAttr('checked',true);
+            }
+            getValueCount(this);
+        });
+	});
+
+
+
+                $('.shisetsulist').live('mouseover',function(){
+                   this.style.backgroundColor="lightgrey";
+                });
+                $('.shisetsulist').live('mouseout',function(){
+                   this.style.backgroundColor="white";
+                });
+		function validationCheck() {
+			var message = "";
+			message += idealValidateCheck($("#frmTenkaijouhou").find("input[type='number']").not("[disabled='disabled']"), true);
+			//必須チェック
+			message += requiredCheck();
+			//提供時間入れ子チェック
+			message += validateTime();
+			return message;
+		}
+		function validateTime() {
+			var message = "";
+//			var separator = ":";
+//			var sTimes = $("input[type='time'][name*='EventStartTime']").get();
+//			var eTimes = $("input[type='time'][name*='EventEndTime']").get();
+//			message = checkTime(sTimes, eTimes, separator, CAREPLAN_Item.num0, CAREPLAN_Item.num1);
+			return message;
+		}
+		function requiredCheck() {
+			var message = "";
+			//表示順
+//			var element = $("[name*='Sort'][required]").get();
+//			message += isRequired(CAREPLAN_Item.num3, element);
+			//提供時間
+//			element = $("input[type='time'][name*='EventStartTime'],input[type='time'][name*='EventEndTime']").get();
+//			message += isRequired(CAREPLAN_Item.num2, element);
+			return message;
+		}
+    </script>
+    <!-- Demo page code -->
+
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em;
+        }
+		.table-yobi {
+		    margin-top:5px;
+		    margin-bottom:10px;
+		    padding:0px;
+		    border-collapse:collapse;
+		    border-style:none;
+		}
+    </style>
+
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+
+  </head>
+
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body class="" onload="timewaitClose()"> 
+  <!--<![endif]-->
+    <div class="navbar">
+        <div class="navbar-inner">
+                <ul class="nav pull-right">
+                    <li id="fat-menu2">
+                            <a tabindex="-1" href="/E-LIFE/SYSTEM_SETTEI/cgi-bin/SIGN_IN.CGI">ログアウト</a>
+                    </li>
+
+                </ul>
+                <ul class="nav pull-right">
+
+                    <li id="fat-menu" class="dropdown">
+                        <a href="#" role="button" class="dropdown-toggle" data-toggle="dropdown">
+<!-- ###USER__NAME### -->
+                            <i class="icon-user"></i> %1
+<!-- ###USER__NAME### -->
+                        </a>
+
+                    </li>
+
+                </ul>
+                <ul class="nav pull-right">
+                    <li id="fat-menu3" class="dropdown on">
+                        <a href="#" class="dropdown-toggle" data-toggle="dropdown" tabindex="-1">###SELECT_SHISETSU###<i class="icon-caret-down"></i></a>
+
+                        <ul id="shisetsuList_ul" class="dropdown-menu" style="z-index:1000">
+<!-- ###SHISETSU_TAISHOU### -->
+                            <li class="shisetsulist"><a href="javascript:Post('###USERID###','###PASSWORD###','%1','/E-LIFE/SYSTEM_SETTEI/cgi-bin/LOGIN.CGI')">%2</a></li>
+<!-- ###SHISETSU_TAISHOU### -->
+                        </ul>
+                    </li>
+                </ul>
+                <font class="brand"><span style="position:relative; top:-4px;"><img src="/images/tokyu_logo.gif" alt="東急マーク" width="40" height="28"></span><span class="first">東急イーライフデザイン</span></font>
+        </div>
+    </div>
+    
+    
+
+    <!-- メニューバーここから -->
+
+
+    <!-- メニューバーここまで -->
+
+    <div class="header">
+        <h1 class="page-title">展開情報設定</h1>
+    </div>
+
+	<div class="row-fluid">
+		<table style="margin-left:2em;min-width:1024px;"><tr>
+		    <td style="width:30%;">利用者名：<font style="font-size:20px"><b>###RIYOUSHAMEI###</b></font>
+			</td>
+			<td style="width:30%;">ケアプラン作成日：<input type="text" id="KijunDate" name="KijunDate" value="###KEIKAKUSAKUSEIDATE###" style="width:150px" readonly />
+			</td>
+			<td>
+				<div class="btn-toolbar" style="text-align:right;">
+		        	<button id="regist" name="regist" class="btn btn-pink" style="display:###TOUROKUDISP###" type="button"><i class="icon-edit"></i>登録</button>
+		        	<button id="home" name="home" type="button" class="btn btn-move"><i class="icon-home"></i>戻る</button>
+				</div>
+			</td>
+		</tr></table>
+	</div>
+
+    <div class="container-fluid">
+		<div class="well" style="min-width:1024px;">
+			<div>
+                 <table style="width:900px;">
+                    <tr>
+                       <td style="width:60%">
+                           <button id="add" name="add" type="button" class="btn btn-pink" style="display:###TOUROKUDISP###"><i class="icon-plus"></i>展開情報設定追加</button>
+                       </td>
+                       <td style="width:20%">要介護度:<input id="Youkaigodo" name="Youkaigodo" type="text" style="width:80px" value="" readonly>
+                       </td>
+                       <td style="width:20%">利用限度額:<input id="RiyouGendo" name="RiyouGendo" type="text" style="width:80px" value="" readonly>
+                       </td>
+                    </tr>
+                 </table>
+            </div>
+			<div style="height:650px;">
+			<div style="height:550px; overflow-y:auto">
+				<form action="#" class="form-horizonta" id="frmTenkaijouhou" method="post" accept-charset="utf-8">
+                                   <div style="display:none;">
+                                       <input type="hidden" name="_method" value="POST"/>
+                                       <input type="hidden" id="tenkaiNum" name="tenkaiNum" value="">
+                                       <input type="hidden" id="MODE" name="MODE" value="" />
+                                       <input type="hidden" id="Riyoushaid" name="Riyoushaid" value="###RIYOUSHAID###" />
+                                       <input type="hidden" id="USER_ID" name="USER_ID" value="###USERID###" />
+                                       <input type="hidden" id="hdKijunDate" name="hdKijunDate" value="###HDKEIKAKUSAKUSEIDATE###" />
+                                       <input type="hidden" id="KijunDate" name="KijunDate" value="###KEIKAKUSAKUSEIDATE###" />
+                                       <input type="hidden" name="hdKeikakuSakuseiDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+                                       <input type="hidden" name="KeikakuSakuseiDate" value=###KEIKAKUSAKUSEIDATE### >
+                                       <input type="hidden" name="userid"  value="###USERID###" />
+                                       <input type="hidden" name="password" value="###PASSWORD###" />
+                                       <input type="hidden" name="shisetsu" value="###SHISETSUID###" />
+                                       <input type="hidden" name="hdkensakudate" value=###HDKENSAKUDATE### >
+                                   </div>
+					<div style="float:left; margin-right:2em; margin-top:1em;">
+					<table id="ServiceIchiran" style="margin-top:2em;margin-bottom:2em; border:#bbbbbb solid 2px;min-width:1200px;">
+					  <thead>
+					    <tr>
+                          <th id="HeaderSort" style="width:3%;background-color:#dddddd; border:#bbbbbb solid 1px;">表示順</th>
+                          <th id="HeaderNaiyou" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス内容</th>
+                          <th id="HeaderHoken" style="width:3%;background-color:#dddddd; border:#bbbbbb solid 1px;">保険</th>
+                          <th id="HeaderServiceType" style="width:5%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス種類</th>
+                          <th id="HeaderKyoukyu" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">供給者</th>
+                          <th id="HeaderServiceTime" style="width:10%;background-color:#dddddd; border:#bbbbbb solid 1px;">提供時刻</th>
+                          <th id="HeaderServiceKoumoku" style="width:12%;background-color:#dddddd; border:#bbbbbb solid 1px;">サービス区分</th>
+                          <th id="HeaderServiceYoubiWeek" style="width:14%; border:#bbbbbb solid 1px;background-color:#dddddd;">実施週曜日</th>
+                          <th id="HeaderServiceKasan" style="width:12%; border:#bbbbbb solid 1px;background-color:#dddddd;">加算</th>
+                          <th id="HeaderServiceKaisu" style="width:3%; border:#bbbbbb solid 1px;background-color:#dddddd;">回数/月</th>
+                          <th id="HeaderServiceTani" style="width:7%; border:#bbbbbb solid 1px;background-color:#dddddd;">単位(内限度額対象)</th>
+                          <th id="HeaderServiceTani" style="width:7%; border:#bbbbbb solid 1px;background-color:#dddddd;">費用(内自己負担)</th>
+                          <th id="HeaderFuzuiHiyou" style="width:3%; border:#bbbbbb solid 1px;background-color:#dddddd;display:none">付随費用単価</th>
+                        </tr>
+					  </thead>
+					  <tbody>
+                        <tr>
+                            <td style=" border:#bbbbbb solid 1px;">
+           	                    <input id="Sort0" name="Sort0" type="number" step="1" min="1" placeholder="1" style="width:40px" value="" required>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <textarea id="ServiceNaiyou0" name="ServiceNaiyou0" style="width:100%" rows=4 maxlength="50" placeholder="最大50文字"></textarea>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <input id="HokenKbn0" name="HokenKbn0" type="checkbox" value="1">
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <select id="ServiceType0" name="ServiceType0" class="ServiceType" style="width:120px"><option value=""></option></select>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <select id="Kyoukyusha0" name="Kyoukyusha0" class="Kyoukyusha" style="width:200px"><option value=""></option></select>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <input name="EventStartTime0" style="width:80px" type="time" id="EventStartTime0" class="EventStartTime" required/>～
+                                <input name="EventEndTime0" style="width:80px" type="time" id="EventEndTime0" class="EventEndTime" required/>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <select id="KaigoService0" name="KaigoService0" class="KaigoService" style="width:160px"><option value=""></option></select>
+                            </td>
+                            <td style="border:#bbbbbb solid 1px;">
+                                <table id="tblWeekYoubi0" name="tblWeekYoubi0" class="tblWeekYoubi">
+                                   <tr>
+                                     <td><input type="hidden" id="totalWeekYoubi0" name="totalWeekYoubi0" class="totalWeekYoubi"></td><td style="border-right:#bbbbbb solid 1px;">全</td><td>日</td><td>月</td><td>火</td><td>水</td><td>木</td><td>金</td><td>土</td>
+                                   </tr>
+                                   <tr>
+                                     <td style="border-bottom:#bbbbbb solid 1px;">毎週</td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;border-right:#bbbbbb solid 1px;"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSun0" name="valueHeader" class="AllSun" value="0"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllMon0" name="valueHeader" class="AllMon" value="1"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllTue0" name="valueHeader" class="AllTue" value="2"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllWed0" name="valueHeader" class="AllWed" value="3"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllThu0" name="valueHeader" class="AllThu" value="4"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllFri0" name="valueHeader" class="AllFri" value="5"></td>
+                                     <td style="border-bottom:#bbbbbb solid 1px;"><input type="checkbox" id="AllSat0" name="valueHeader" class="AllSat" value="6"></td>
+                                   </tr>
+                                   <tr>
+                                     <td>1週</td>
+                                     <td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FirstAll0" name="valueHeader" class="FirstAll" value="a"></td>
+                                     <td><input type="checkbox" id="FirstSun0" name="YoubiWeekVal" class="FirstSun" value="a0"></td>
+                                     <td><input type="checkbox" id="FirstMon0" name="YoubiWeekVal" class="FirstMon" value="a1"></td>
+                                     <td><input type="checkbox" id="FirstTue0" name="YoubiWeekVal" class="FirstTue" value="a2"></td>
+                                     <td><input type="checkbox" id="FirstWed0" name="YoubiWeekVal" class="FirstWed" value="a3"></td>
+                                     <td><input type="checkbox" id="FirstThu0" name="YoubiWeekVal" class="FirstThu" value="a4"></td>
+                                     <td><input type="checkbox" id="FirstFri0" name="YoubiWeekVal" class="FirstFri" value="a5"></td>
+                                     <td><input type="checkbox" id="FirstSat0" name="YoubiWeekVal" class="FirstSat" value="a6"></td>
+                                   </tr>
+                                   <tr>
+                                     <td>2週</td>
+                                     <td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="SecondAll0" name="valueHeader" class="SecondAll" value="b"></td>
+                                     <td><input type="checkbox" id="SecondSun0" name="YoubiWeekVal" class="SecondSun" value="b0"></td>
+                                     <td><input type="checkbox" id="SecondMon0" name="YoubiWeekVal" class="SecondMon" value="b1"></td>
+                                     <td><input type="checkbox" id="SecondTue0" name="YoubiWeekVal" class="SecondTue" value="b2"></td>
+                                     <td><input type="checkbox" id="SecondWed0" name="YoubiWeekVal" class="SecondWed" value="b3"></td>
+                                     <td><input type="checkbox" id="SecondThu0" name="YoubiWeekVal" class="SecondThu" value="b4"></td>
+                                     <td><input type="checkbox" id="SecondFri0" name="YoubiWeekVal" class="SecondFri" value="b5"></td>
+                                     <td><input type="checkbox" id="SecondSat0" name="YoubiWeekVal" class="SecondSat" value="b6"></td>
+                                   </tr>
+                                   <tr>
+                                     <td>3週</td>
+                                     <td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="ThirdAll0" name="valueHeader" class="ThirdAll" value="c"></td>
+                                     <td><input type="checkbox" id="ThirdSun0" name="YoubiWeekVal" class="ThirdSun" value="c0"></td>
+                                     <td><input type="checkbox" id="ThirdMon0" name="YoubiWeekVal" class="ThirdMon" value="c1"></td>
+                                     <td><input type="checkbox" id="ThirdTue0" name="YoubiWeekVal" class="ThirdTue" value="c2"></td>
+                                     <td><input type="checkbox" id="ThirdWed0" name="YoubiWeekVal" class="ThirdWed" value="c3"></td>
+                                     <td><input type="checkbox" id="ThirdThu0" name="YoubiWeekVal" class="ThirdThu" value="c4"></td>
+                                     <td><input type="checkbox" id="ThirdFri0" name="YoubiWeekVal" class="ThirdFri" value="c5"></td>
+                                     <td><input type="checkbox" id="ThirdSat0" name="YoubiWeekVal" class="ThirdSat" value="c6"></td>
+                                   </tr>
+                                   <tr>
+                                     <td>4週</td>
+                                     <td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FourthAll0" name="valueHeader" class="FourthAll" value="d"></td>
+                                     <td><input type="checkbox" id="FourthSun0" name="YoubiWeekVal" class="FourthSun" value="d0"></td>
+                                     <td><input type="checkbox" id="FourthMon0" name="YoubiWeekVal" class="FourthMon" value="d1"></td>
+                                     <td><input type="checkbox" id="FourthTue0" name="YoubiWeekVal" class="FourthTue" value="d2"></td>
+                                     <td><input type="checkbox" id="FourthWed0" name="YoubiWeekVal" class="FourthWed" value="d3"></td>
+                                     <td><input type="checkbox" id="FourthThu0" name="YoubiWeekVal" class="FourthThu" value="d4"></td>
+                                     <td><input type="checkbox" id="FourthFri0" name="YoubiWeekVal" class="FourthFri" value="d5"></td>
+                                     <td><input type="checkbox" id="FourthSat0" name="YoubiWeekVal" class="FourthSat" value="d6"></td>
+                                   </tr>
+                                   <tr>
+                                     <td>5週</td>
+                                     <td style="border-right:#bbbbbb solid 1px;"><input type="checkbox" id="FifthAll0" name="valueHeader" class="FifthAll" value="e"></td>
+                                     <td><input type="checkbox" id="FifthSun0" name="YoubiWeekVal" class="FifthSun" value="e0"></td>
+                                     <td><input type="checkbox" id="FifthMon0" name="YoubiWeekVal" class="FifthMon" value="e1"></td>
+                                     <td><input type="checkbox" id="FifthTue0" name="YoubiWeekVal" class="FifthTue" value="e2"></td>
+                                     <td><input type="checkbox" id="FifthWed0" name="YoubiWeekVal" class="FifthWed" value="e3"></td>
+                                     <td><input type="checkbox" id="FifthThu0" name="YoubiWeekVal" class="FifthThu" value="e4"></td>
+                                     <td><input type="checkbox" id="FifthFri0" name="YoubiWeekVal" class="FifthFri" value="e5"></td>
+                                     <td><input type="checkbox" id="FifthSat0" name="YoubiWeekVal" class="FifthSat" value="e6"></td>
+                                   </tr>
+                                </table>
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                    <input type="hidden" id="hdKasanNaiyou0" name="hdKasanNaiyou0" class="hdKasanNaiyou" />
+   	                            若年性認知加算<input id="JakunenKasan0" name="JakunenKasan0" type="checkbox" class="JakunenKasan" value="1" disabled><br />
+	                            <input id="SougeiKasan0" name="SougeiKasan0" type="hidden" class="SougeiKasan" value="1" disabled>
+	                            入浴加算<input id="NyuyokuKasan0" name="NyuyokuKasan0" type="checkbox" class="NyuyokuKasan" value="1" disabled><br />
+	                            機能訓練加算<input id="KinouKasan0" name="KinouKasan0" type="checkbox" class="KinouKasan" value="1" disabled><br />
+	                            口腔機能加算<input id="KoukuKasan0" name="KoukuKasan0" type="checkbox" class="KoukuKasan" value="1" disabled><br />
+	                            栄養改善加算<input id="EiyouKasan0" name="EiyouKasan0" type="checkbox" class="EiyouKasan" value="1" disabled><br />
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;" class="tdTaniGoukei">
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <input type="hidden" id="ServiceKaisu0" name="ServiceKaisu0" class="ServiceKaisu">
+                                <input id="ServiceTani0" name="ServiceTani0" class="ServiceTani" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0"><br />(<input id="ServiceGendogakuTaisho0" name="ServiceGendogakuTaisho0" class="ServiceGendogakuTaisho" type="number" step="1" min="0" placeholder="1" style="width:60px" value="0">)
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;">
+                                <input id="ServiceKingaku0" name="ServiceKingaku0" class="ServiceKingaku" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0"><br />(<input id="ServiceJikofutan0" name="ServiceJikofutan0" class="ServiceJikofutan" type="number" step="1" min="0" placeholder="10000" style="width:60px" value="0">)
+                            </td>
+                            <td style=" border:#bbbbbb solid 1px;display:none">
+                                <input type="number" step="1" min="0" placeholder="10000" id="FuzuiHiyou0" name="FuzuiHiyou0" class="FuzuiHiyou" style="width:60px" value="0">
+                            </td>
+                        </tr>
+					  </tbody>
+					</table>
+					</div>
+				</form>
+            </div>
+			<div>
+                 <table style="border-top:1px solid #bbbbbb;width:1000px; margin-top:1em;">
+                    <tr>
+                       <td style="width:38%"></td>
+                       <td style="width:12%;text-align:right">単位合計:</td>
+                       <td style="width:10%"><input id="TaniGoukei" name="TaniGoukei" type="text" style="width:80px" value="0" readonly>
+                       </td>
+                       <td style="width:12%;text-align:right">費用合計:</td>
+                       <td style="width:10%"><input id="HiyouGoukei" name="HiyouGoukei" type="text" style="width:80px" value="0" readonly>
+                       </td>
+                       <td style="width:20%" rowspan="2">
+                           <button id="calc" name="calc" type="button" class="btn btn-success">計算</button>
+                       </td>
+                    </tr>
+                    <tr>
+                       <td style="width:38%"></td>
+                       <td style="width:12%;text-align:right">限度額対象合計:</td>
+                       <td style="width:10%"><input id="GendogakuTaishouGoukei" name="GendogakuTaishouGoukei" type="text" style="width:80px" value="0" readonly>
+                       </td>
+                       <td style="width:12%;text-align:right">自己負担合計:</td>
+                       <td style="width:10%"><input id="JikoFutanGoukei" name="JikoFutanGoukei" type="text" style="width:80px" value="0" readonly>
+                       </td>
+                    </tr>
+                 </table>
+            </div>            
+			</div>
+        </div>
+    </div>
+
+    <form id="frmBack" name="frmBack" action="KYOTAKUSHIEN_CAREPLAN_MENU.CGI" method="POST">
+       <input type="hidden" name="Riyoushaid" value="###RIYOUSHAID###" >
+       <input type="hidden" name="USER_ID" value="###USERID###" >
+       <input type="hidden" name="MODE" value="init" >
+       <input type="hidden" name="hdKeikakuSakuseiDate" value="###HDKEIKAKUSAKUSEIDATE###" >
+       <input type="hidden" name="KeikakuSakuseiDate" value=###KEIKAKUSAKUSEIDATE### >
+       <input type="hidden" name="hdkensakudate" value=###HDKENSAKUDATE### >
+       <input type="hidden" name="userid"  value="###USERID###" />
+       <input type="hidden" name="password" value="###PASSWORD###" />
+       <input type="hidden" name="shisetsu" value="###SHISETSUID###" />
+    </form>
+
+       <form action="" method="post" name="formlink">
+           <input type="hidden" name="userid">
+           <input type="hidden" name="password">
+           <input type="hidden" name="cgi">
+           <input type="hidden" name="shisetsu">
+       </form>
+
+
+    <script type="text/javascript">
+        function Post(md,tx,shisetsu,url) {
+            formlink.userid.value = md;
+            formlink.password.value = tx;
+            formlink.shisetsu.value = shisetsu;
+            formlink.action=url;
+            formlink.cgi.value = url;
+            formlink.submit();
+        }
+    </script>
+
+
+    <script src="/js/bootstrap.js"></script>
+    <script type="text/javascript">
+        $("[rel=tooltip]").tooltip();
+        $(function() {
+            $('.demo-cancel-click').click(function(){return false;});
+        });
+        function timewaitClose() {
+          var w = window.open('../HTML/WAIT.html','waitwindow','width=200,height=100,left=300,top=300;');
+          w.close();
+        }
+    </script>
+    
+  </body>
+</html>
+
+

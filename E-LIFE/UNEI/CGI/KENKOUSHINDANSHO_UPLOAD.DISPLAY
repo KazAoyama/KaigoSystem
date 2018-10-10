@@ -1,0 +1,443 @@
+#!/bin/bash
+#
+# KENKOUSHINDANSHO_UPLOAD.DISPLAY : 健康診断書アップロード.DISPLAY
+#
+# Usage : KENKOUSHINDANSHO_UPLOAD.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.Inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+error=${4}
+
+# eval
+eval $(name-source ${namefile})
+
+# 権限でボタンの使用可否
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid          2:SHISETSU_ID 3:KENGEN_GROUP 4:appID      5:MENU_NAME
+# 6:DROPDOWN_STATUS 7:CGI_NAME    8:RINK_STATUS  9:CGI_STATUS 10:登録日時
+awk '$2=="0000" || $2=="'${shisetsu}'"'                                                    |
+awk '$7=="KENKOUSHINDANSHO_UPLOAD.CGI"{print $1,$9}'                                                    |
+LANG=C sort -u -k2,2n                                                                      |
+getlast 1 1                                                                                |
+self 2                                                                                     > $tmp-btn_kengen
+
+[ "$(cat $tmp-btn_kengen)" = "3" ] && echo "###BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "2" -o "$(cat $tmp-btn_kengen)" = "1" ] && echo "###BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+[ "$(cat $tmp-btn_kengen)" = "3" -o "$(cat $tmp-btn_kengen)" = "2" ] && echo "###INPUT_BTN_SEIGYO###" " " >> $tmp-calsed1
+[ "$(cat $tmp-btn_kengen)" = "1" -o "$(cat $tmp-btn_kengen)" = "0" ] && echo "###INPUT_BTN_SEIGYO###" "none" >> $tmp-calsed1
+
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+if [ -z ${downloadfile} ];then
+  FILE_NAME="null"
+else
+  file=$(cat ${downloadfile})
+  FILE_NAME="\"/E-LIFE/TATEKAEKIN/DOWNLOAD/${file}\""
+fi
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# ログインUSER名と施設の取得（仮）
+cat ${hometbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                  |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+#共通ヘッダー###########
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+########################
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+
+# 建屋準備
+cat ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME                   |
+self 1 3                                                     > $tmp-tateya_master
+
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタ(カナ)の準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2 3                                                   > $tmp-riyosha_master_kana
+
+if [ "${MODE}" = "upload" ];then
+  result=$(head -n1 ${error} | self 2)
+  if [ "${result}" = "ng" ];then
+    MODE="init"
+    message="$(cat ${error} | head -1 | self 3)"
+  else
+    MODE="init"
+    message="アップロード完了"
+  fi
+else
+  :
+fi
+
+if [ "${MODE}" = "delete" ];then
+  result=$(head -n1 ${error} | self 2)
+  if [ "${result}" = "ng" ];then
+    MODE="init"
+    message="$(cat ${error} | head -1 | self 3)"
+  else
+    MODE="init"
+    message="削除しました"
+  fi
+else
+  :
+fi
+
+
+
+# MODEがinitだったら渡ってきたネームをクリア
+if [ "${MODE}" = "init" ];then
+  riyosha_name="_"
+  floor="0"
+  unit="0"
+  tateya="$(cat $tmp-shisetsu_tateya_floor_id                      |
+          self 2 | head -n1)"
+  biko=""
+  # デフォルトメッセージを作成
+  echo "###DEFAULT_MES###" "「検索」ボタンをクリックしてください。アップロードする場合は対象者を選択してファイル選択してください。" >> ${tmp}-calsed1
+else
+  if [ "$(gyo ${searchfile})" = "0" ];then
+    echo "###DEFAULT_MES###" "データがありません" >> ${tmp}-calsed1
+  else
+    echo "###DEFAULT_MES###" "" >> ${tmp}-calsed1
+  fi
+fi
+
+# SHISETSU_RIYOSHA_STATUSの準備
+mukou=$(mdate ${today}/+31)
+kanata=$(mdate ${today}/-31)
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+awk '$2=="'${tateya}'"'                                      |
+awk '$7<="'${mukou}'" && $8>="'${kanata}'"'                  |
+awk '$9==1'                                                  |
+LANG=C sort -u -k1,3n -k4,4n -k6,6n                          > $tmp-riyosha_status
+cp $tmp-riyosha_status ${work}/stsauuu
+
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                        > $tmp-all
+  cat $tmp-riyosha_status                                                 |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$2=="'${tateya}'"'                                                 |
+  case ${floor} in
+  0 )
+    case ${unit} in
+      0 )
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    |
+        awk '{print $0,"'${riyosha_name}'"}'                              |
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+        awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-riyosha_name
+      ;;
+      * )
+        awk '$4=="'${unit}'"'                                             |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    |
+        awk '{print $0,"'${riyosha_name}'"}'                              |
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+        awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-riyosha_name
+      ;;
+    esac
+  ;;
+  * )
+    case ${unit} in
+      0 )
+        awk '$3=="'${floor}'"'                                            |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    |
+        awk '{print $0,"'${riyosha_name}'"}'                              |
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+        awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-riyosha_name
+      ;;
+      * )
+        awk '$4=="'${unit}'"'                                             |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    |
+        awk '{print $0,"'${riyosha_name}'"}'                              |
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+        awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-riyosha_name
+      ;;
+    esac
+  ;;
+  esac
+else
+  echo "00" "全て"                                                        > $tmp-all
+  cat $tmp-riyosha_status                                                 |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$2=="'${tateya}'"'                                                 |
+  case ${floor} in
+  0 )
+    case ${unit} in
+      0 )
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    > ${tmp}-riyosha_name
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+      ;;
+      * )
+        awk '$4=="'${unit}'"'                                             |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    > ${tmp}-riyosha_name
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+      ;;
+    esac
+  ;;
+  * )
+    case ${unit} in
+      0 )
+        awk '$3=="'${floor}'"'                                            |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    > ${tmp}-riyosha_name
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+      ;;
+      * )
+        awk '$4=="'${unit}'"'                                             |
+        self 6                                                            |
+        LANG=C sort -k1,1n                                                |
+        join1 key=1 $tmp-riyosha_master_kana                              |
+        LANG=C sort -k3,3                                                 |
+        delf 3                                                            |
+        cat $tmp-all -                                                    > ${tmp}-riyosha_name
+        #1:RIYOSHA_CODE 2:RIYOSHA_NAME 3:riyosha_name
+      ;;
+    esac
+  ;;
+  esac
+fi
+self 6 5 $tmp-riyosha_status                                 |
+LANG=C sort -k1,1                                               |
+join1 key=1 $tmp-riyosha_master_kana                                |
+self 1 3 2                                                   > $tmp-riyosha_room
+# 1:利用者ID 2:部屋番号
+cp $tmp-riyosha_room ${work}/room
+
+
+# 建屋のチェック
+if [ -n "${tateya}" -a "${tateya}" != "_" ];then
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 2                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-tateya_master                               |
+  awk '{print $0,"'${tateya}'"}'                               |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}' > $tmp-tateya_name
+else
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 2                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-tateya_master                               > $tmp-tateya_name
+fi
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_floor
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         |
+  awk '{print $0,"'${floor}'"}'                                |
+# 1:FLOOR_CODE 2:floor_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-floor_name
+else
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_unit
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  awk '$3=="'${floor}'"'                                       |
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  cat $tmp-all_unit -                                          |
+  awk '{print $0,"'${unit}'"}'                                 |
+# 1:UNTI_CODE 2:unit_name
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'   > ${tmp}-unit_name
+else
+  echo "0" "全て"                                              > $tmp-all_unit
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  cat $tmp-all_unit -                                          > $tmp-unit_name
+fi
+
+# searchfileの処理
+cat ${searchfile} > $tmp-searchfile
+
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat <<- FIN > $tmp-html2
+  <script type="text/javascript" language="javascript">
+    alert('${message}');
+  </script>
+FIN
+fi
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###DROPDOWN_ACTIVE1### active
+###LI_UNEI13### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###SELECT_SHISETSU### $select_shisetsu
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###FILE_NAME### ${FILE_NAME}
+###BIKO### ${biko}
+FIN
+
+cat ${tmp}-calsed1 ${checkfile} > ${tmp}-calsed
+
+# HTMLの作成
+
+cat ${html_dir}/KENKOUSHINDANSHO_UPLOAD1.html ${kyoutsu_dir}/MENUBAR.html ${html_dir}/KENKOUSHINDANSHO_UPLOAD2.html   |
+mojihame -l###UNIT_NAME### - ${tmp}-unit_name |
+mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+mojihame -l###TATEYA_NAME### - ${tmp}-tateya_name |
+mojihame -l###SEARCH_DATA### - ${tmp}-searchfile |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+calsed -f ${tmp}-calsed -  |
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi 
+
+rm -f ${tmp}-*
+exit 0

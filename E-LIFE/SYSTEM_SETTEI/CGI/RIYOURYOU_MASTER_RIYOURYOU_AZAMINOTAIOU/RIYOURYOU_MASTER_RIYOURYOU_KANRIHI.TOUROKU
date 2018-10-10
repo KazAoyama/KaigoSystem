@@ -1,0 +1,291 @@
+#!/bin/bash
+#
+# RIYOURYOU_MASTER_RIYOURYOU_KANRIHI.TOUROKU
+# 利用料賃料
+#
+# Written by E.Okuda 2013/12/16
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOURYOU"
+input_dir="${app_dir}/INPUT"
+tbl_dir="${home_dir}/E-LIFE/TBL/RIYOURYOU_MASTER"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "result ng"
+  echo "message ${message}"
+  rm -f $tmp-*
+  exit 1
+}
+
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+
+# [ -z "${KinyuuKikanName}" -o "${KinyuuKikanName}" = "_" ] && error_exit "金融機関未選択です。"
+# [ -z "${ShitenName}" -o "${ShitenName}" = "_" ] && error_exit "支店選択データです。"
+# [ -z "${KouzaShurui}" -o "${KouzaShurui}" = "_" ] && error_exit "口座種類未選択データです。"
+# [ -z "${KouzaNumber}" -o "${KouzaNumber}" = "_" ] && error_exit "口座番号を入力してください。"
+# [ -z "${KouzaName}" -o "${KouzaName}" = "_" ] && error_exit "名義人名を入力してください"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+# 賃料の取得
+cat ${namedata}     |
+awk '$1~/NextKanrihi[0-9]/{print $0}' |
+sed 's/NextKanrihi//g'  |
+awk '$2!="_"'            |
+sed 's/,//g'             |
+LANG=C sort         > $tmp-next_kanrihi
+# 1:部屋番号  2:新賃料
+
+# 賃料があったら期間を取得(現賃料至)
+if [ -s $tmp-next_kanrihi ] ; then
+
+  cat $tmp-next_kanrihi     |
+  awk '$1~/^[0-9]+$/{print $0}' > $tmp-next_kanrihi_number_check
+
+  [ -s $tmp-next_kanrihi_number_check ] || error_exit "賃料は数字のみを入力にしてください。"
+
+  cat ${namedata}           |
+  awk '$1~/NowKanrihiTo/{print $0}' |
+  sed 's/NowKanrihiTo//g'  |
+  awk '$2!="_"'             |
+  sed 's/\///g'       |
+  LANG=C sort         > $tmp-now_kanrihi_to
+# 1:部屋番号  2:現賃料期間To
+
+# 賃料があったら期間を取得(新賃料自)
+  cat ${namedata}     |
+  awk '$1~/NextKanrihiFrom[0-9]/{print $0}' |
+  sed 's/NextKanrihiFrom//g'  |
+  awk '$2!="_"'                |
+  sed 's/\///g'       |
+  LANG=C sort         > $tmp-next_kanrihi_from
+# 1:部屋番号  2:新賃料期間To
+
+  NEXTCHINRYOUGYO="$(gyo $tmp-next_kanrihi)"
+  NOWCHINRYOUGYO="$(gyo $tmp-now_kanrihi_to)"
+  NEXTCHINRYOU_FROMGYO="$(gyo $tmp-next_kanrihi_from)"
+
+  [ "${NEXTCHINRYOUGYO}" -gt "${NOWCHINRYOUGYO}" ] && error_exit "新賃料が入力されていて、現賃料期間(至)が入力されていない行があります。"
+  [ "${NEXTCHINRYOUGYO}" -gt "${NOWCHINRYOUGYO}" ] && error_exit "新賃料が入力されていて、新賃料期間(自)が入力されていない行があります。"
+  [ "${NEXTCHINRYOUGYO}" -lt "${NOWCHINRYOUGYO}" ] && error_exit "現賃料期間(至)が入力されていて、新賃料が設定されていない行があります。"
+  [ "${NEXTCHINRYOUGYO}" -lt "${NOWCHINRYOUGYO}" ] && error_exit "新賃料の開始期間(自)が入力されていて、新賃料が設定されていない行があります。"
+
+  #--------------------
+  # 期間の重複チェック
+  #-------------------
+
+  # 入力された終了日と入力された開始日の時間的並びはおかしくないか
+  cat $tmp-next_kanrihi_from        |
+  join2 key=1 $tmp-now_kanrihi_to - |
+# 1:部屋番号 2:現賃料終了日  3:新賃料開始日  
+  awk '$2>=$3{print $0}'              > $tmp-kanrihi_day_error1
+
+  [ -s $tmp-kanrihi_day_error1 ] && error_exit "現賃料期間と新賃料期間が重なっている居室があります。"
+
+  # 現賃料データと現賃料終了日の比較
+  cat ${pompa_dir}/KANRIHI_MASTER  |
+# 1:施設/事業所コード 2:建屋ID 3:居室ID 4:期間From 5:期間To
+# 6:金額
+
+  # 施設IDと建屋IDが一致し、有効フラグが9:削除ではないなもの
+  awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}'  |
+  LANG=C sort -k3,3   | 
+  getlast 1 3         |
+#> $tmp-now_kanrihi_data
+  join1 key=3 $tmp-now_kanrihi_to - |
+# 1:施設/事業所コード 2:建屋ID 3:居室ID 4:期間To 5:期間From
+# 6:期間To            7:金額
+  self 1/3 5 4 7      |
+# 1:施設/事業所コード 2:建屋ID 3:居室ID 4:期間From 5:期間To 6:金額
+  awk '{print $0,"1","'${cur_time}'","'${USERID}'"}' > $tmp-now_kanrihi_data
+
+  cat $tmp-now_kanrihi_data |
+  awk '$4>$5{print $0}'      > $tmp-now_kanrihi_day_error1
+
+  [ -s $tmp-now_kanrihi_day_error1 ] && error_exit "現賃料期間(至)は現賃料期間(自)より後の日付を入力してください。"
+
+  #--------------------
+  # 賃料マスタ更新用でーたの作成
+  #-------------------
+
+  cat $tmp-next_kanrihi |
+  join1 key=1 - $tmp-next_kanrihi_from |
+# 1:居室  2:賃料  3:賃料期間From
+  awk '{print "'${Shisetsu}'","'${Tateya}'",$1,$3,"99999999",$2,"1","'${cur_time}'","'${USERID}'"}' |
+  if [ -s $tmp-now_kanrihi_data ] ; then
+    cat - $tmp-now_kanrihi_data 
+  else
+    cat -
+  fi |
+  LANG=C sort > $tmp-kanrihi_input
+else
+  error_exit "新賃料を半角数字で入力してください。"
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+KANRIHI_MASTER KANRIHI_MASTER
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+kanrihi KANRIHI_MASTER 4 8 9 ${pompa_dir} ${input_dir} 
+FIN
+
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+ cp -p ${pompa_dir}/KANRIHI_MASTER ${tbl_dir}/KANRIHI_MASTER
+
+  echo "result ok"
+
+## 終了
+rm -f $tmp-*
+exit 0

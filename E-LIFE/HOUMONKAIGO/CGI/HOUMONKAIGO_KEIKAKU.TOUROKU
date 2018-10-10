@@ -1,0 +1,456 @@
+#!/bin/bash
+#
+# HOUMONKAIGO_KEIKAKU.TOUROKU : アセスメント登録
+#
+# Usage : HOUMONKAIGO_KEIKAKU.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--- 日付 ---
+sday=$(date +%Y%m%d)
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+##############################################################
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 作成年月日
+[ -z "${hdSakuseiDate}" -o "${hdSakuseiDate}" = "_" ] && error_exit "作成年月日が不明です"
+
+#--------------------------------------------------------------
+
+# データ作成
+# 基本情報
+# 1:利用者ID   2:作成年月日(西暦) 3:作成年月日(和暦) 4:計画書タイプ 5:計画作成者氏名
+# 6:利用者氏名 7:性別             8:生年月日         9:要介護度     10:住所
+# 11:電話番号  12:本人希望        13:家族希望        14:課題        15:訪問介護事業者名
+# 16:説明日    17:説明者          18:有効フラグ      19:処理日      20:ユーザID
+
+allyukoflg="1"
+
+[ "$MODE" = "delete" ] && allyukoflg="9"
+
+echo "$Riyoushaid" "$hdSakuseiDate" "$SakuseiDate" "$slKeikakuType" "$Tantousha" \
+"$Riyousha" "$Gender" "$BirthDate" "$Kaigodo" "$Address" "$Tel" "$HonninKibou" \
+"$KazokuKibou" "$Needs" "$slShomeiJigyousha" "$txtShomeiSetsumeibi" \
+"$slShomeiSetsumeisha" "$allyukoflg" "${sdaytime}" "${USER_ID}" > ${tmp}-houmonkaigo_input
+
+cp -p $tmp-houmonkaigo_input $work_dir/houmonkaigo_input
+
+# 総合リスト作成
+
+seq $CHOUKINUM |
+while read choukinum ; do
+  yukoflg="1"
+  cnum=$((choukinum-1))
+  choukidataid=$(nameread ChoukiDataID$cnum $namedata | head -1)
+  choukimokuhyou=$(nameread ChoukiMokuhyou$cnum $namedata | head -1)
+  choukistart=$(nameread ChoukiKikanStart$cnum $namedata | head -1)
+  choukiend=$(nameread ChoukiKikanEnd$cnum $namedata | head -1)
+
+# 1:利用者ID      2:作成日(西暦) 3:レコードID 4:目標     5:目標開始期間
+# 6:目標終了期間1 7:有効フラグ   8:処理日     9:ユーザID
+  # 目標が入っていなかったら削除
+  if [ -z "$choukimokuhyou" -o "$choukimokuhyou" = "_" ] ; then
+     yukoflg="9"
+  fi
+  [ "$allyukoflg" = "9" ] && yukoflg="9"
+  echo "$Riyoushaid" "$hdSakuseiDate" "$choukidataid" "$choukimokuhyou" \
+"$choukistart" "$choukiend" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-chouki_mokuhyou_work1
+done
+
+
+seq $TANKINUM |
+while read tankinum ; do
+  yukoflg="1"
+  tnum=$((tankinum-1))
+  tankidataid=$(nameread TankiDataID$tnum $namedata | head -1)
+  tankimokuhyou=$(nameread TankiMokuhyou$tnum $namedata | head -1)
+  tankistart=$(nameread TankiKikanStart$tnum $namedata | head -1)
+  tankiend=$(nameread TankiKikanEnd$tnum $namedata | head -1)
+
+# 1:利用者ID      2:作成日(西暦) 3:レコードID 4:目標     5:目標開始期間
+# 6:目標終了期間1 7:有効フラグ   8:処理日     9:ユーザID
+  # 目標が入っていなかったら削除
+  if [ -z "$tankimokuhyou" -o "$tankimokuhyou" = "_" ] ; then
+     yukoflg="9"
+  fi
+  [ "$allyukoflg" = "9" ] && yukoflg="9"
+  echo "$Riyoushaid" "$hdSakuseiDate" "$tankidataid" "$tankimokuhyou" \
+"$tankistart" "$tankiend" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-tanki_mokuhyou_work1
+done
+
+
+seq $ENJONUM |
+while read enjonum ; do enum=$((enjonum-1))
+  yukoflg="1"
+  enjodataid=$(nameread EnjoDataID$enum $namedata | head -1)
+  youbi=$(nameread Youbi$enum $namedata | head -1)
+  jikokufrom=$(nameread TeikyoJikokuFrom$enum $namedata | head -1)
+  jikokuto=$(nameread TeikyoJikokuTo$enum $namedata | head -1)
+  helperfirst=$(nameread TantouHelperFirst$enum $namedata | head -1)
+  helpersecond=$(nameread TantouHelperSecond$enum $namedata | head -1)
+  helperthird=$(nameread TantouHelperThird$enum $namedata | head -1)
+  helperfourth=$(nameread TantouHelperFourth$enum $namedata | head -1)
+  teikyokubun=$(nameread TeikyoKubun$enum $namedata | head -1)
+  servicefirst=$(nameread ServiceNaiyouFirst$enum $namedata | head -1)
+  servicesecond=$(nameread ServiceNaiyouSecond$enum $namedata | head -1)
+  jikanfirst=$(nameread ServiceJikanFirst$enum $namedata | head -1)
+  jikansecond=$(nameread ServiceJikanSecond$enum $namedata | head -1)
+  ryuijiko=$(nameread RyuiJiko$enum $namedata | head -1)
+  goukeijikan=$(nameread ServiceGoukeiJikan$enum $namedata | head -1)
+
+  # 入力データチェック
+  input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $jikanfirst 9)
+  [ "${input_res}" != "OK" ] && error_exit $input_res
+  
+  input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $jikansecond 9)
+  [ "${input_res}" != "OK" ] && error_exit $input_res
+
+  input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $goukeijikan 9)
+  [ "${input_res}" != "OK" ] && error_exit $input_res
+
+# 1:利用者ID      2:作成日(西暦)    3:レコードID     4:曜日        5:開始時刻
+# 6:終了時刻      7:ヘルパー１      8:ヘルパー２     9:ヘルパー３  10:ヘルパー４
+# 11:サービス区分 12:サービス内容１ 13:サービス内容2 14:所要時間１ 15:所要時間２
+# 16:留意事項     17:合計時間       18:有効フラグ    19:処理日     20:ユーザID
+  # サービス区分が入っていなかったら削除
+  if [ -z "$teikyokubun" -o "$teikyokubun" = "_" ] ; then
+     yukoflg="9"
+  fi
+  [ "$allyukoflg" = "9" ] && yukoflg="9"
+  echo "$Riyoushaid" "$hdSakuseiDate" "$enjodataid" "$youbi" "$jikokufrom" \
+"$jikokuto" "$helperfirst" "$helpersecond" "$helperthird" "$helperfourth" "$teikyokubun" \
+"$servicefirst" "$servicesecond" "$jikanfirst" "$jikansecond" "$ryuijiko" "$goukeijikan" \
+"${yukoflg}" "${sdaytime}" "${USER_ID}" >> ${tmp}-enjo_mokuhyou_work1
+done
+
+
+cp -p $tmp-chouki_mokuhyou_work1 $work_dir/chouki_mokuhyou_work1
+cp -p $tmp-tanki_mokuhyou_work1 $work_dir/tanki_mokuhyou_work1
+cp -p $tmp-enjo_mokuhyou_work1 $work_dir/enjo_work1
+
+###############################
+# 長期目標ID採番
+##############################
+cat ${tmp}-chouki_mokuhyou_work1 |
+awk '$3=="_"'                    > ${tmp}-chouki_mokuhyou_new
+
+cat ${tmp}-chouki_mokuhyou_work1 |
+awk '$3!="_"'                    > ${tmp}-chouki_mokuhyou_upd
+
+new_chouki_mokuhyou_num=$(gyo ${tmp}-chouki_mokuhyou_new)
+
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $new_chouki_mokuhyou_num -gt 0 ] ; then
+last_no="${new_chouki_mokuhyou_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/CHOUKI_MOKUHYOU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/CHOUKI_MOKUHYOU_ID ] || echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/CHOUKI_MOKUHYOU_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/CHOUKI_MOKUHYOU_ID
+get_no ${last_no} ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/CHOUKI_MOKUHYOU_ID > $tmp-id_choukimokuhyouall
+
+fi
+#---------------------------------------------------------------
+
+ycat $tmp-id_choukimokuhyouall ${tmp}-chouki_mokuhyou_new      |
+self 2 3 1 5/NF                                     > ${tmp}-chouki_mokuhyou_new2
+
+cat ${tmp}-chouki_mokuhyou_upd ${tmp}-chouki_mokuhyou_new2     |
+LANG=C sort -k1,3                                   > ${tmp}-chouki_mokuhyou_input
+
+
+###############################
+# 短期目標ID採番
+##############################
+cat ${tmp}-tanki_mokuhyou_work1 |
+awk '$3=="_"'                    > ${tmp}-tanki_mokuhyou_new
+
+cat ${tmp}-tanki_mokuhyou_work1 |
+awk '$3!="_"'                    > ${tmp}-tanki_mokuhyou_upd
+
+new_tanki_mokuhyou_num=$(gyo ${tmp}-tanki_mokuhyou_new)
+
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $new_tanki_mokuhyou_num -gt 0 ] ; then
+last_no="${new_tanki_mokuhyou_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/TANKI_MOKUHYOU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/TANKI_MOKUHYOU_ID ] || echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/TANKI_MOKUHYOU_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/TANKI_MOKUHYOU_ID
+get_no ${last_no} ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/TANKI_MOKUHYOU_ID > $tmp-id_tankimokuhyouall
+
+fi
+#---------------------------------------------------------------
+
+ycat $tmp-id_tankimokuhyouall ${tmp}-tanki_mokuhyou_new      |
+self 2 3 1 5/NF                                     > ${tmp}-tanki_mokuhyou_new2
+
+cat ${tmp}-tanki_mokuhyou_upd ${tmp}-tanki_mokuhyou_new2     |
+LANG=C sort -k1,3                                   > ${tmp}-tanki_mokuhyou_input
+
+
+###############################
+# 援助内容ID採番
+##############################
+cat ${tmp}-enjo_mokuhyou_work1 |
+awk '$3=="_"'                    > ${tmp}-enjo_mokuhyou_new
+
+cat ${tmp}-enjo_mokuhyou_work1 |
+awk '$3!="_"'                    > ${tmp}-enjo_mokuhyou_upd
+
+new_enjo_mokuhyou_num=$(gyo ${tmp}-enjo_mokuhyou_new)
+
+#--------------------------------------------------------------
+# ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ $new_enjo_mokuhyou_num -gt 0 ] ; then
+last_no="${new_enjo_mokuhyou_num}"
+
+# 利用者IDごとのディレクトリを作成しておく
+mkdir -p ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}
+
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/ENJO_MOKUHYOU_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+[ -e ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/ENJO_MOKUHYOU_ID ] || echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/ENJO_MOKUHYOU_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 99999 ] && echo "00001" > ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/ENJO_MOKUHYOU_ID
+get_no ${last_no} ${kanri_dir}/HOUMONKAIGO_KEIKAKU/${Riyoushaid}/ENJO_MOKUHYOU_ID > $tmp-id_enjomokuhyouall
+
+fi
+#---------------------------------------------------------------
+
+ycat $tmp-id_enjomokuhyouall ${tmp}-enjo_mokuhyou_new      |
+self 2 3 1 5/NF                                     > ${tmp}-enjo_mokuhyou_new2
+
+cat ${tmp}-enjo_mokuhyou_upd ${tmp}-enjo_mokuhyou_new2     |
+LANG=C sort -k1,3                                   > ${tmp}-enjo_mokuhyou_input
+
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+HOUMONKAIGO/${Riyoushaid}/HOUMONKAIGO_KEIKAKU   HOUMONKAIGO_KEIKAKU
+HOUMONKAIGO/${Riyoushaid}/KEIKAKU_CHOUKI_MOKUHYOU    KEIKAKU_CHOUKI_MOKUHYOU
+HOUMONKAIGO/${Riyoushaid}/KEIKAKU_TANKI_MOKUHYOU    KEIKAKU_TANKI_MOKUHYOU
+HOUMONKAIGO/${Riyoushaid}/KEIKAKU_ENJO    KEIKAKU_ENJO
+FIN
+
+input_detail_dir=HOUMONKAIGO_KEIKAKU/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+houmonkaigo HOUMONKAIGO_KEIKAKU 3 19 20 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+chouki_mokuhyou KEIKAKU_CHOUKI_MOKUHYOU 3 8 9 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+tanki_mokuhyou KEIKAKU_TANKI_MOKUHYOU 3 8 9 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+enjo_mokuhyou KEIKAKU_ENJO 3 19 20 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${Riyoushaid}'"||$2!="'${hdSakuseiDate}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key}  >  $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

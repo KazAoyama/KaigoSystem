@@ -1,0 +1,385 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.TOUGETSUKAKUTEI : 請求
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.TOUGETSUKAKUTEI namefile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#かりに
+tmp=/home/hands/work/otsubo/t_kakutei
+rm ${tmp}-*
+
+# ---------------------------------------
+# 変数
+
+namefile=${1}
+eval $(name-source ${namefile})
+
+rm ${tmp}-err
+
+# mode
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+# 処理年月
+syori_nengetsu="${year}${month}"
+# ---------------------------------------
+
+# ---------------------------------------
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU/ ] && mkdir ${input_dir}/${today}/SEIKYU/
+# ---------------------------------------
+
+# ---------------------------------------
+# error
+
+function error_exit {
+  message=${1}
+  cat $tmp-lock |
+  while read name;do
+    rm -f ${name}.LOCK
+  done
+#  rm ${tmp}-*
+  echo ${message}
+  exit 1
+}
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル作成
+
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu}
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理月前月が当月確定されていないときは何もできない
+
+# 処理月前月
+sengetsu="$(mdate ${year}${month}m/-1)"
+# 処理月前月が当月確定されてたらファイルに値はいる
+LANG=C sort -k1,2 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!=9'               |
+awk '$2=="'${sengetsu}'"' |
+getlast 1 1               |
+awk '$3==2'               > ${tmp}-kakunin_sengetsu
+[ ! -s ${tmp}-kakunin_sengetsu ] && error_exit "処理月前月が確定されていません"
+# ---------------------------------------
+
+# ---------------------------------------
+# 確定ファイルがあったら変更できない
+
+# 当月確定があったらぜったいなにもできない「当月確定済みです」
+# 仮確定がなかったらなにもできない「仮確定をしてください」
+
+LANG=C sort -k1,2 -k5,5 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+cjoin0 key=2 <(echo "${year}${month}") |
+getlast 1 1                            |
+awk '$4!="9"' -                        > ${tmp}-kakutei_file
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+
+if [ -s ${tmp}-kakutei_file ] ; then
+  kakutei_status="$(self 3 ${tmp}-kakutei_file)"
+  if [ "${kakutei_status}" = "2" ] ; then
+    error_exit "当月確定済みです"
+  fi
+else
+  error_exit "仮確定をしてください"
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理月当月のヘッダでスタータス1があるとエラー
+
+# ないとは思うが、処理月当月でステータスが1(計算の後は必ず請求選択するのでまずありえない)があったらエラーで落とす
+cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25             |
+getlast 1 2                           |
+awk '$24!="9"'                        |
+cjoin0 key=3 <(echo "1") -            > ${tmp}-err_head
+[ -s ${tmp}-err_head ] && error_exit "請求選択がされていないものがあるため確定できません"
+# ---------------------------------------
+
+# ---------------------------------------
+# ヘッダファイル更新対象の絞込み
+
+# -------------------
+# 処理月のステータス5：請求対象選択済み
+cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25             |
+getlast 1 2                           |
+awk '$24!="9"'                        |
+cjoin0 key=3 <(echo "5")              > ${tmp}-kakutei_head_tougetsu
+# -------------------
+
+# -------------------
+# ステータス4：請求対象選択済み(繰越)
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+getlast 1 2                        |
+awk '$24!="9"'                     |
+cjoin0 key=3 <(echo "4")           > ${tmp}-kakutei_head_kurikoshi
+# -------------------
+
+# -------------------
+# 処理月のステータス2：繰越対象選択済み(今月計算されたが、今月請求にはならない)
+cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25            |
+getlast 1 2                          |
+awk '$24!="9"'                       |
+cjoin0 key=3 <(echo "2")             > ${tmp}-kakutei_head_tougetsu_kurikoshi
+# -------------------
+
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理対象がいない場合はここで終了
+
+if [ ! -s ${tmp}-kakutei_head_tougetsu ] ; then
+  if [ ! -s ${tmp}-kakutei_head_kurikoshi ] ; then
+    if [ ! -s ${tmp}-kakutei_head_tougetsu_kurikoshi ] ; then
+      error_exit "請求対象者がいません"
+    fi
+  fi
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# 口座設定が有効かどうかのチェック
+
+# 処理対象者が上で出揃っているので、
+# 処理月当時に有効な口座情報と結合(join1)し、口座情報が無い人がいたら確定できない。
+# 繰越するしか選択できない。
+
+# ------------------
+# 口座取得
+
+awk '$21!="9"' ${riyosha_dir}/RIYOUSHA_KOUZA |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:予備       17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード1か2(施設か全請求)
+awk '$5=="1" || $5=="2" || $5=="_"'                      |
+self 1 8/9 12/13                                         |
+# 1:利用者ID 2:請求期間FROM 3:請求期間TO 4:他入居者との一括請求 5:一括請求入居者ID
+LANG=C sort                                              |
+# 今日時点で有効なものに絞る
+awk '$2<="'${this_month}'" && $3>="'${this_month}'"'     > ${tmp}-kouza_from_to #かならず利用者IDにつき一行となる
+# ------------------
+
+# ------------------
+# 合算と合算じゃないの分岐
+
+cat ${tmp}-kakutei_head_tougetsu ${tmp}-kakutei_head_kurikoshi |
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+self 2 1 9               |
+# 1:入居者ID 2:処理月 3:支払合算相手ID
+LANG=C sort              |
+cjoin0 key=3 <(echo "_") > ${tmp}-not_gassan 2> ${tmp}-gassan
+# ------------------
+
+# ------------------
+# 合算じゃないもの処理
+
+join1 +ng key=1 ${tmp}-kouza_from_to ${tmp}-not_gassan > ${tmp}-not_gassan_kouza_ari 2> ${tmp}-not_gassan_kouza_nashi
+# ------------------
+
+# ------------------
+# 合算の処理
+
+join1 +ng key=1 ${tmp}-kouza_from_to ${tmp}-gassan > ${tmp}-gassan_kouza_ari 2> ${tmp}-gassan_kouza_ari_ng
+# ------------------
+
+# ------------------
+# 処理前と処理あとの行数が違ったらエラー
+
+if [ -s ${tmp}-not_gassan_kouza_nashi ] ; then
+  self 1 ${tmp}-not_gassan_kouza_nashi          |
+  LANG=C sort -u                                |
+  cjoin0 key=1 - ${riyosha_dir}/RIYOUSHA_MASTER |
+  awk '$5!="9"'                                 |
+  self 2                                        |
+  awk '{print $1"様"}'                          |
+  atama -10                                     |
+  yarr                                          |
+  sed 's/ /\\n/g' > ${tmp}-ng_list
+  error_exit "有効な口座が設定されていない人がいます。\n口座を確認し設定するか請求を繰越にしてください\n\n$(cat ${tmp}-ng_list)"
+fi
+
+if [ -s ${tmp}-gassan_kouza_ari_ng ] ; then
+  self 1 ${tmp}-gassan_kouza_ari_ng             |
+  LANG=C sort -u                                |
+  cjoin0 key=1 - ${riyosha_dir}/RIYOUSHA_MASTER |
+  awk '$5!="9"'                                 |
+  self 2                                        |
+  awk '{print $1"様"}'                          |
+  atama -10                                     |
+  yarr                                          |
+  sed 's/ /\\n/g' > ${tmp}-ng_list
+  error_exit "有効な口座が設定されていない人がいます。\n口座を確認し設定するか請求を繰越にしてください\n\n$(cat ${tmp}-ng_list)"
+fi
+# ------------------
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理を開始
+
+# 確定ファイル
+# -
+# 1:施設ID 2:請求確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+
+# -------------------
+# ステータスの更新と請求確定月の更新(4=>6,5=>6)
+cat ${tmp}-kakutei_head_tougetsu ${tmp}-kakutei_head_kurikoshi |
+awk '{$3="6";
+      $14="'${year}${month}'";
+      $25="'${current_time}'";
+      $26="'${userid}'";
+      print}' -                |
+LANG=C sort                    > ${tmp}-head_input1
+# -------------------
+
+# -------------------
+# ステータスの更新と請求確定月の更新(2=>3)(繰越になったので請求確定年月は空になる)
+awk '{$3="3";
+      $14="_";
+      $25="'${current_time}'";
+      $26="'${userid}'";
+      print}' ${tmp}-kakutei_head_tougetsu_kurikoshi |
+LANG=C sort                                          > ${tmp}-head_input2
+# -------------------
+# -------------------
+# ヘッダinputあわせる
+cat ${tmp}-head_input1 ${tmp}-head_input2 > ${tmp}-head_input
+# -------------------
+
+# -------------------
+# 確定ファイルの更新
+echo "${shisetsu} ${year}${month} 2 1 ${current_time} ${userid}" > ${tmp}-kakutei_input
+# -------------------
+
+# -------------------
+# L4作成
+cat ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD ${tmp}-head_input |
+LANG=C sort -k1,2 -k25,25 > ${tmp}-L4_head
+
+cat ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} ${tmp}-kakutei_input |
+LANG=C sort > ${tmp}-L4_kakutei
+# -------------------
+
+# ---------------------------------------
+
+# ---------------------------------------
+# 欠食確定のCGIをたたく
+# (処理中にエラーが発生しても今すぐ対応しなければいけないわけではないので終了ステータスはみない)
+
+${home_dir}/E-LIFE/SHOKUJI/CGI/KESSHOKU_KAKUTEI.CGI ${year}${month} ${shisetsu}
+# ---------------------------------------
+
+# ---------------------------------------
+# チェック・更新
+
+cat << FIN > ${tmp}-koushin_file_input
+${tmp}-head_input ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+${tmp}-kakutei_input ${input_dir}/${today}/SEIKYU/SEIKYU_KAKUTEI.INPUT.$(basename ${0}).${current_time} 6
+FIN
+
+cat << FIN > ${tmp}-koushin_file_L4
+${tmp}-L4_head ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD 26
+${tmp}-L4_kakutei ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} 6
+FIN
+
+# チェック
+self 1 3 ${tmp}-koushin_file_input |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+self 1 3 ${tmp}-koushin_file_L4 |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 更新
+cat ${tmp}-koushin_file_input ${tmp}-koushin_file_L4 |
+while read File okiba retu ; do
+  cp -p ${File} ${okiba}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# ---------------------------------------
+
+# ---------------------------------------
+# 計算時に過去明細データ再作成したら、更新する
+
+if [ -s ${seikyu_dir}/${shisetsu}/MEISAI/${syori_nengetsu}/KAKO/KAKO_SEIKYU_LIST.${syori_nengetsu} ] ; then
+  # ファイル名ばらして何月分の明細を更新するのか取得
+  # ${seikyu_dir}/${shisetsu}/MEISAI/${年月}/KAKO/SEIKYU_MEISAI.${年月}.${請求先}　みたいなかんじ
+  self 1 1 ${seikyu_dir}/${shisetsu}/MEISAI/${syori_nengetsu}/KAKO/KAKO_SEIKYU_LIST.${syori_nengetsu} |
+  fsed 's/./ /2' |
+  self 1 NF-1 NF |
+  # 更新作業
+  while read file koushin_nengetsu koushin_user; do
+    cp -p ${file} ${seikyu_dir}/${shisetsu}/MEISAI/${koushin_nengetsu}/SEIKYU_MEISAI.${koushin_nengetsu}.${koushin_user}
+  done
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル削除
+
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# ---------------------------------------
+
+echo "更新完了！"
+
+#rm -f ${tmp}-*
+exit 0
+

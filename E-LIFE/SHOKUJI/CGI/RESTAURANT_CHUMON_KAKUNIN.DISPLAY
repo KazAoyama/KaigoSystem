@@ -1,0 +1,332 @@
+#!/bin/bash
+#
+# RESTAURANT_CHUMON_KAKUNIN.DISPLAY : レストラン注文確認画面表示
+#
+# Usage : RESTAURANT_CHUMON_KAKUNIN.DISPLAY
+#
+# Written by R.Ssuzuki Date:2015/05/15
+
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+
+
+# ディレクトリ設定
+#test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+#checkfile=$2
+result_data=$2
+#koushin_data=$4
+
+
+#20150803del
+#target_day="$(date +%Y%m%d)"
+
+current_time="$(date +%H%M)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#ユーザ種別（エンドユーザor管理ユーザ）:画面遷移を制御する
+#TOPメニューまたは予約確認画面、から開始した場合はエンドユーザとする。
+#注文一覧から開始した場合は管理ユーザとする。
+#それ以外はPOSTされるuser_typeの内容で判定
+if [ "$user_type" = "" ] ; then
+  user_type="enduser"
+fi
+
+
+
+
+#更新系処理CGIの結果をチェック(エラーメッセージ表示制御)
+result=$(awk '$1=="result"{print $2}' ${result_data})
+if [ "${result}" = "ng" ] ; then
+  message=$(awk '$1=="message"{print $2}' ${result_data})
+
+
+  if [ "$user_type" = "enduser" ] ; then
+    #メッセージはそのまま
+    next_page="RESTAURANT_DUMMY.CGI?post_camera=on"
+    MODE="init"
+  else
+    next_page="RESTAURANT_CHUMON_ICHIRAN.CGI"
+    MODE="init"
+  fi
+
+  #カートファイルが存在している場合、削除
+  if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" $user_type >> $tmp-calsed_result
+  echo "###NEXT_PAGE###" $next_page >> $tmp-calsed_result
+  echo "###MODE###" $MODE      >> $tmp-calsed_result
+  echo "###NYUKYOSHA_ID###" $nyukyosha_id   >> $tmp-calsed_result
+
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+  cat  ${tmp}-html
+  exit 1
+fi
+
+
+
+#入居者コードを中間ファイルにセット
+echo $nyukyosha_id | awk '{print $1}' > ${tmp}-user
+
+
+##################################
+# 入居者情報の取得
+##################################
+#cat ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+#self 6 1 5 7 8 9                                          |
+##1:入居者ID,2:施設ID,3:居室,4:入居日,5:退去日,6:削除フラグ
+#LANG=C sort -k1,1                                         |
+##対象ID絞込み
+#join1 key=1 ${tmp}-user                                   |
+##入居者レコード有効判定(削除フラグ、有効期間)
+#awk '$(NF)!="9" && $4<="'$target_day'"&&"'$target_day'"<=$5' > $tmp-restaurant_chk_user
+
+#入居者レコード有効判定(削除フラグ、有効期間)
+# 取得対象を対象施設内の入居者情報に限定（複数施設所属のケースを考慮） 20150907add
+awk '$1=="'$shisetsu'" && $6=="'${nyukyosha_id}'" && $7<="'$target_day'" && "'$target_day'"<=$8 && $(NF-2)!="9"' \
+ ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS       |
+self 6 1 5 7 8 9                                          |
+#1:入居者ID,2:施設ID,3:居室,4:入居日,5:退去日,6:削除フラグ
+#LANG=C sort -k1,1                                         > $tmp-restaurant_chk_user
+#この段階ではまれに複数レコード（複数部屋契約）の可能性あり、入居日付でソート　20150907
+LANG=C sort -k4,5                                         |
+#入居者の最新入居情報のみ抽出　20150907
+getlast 1 1         > $tmp-restaurant_chk_user
+
+
+#cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER             |
+awk '$(NF-2)!="9"'  ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER  |
+#対象ID絞込み ※利用者マスタは利用者IDでソート済みの前提
+join1 key=1 - $tmp-restaurant_chk_user                         |
+#マスタの氏名以外の情報は削除
+delf 3/7                                      > $tmp-restaurant_ok_user
+#1:入居者ID,2:利用者(入居者)氏名,3:施設ID,4:居室,5:入居日,6:退去日,7:削除フラグ
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && message="入居者情報取得エラー"
+
+
+#入居者名前
+nyukyosha_name=$(cat $tmp-restaurant_ok_user | awk '{print $2}')
+#部屋番号
+room_no=$(cat $tmp-restaurant_ok_user | awk '{print $4}')
+#施設IDセット
+#20150907 複数施設対応に伴い、クッキーからの取得(ここではＰＯＳＴから取得)に変更
+#shisetsu=$(cat $tmp-restaurant_ok_user | awk '{print $3}')
+
+if [ $(gyo  $tmp-restaurant_ok_user) -lt 1 ] ; then
+  message="ご利用権限がありません。"
+  #処理をスキップするのでモードクリア
+fi
+
+
+##################################
+# 食事メニューの取得
+##################################
+
+#20150803del
+##食事時間帯（朝：昼：夕）の確認
+#if [ $current_time -gt "1644" ] ; then
+#  # 1645以降以は夕食メニュー
+#  target_shokuji_jikantai=3
+#elif [ $current_time -gt "1044" ] ; then
+#  # 1045以降以は昼食メニュー
+#  target_shokuji_jikantai=2
+#elif [ $current_time -gt "0614" ] ; then
+#  # 0615以降以は朝食メニュー
+#  target_shokuji_jikantai=1
+#else
+#  # 0614以前は夕食メニューのまま
+#  target_shokuji_jikantai=3
+#fi
+
+
+
+#週初日曜日の取得（献立テーブル特定のため） ※対象日の曜日が日曜日ならそのままセット。それ以外はmdateで前週の日付一覧を取得し7番目の日を取得
+#mdateの仕様上、日曜日は７番目に登場する
+#week_first_day=$([ "$(date +'%w')" = "0" ] && echo "$target_day" || mdate week1 | self 7)
+week_first_day=$([ "$(date -d $target_day +'%w')" = "0" ] && echo "$target_day" ||mdate $(mdate $(mdate -w $target_day)/-1 ) |self 7)
+
+#献立マスタが存在しない場合への対処（ジョインエラー回避）
+:> $tmp-restaurant_kondate
+if [ -s ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} ] ; then
+#献立ファイルありの場合
+
+#  cat ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} |
+  #取得する献立情報の絞込み（今日の該当食事時間帯分　※メインが空なら無視）
+  awk '$1=="'${target_day}'" && $3=="'${target_shokuji_jikantai}'" && $4!="_" && $(NF-2)!=9{print $14,$2,$4}END{print "dummy","dummy","dummy"}' \
+  ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${week_first_day} |
+  #メニュー名を全角変換
+  zen 3|  sed -e 's/[＿_]/　/g'|
+  #メニューID、AB区分,メニュー名称
+  # ※最終行にdummyをセットするのは献立未登録時に後続のjoin2で空マスタエラーになるのを回避するため
+  #ジョイン準備(メニューIDでソート)
+  LANG=C sort -k1,1  > $tmp-restaurant-kakunin-kondate
+  #エラーチェック
+  [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && message="献立情報取得エラー"
+
+else
+#献立ファイルなしの場合
+
+  #ジョインエラー回避のためダミーレコード作成
+  echo "dummy" "dummy" "dummy" > $tmp-restaurant-kakunin-kondate
+
+fi
+
+
+#メニュー表示制御マスタが存在しない場合への対処（ジョインエラー回避）20150907add ファイルがない場合への対処追加
+:> $tmp-restaurant_menu
+if [ -s ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_RESTAURANT_MENU ] ; then
+  self 1 2 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_RESTAURANT_MENU |
+  # 1:メニューID 2:レストラン非表示フラグ
+  LANG=C sort -k1,1 > $tmp-restaurant_menu
+fi
+
+[ $(gyo $tmp-restaurant_menu) -eq 0 ] && echo "_" "_" > $tmp-restaurant_menu
+
+
+
+# レストラン注文カートをレコードキー（ユニークID、入居者ID、メニューID）と更新時刻でソート
+#LANG=C sort -k1,3 -k7,8 ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type    |
+#20150602
+LANG=C sort -k1,3 -k14,15 ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type    |
+# 各キーの最終更新レコードを抽出
+getlast 1 3 |
+#ジョインのためのソート
+LANG=C sort -k3,3 |
+#食事メニューとつき合わせ
+join1 key=3 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU  - |
+#1:ユニークID 2:入居者ID 3:メニューID 4:メニュー名 5:食事種類 6:施設ID 7:建屋ID 8:入居者価格 9:ゲスト１価格 
+#10:ゲスト２価格 11:スタッフ価格 12:朝食 13:昼食 14:夕食 15:おやつ 16:期間From(西暦) 17:期間To(西暦) 
+#18:表示色 19:表示順 20:喫食率計算対象 21:予備項目3 22:予備項目4 23:予備項目5 24:削除フラグ 25:日時 26:ユーザー 27:入居者数量 28:ゲスト数量 29:予約フラグ(スケジュールID) 30:注文番号 31:注文受付時刻 32:注文受付日付 33:食事時間帯 34:予備１ 35:予備２ 36:削除フラグ 37:更新日付 38:更新時刻
+awk '$(NF-2)!="9" && $16<="'$target_day'" && "'$target_day'"<=$17 {print $1,$5,$3,$4,$12,$13,$14,$19=="_"?"999999":$19,$27,$28,$29 }'  |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニュー名 5:朝食フラグ 6:昼食フラグ 7:夕食フラグ  8:表示順(スペースは999999に変換済み) 9:入居者数量 10:ゲスト数量 11:予約フラグ(スケジュールID)
+# レストラン非表示の処理
+# 20150907mod ファイルがない場合への対処追加
+#join2 +"_" key=3 <(self 1 2 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_RESTAURANT_MENU) |
+join2 +"_" key=3 <(self 1 2  $tmp-restaurant_menu ) |
+
+awk '$4!="1"' |
+delf 4        |
+#メニュー名を全角変換
+zen 4 |
+# 食事時間帯による表示メニュー判定
+if [ $target_shokuji_jikantai -eq 1 ] ; then
+awk '$5=="1"'
+elif [ $target_shokuji_jikantai -eq 2 ] ; then
+awk '$6=="1"'
+else
+awk '$7=="1"'
+fi |
+join2 +"_" key=3 $tmp-restaurant-kakunin-kondate - |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニューAB区分 5:メニュー名(献立) 6:メニュー名(食事メニュー) 7:朝食フラグ 8:昼食フラグ 9:夕食フラグ  10:表示順(スペースは999999に変換済み) 11:入居者数量 12:ゲスト数量 13:予約フラグ(スケジュールID)
+awk '{print $1,$2,$3,$5!="_"?$4"&nbsp;"$5:$6,$7,$8,$9,$10,$11,$12,$13,$13!="_"?"display:none;":""}' |
+# 1:ユニークID 2:食事種類 3:メニューID 4:メニュー名(メニューAB区分+HTML用エスケープ文字(半角スペース)＋メニュー名称) 5:朝食フラグ 6:昼食フラグ 7:夕食フラグ  8:表示順(スペースは999999に変換済み) 9:入居者数量 10:ゲスト数量 11:予約フラグ(スケジュールID) 12:予約メニューの変更取消ボタン表示制御CSS
+#食事種類、表示順でソート
+LANG=C sort -k2n,2n -k8n,8n     > $tmp-restaurant-chumon-kakunin-data
+
+#エラーチェック
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && message="注文確認画面表示データ編集エラー"
+
+
+#はめ込み文字データまとめファイル作成
+echo "###NYUKYOSHA_NAME###" $nyukyosha_name    >  $tmp-calsed_result
+echo "###NYUKYOSHA_ID###"   $nyukyosha_id      >> $tmp-calsed_result
+echo "###ROOM_NO###"        $room_no           >> $tmp-calsed_result
+echo "###SHISETSU_ID###"    $shisetsu          >> $tmp-calsed_result
+echo "###CHUMON_NO###"      $chumon_no         >> $tmp-calsed_result
+echo "###CHUMON_RECIEVE_TIME###" $receive_time >> $tmp-calsed_result
+
+#20150803 add
+echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+
+echo "###USER_TYPE###"   $user_type   >> ${tmp}-calsed_result
+
+
+#モードがinit（バーコード認証後の初期表示）でカートがゼロ件でない場合（＝予約あり時）は
+#画面タイトルなどの文言を「予約確認画面」用にする
+if [ -s $tmp-restaurant-chumon-kakunin-data -a $MODE = "init" ] ; then
+  echo "###GAMEN_STRING###"      "ご予約"                    >> $tmp-calsed_result
+  echo "###GAMEN_BUTTON_STRING###"  "追加注文"         >> $tmp-calsed_result
+#  echo "###GAMEN_BUTTON_STYLE_1###"  "display:none;"         >> $tmp-calsed_result
+#  echo "###GAMEN_BUTTON_STYLE_2###"  ""                      >> $tmp-calsed_result
+
+else
+  echo "###GAMEN_STRING###"      "ご注文"                    >> $tmp-calsed_result
+  echo "###GAMEN_BUTTON_STRING###"  "注文変更"         >> $tmp-calsed_result
+#  echo "###GAMEN_BUTTON_STYLE###"  "確認ボタン"              >> $tmp-calsed_result
+#  echo "###GAMEN_BUTTON_STYLE_1###"  ""                      >> $tmp-calsed_result
+#  echo "###GAMEN_BUTTON_STYLE_2###"  "display:none;"         >> $tmp-calsed_result
+fi
+
+
+
+#はめ込みまとめデータのはめ込み
+calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_CHUMON_KAKUNIN.html |
+
+#リストデータはめ込み
+mojihame -l###CHUMON_LIST_NORMAL### -  $tmp-restaurant-chumon-kakunin-data > $tmp-html
+
+
+#--------------------------------------------------------------
+
+if [ "${message}" != "" ] ; then
+
+  #カートファイルが存在している場合、削除
+  if [ -e ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type ] ; then
+    rm -f ${ap_dir}/SESSION/resutaurant-cart.$nyukyosha_id.$user_type
+  fi
+
+  #はめ込み文字データまとめファイル作成
+  echo "###MESSAGE###" $message     >  $tmp-calsed_result
+  echo "###USER_TYPE###" $user_type >> $tmp-calsed_result
+
+  #20150803 add
+  echo "###TARGET_DAY###"     $target_day   >> $tmp-calsed_result
+  echo "###TARGET_SHOKUJI_JIKANTAI###"     $target_shokuji_jikantai   >> $tmp-calsed_result
+
+  #はめ込みまとめデータのはめ込み
+  calsed -f $tmp-calsed_result  ${html_dir}/RESTAURANT_MESSAGE.html > $tmp-html
+
+fi
+
+cat  ${tmp}-html
+
+
+
+#--------------------------------------------------------------
+
+
+
+
+rm -f ${tmp}-*
+exit 0

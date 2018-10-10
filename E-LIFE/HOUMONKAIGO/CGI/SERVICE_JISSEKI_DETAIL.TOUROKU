@@ -1,0 +1,307 @@
+#!/bin/bash
+#
+# SERVICE_JISSEKI_DETAIL.TOUROKU : サービス実績詳細登録
+#
+# Usage : SERVICE_JISSEKI_DETAIL.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--- 日付 ---
+sday=$(date +%Y%m%d)
+
+# 引数設定
+namedata=$1
+
+# 処理日付に余裕を持たせる（2014/06/30）
+shorihiduke=$(date +%Y%m%d | awk '{print substr($1,7,2)}')
+
+if [ ${shorihiduke} -gt 10 ] ; then
+# 請求提出年月
+teisyutunengetu=$(mdate month/+1)
+else
+teisyutunengetu=$(mdate month/+0)
+fi
+
+# デフォルト値セット
+##############################################################
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+# テスト
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# ＩＤ
+[ -z "${DetailID}" -o "${DetailID}" = "_" ] && error_exit "ＩＤが不明です"
+
+#--------------------------------------------------------------
+
+# 開催日
+calcDate=$TaishouNen$TaishouTsuki$TaishouDay
+
+# 課税非課税区分
+: > $tmp-kazei_master
+if [ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU ] ; then
+  cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU     |
+  awk '$3<='$calcDate'&&('$calcDate'<=$4||$4=="_"){print $2}' > $tmp-kazei_master
+fi
+zeiritsu=$(cat $tmp-kazei_master)
+
+
+# データ作成
+# 基本情報
+# 1:データID 2:利用者ID 3:対象年     4:対象月 5:対象日
+# 6:健康状態 7:特記事項 8:有効フラグ 9:処理日 10:ユーザID
+
+echo "$DetailID" "$Riyoushaid" "$TaishouNen" "$TaishouTsuki" "$TaishouDay" "$KenkouJoutai" \
+"$TokkiJikou" "1" "${sdaytime}" "${USER_ID}" > ${tmp}-jisseki_detail_input
+
+cp ${tmp}-jisseki_detail_input $work_dir/jisseki_detail_input
+
+# 項目
+echo ${ARRKOUMOKU} |
+sed 's/,/ /g'      |
+tateyoko           |
+awk '{print "'$DetailID'","'$Riyoushaid'","'$TaishouNen'","'$TaishouTsuki'","'$TaishouDay'",$0}' > $tmp-service_input1
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "項目作成エラー"
+
+
+# サービス時間
+echo ${ARRTIME} |
+sed 's/,/ /g'      |
+tateyoko           |
+awk '{print "'$DetailID'","'$Riyoushaid'","'$TaishouNen'","'$TaishouTsuki'","'$TaishouDay'",$0}' > $tmp-service_input2
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "サービス時間作成エラー"
+
+# 備考
+echo ${ARRBIKO} |
+sed 's/,/ /g'      |
+tateyoko           |
+awk '{print "'$DetailID'","'$Riyoushaid'","'$TaishouNen'","'$TaishouTsuki'","'$TaishouDay'",$0}' > $tmp-service_input3
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "サービス備考作成エラー"
+
+# 費用項目
+echo ${ARRHIYOUKOUMOKU} |
+sed 's/,/ /g'      |
+tateyoko           |
+awk '{print "'$DetailID'","'$Riyoushaid'","'$TaishouNen'","'$TaishouTsuki'","'$TaishouDay'",$0}' > $tmp-hiyou_input1
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "費用項目作成エラー"
+
+# 費用
+echo ${ARRHIYOUGAKU} |
+sed 's/,/ /g'      |
+tateyoko           |
+awk '{print "'$DetailID'","'$Riyoushaid'","'$TaishouNen'","'$TaishouTsuki'","'$TaishouDay'",$0}' > $tmp-hiyou_input2
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "費用額作成エラー"
+
+loopj num=5 $tmp-service_input1 $tmp-service_input2 $tmp-service_input3 |
+awk '{print $0,"1","'${sdaytime}'","'${USER_ID}'"}' > $tmp-service_input
+
+# 詳細ID 利用者ID 対象年 対象月 対象日 費用項目 費用
+loopj num=5 $tmp-hiyou_input1 $tmp-hiyou_input2 |
+# 課税対応
+# 1:税率   2:詳細ID   3:利用者ID 4:対象年 5:対象月
+# 6:対象日 7:費用項目 8:費用
+awk '{print "'${zeiritsu}'","1",$0}'                |
+tee $work_dir/before_calc                       |
+# 1:詳細ID   2:利用者ID 3:対象年 4:対象月     5:対象日
+# 6:費用項目 7:費用     8:税率   9:税込み費用 10:課税フラグ
+# 11.請求用確定フラグ(固定)
+#lcalc '$3,$4,$5,$6,$7,$8,$9,$1,$9+$9*$1,$2'         |
+# 税率を加算しない(2014/7/1)
+lcalc '$3,$4,$5,$6,$7,$8,$9,$1,$9,$2'         |
+awk '{print $0,"0","1","'${sdaytime}'","'${USER_ID}'"}' > $tmp-hiyou_input
+
+
+#---------------------------------------------------------------
+
+cp $tmp-hiyou_input $tmp-hiyou2_input
+
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSEKI_DETAIL   SERVICE_JISSEKI_DETAIL
+HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSEKI_DETAIL_NAIYOU   SERVICE_JISSEKI_DETAIL_NAIYOU
+HOUMONKAIGO/${Riyoushaid}/SERVICE_JISSEKI_DETAIL_HIYOU   SERVICE_JISSEKI_DETAIL_HIYOU
+FIN
+
+input_detail_dir=SERVICE_JISSEKI_DETAIL/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+jisseki_detail SERVICE_JISSEKI_DETAIL 5 9 10 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-add_pompa
+service SERVICE_JISSEKI_DETAIL_NAIYOU 5 10 11 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+hiyou SERVICE_JISSEKI_DETAIL_HIYOU 5 13 14 ${pompa_dir}/HOUMONKAIGO/${Riyoushaid} ${input_dir}
+hiyou2 SERVICE_JISSEKI_DETAIL_HIYOU 5 13 14 ${data_dir}/SEIKYU/KYOTAKU/${shisetsu}/${teisyutunengetu} ${input_dir}
+FIN
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+
+
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'$DetailID'"||$2!="'$Riyoushaid'"||$3!="'$TaishouNen'"||$4!="'$TaishouTsuki'"||$5!="'$TaishouDay'"}') -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

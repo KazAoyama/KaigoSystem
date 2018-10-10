@@ -1,0 +1,116 @@
+#!/bin/bash
+#
+# JIKOHOU_SHOUSAI.SEARCH : 個人情報詳細基本SEARCH
+#  
+#
+# Written by E.Okuda :2013/11/20
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+home_dir=/home/hands/E-LIFE
+cgi_dir=${home_dir}/UNEI/CGI
+pompa_dir=${home_dir}/UNEI/POMPA/JIKOHOU
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+tourokudata="$2"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+#-------------------------------------------------------------
+
+JIKOHOUHEADERID=$(nameread "JIKOHOUHEADERID" $namedata)
+
+if [ -z "${JIKOHOUHEADERID}" -o "${JIKOHOUHEADERID}" = "_" ] ; then
+  JIKOHOUHEADERID="$(awk '$1=="result"{print $3}' ${tourokudata})"
+else
+  :
+fi
+
+[ -z "${JIKOHOUHEADERID}" -o "${JIKOHOUHEADERID}" = "_" ] && error_exit
+
+#IsLogon{{{################################################
+
+# MODEによる処理の分岐
+#if [ "${MODE}" = "init" ] ; then
+
+#-------------------------------------------------------------
+# ファイルの取得
+# ヘッダー
+# 1:事故ヒヤリヘッダーID 2:報告書フラグ  3:報告日      4:部署        5:報告者
+# 6:施設                 7:建屋          8:フロア      9:居室        10:利用者ID
+# 11:年齢                12:介護度       13:発生日     14:発生時間   15:発生場所
+# 16:発生場所居室番号    17:発生場所備考 18:区分       19:区分備考   20:身体の状況
+# 21:身体の状況備考      22:予備項目１   23:予備項目２ 24:予備項目３ 25:予備項目４
+# 26:予備項目５
+#-------------------------------------------------------------
+awk '$1=="'${JIKOHOUHEADERID}'"&&$(NF-2)!="9"' ${pompa_dir}/JIKOHOU_HEADER |
+awk '{print "header",$0}'  > $tmp-heaeder
+
+#-------------------------------------------------------------
+# 詳細
+# 1:事故ヒヤリヘッダーID         2:事故ヒヤリ詳細ID                3:報告書フラグ            4:身体部位(表)                      5:身体部位(裏)
+# 6:発生時の状況                 7:発生時の状況対応者              8:上記に対する対応        9:上記に対する対応の対応者          10:処置有無
+# 11:処置備考                    12:処置対応者                     13:受診の有無             14:受診病院                         15:受診病院科
+# 16:受診対応者                  17:診察の内容経過                 18:診察の内容経過対応者   19:連絡した家族                     20:連絡した家族続柄
+# 21:連絡した日                  22:連絡した時間                   23:連絡した方法           24:連絡した方法備考                 25:連絡した対応者
+# 26:連絡後のご家族の要望など    27:連絡後のご家族の要望など対応者 28:事故原因など           29:事故原因など対応者               30:今後の予防対策
+# 31:今後の予防対策対応者        32:相談員の意見                   33:対応者                 34:その他職員からの意見             35:対応者
+# 36:備考                        37:事故内容(事故報施設)           38:対応状況と対策         39:ヒヤリハットした内容(ヒヤリ施設) 40:なぜヒヤリハットしたか
+# 41:どんな対応をしたか～        42:予備項目①                     43:予備項目②             44:予備項目③                       45:予備項目④
+# 46:予備項目⑤
+awk '$(NF-2)!="9"' ${pompa_dir}/${JIKOHOUHEADERID}/${JIKOHOUHEADERID}_JIKOHOU_SHOUSAI |
+LANG=C sort -k1,2 |
+getlast 1 1       |
+awk '{print "shousai",$0}'  > $tmp-shousai
+
+: > $tmp-sonota_data
+# 発生場所
+awk '$1=="'${JIKOHOUHEADERID}'"&&$(NF-2)!="9"' ${pompa_dir}/HASSEI_BASHO_DATA |
+awk '{print "hassei_basho",$0}' >> $tmp-sonota_data
+
+# 区分
+awk '$1=="'${JIKOHOUHEADERID}'"&&$(NF-2)!="9"' ${pompa_dir}/KUBUN_DATA |
+awk '{print "kubun",$0}' >> $tmp-sonota_data
+
+# 身体
+awk '$1=="'${JIKOHOUHEADERID}'"&&$(NF-2)!="9"' ${pompa_dir}/SHINTAI_JYOUKYOU_DATA |
+awk '{print "shintai",$0}' >> $tmp-sonota_data
+
+#------------------------------
+if [ -s $tmp-shousai -a -s $tmp-sonota_data ] ; then
+  cat $tmp-heaeder $tmp-shousai $tmp-sonota_data
+elif [ -s $tmp-shousai ] ; then
+  cat $tmp-heaeder $tmp-shousai
+else
+  cat $tmp-heaeder
+fi
+
+## 終了
+rm -f $tmp-*
+exit 0

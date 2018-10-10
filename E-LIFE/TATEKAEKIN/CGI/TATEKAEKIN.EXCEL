@@ -1,0 +1,351 @@
+#!/bin/bash
+#
+# TATEKAEKIN.EXCEL : 立替金管理EXCEL出力
+#
+# Usage : TATEKAEKIN.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_RIYOSHA_STATUSの準備
+taikyogo=$(mdate ${today}/-31)
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+if [ "${tateya}" = "00" ];then
+  cat -
+else
+  awk '$2=="'${tateya}'"'
+fi                                                           |
+tee $tmp-riyosha_status_all_pre                              |
+awk '$7<="'${hd_kensaku_hiduke_to}'" && $8>="'${taikyogo}'"'       |
+awk '$9==1'                                                  > $tmp-riyosha_status
+
+#LANG=C sort -k6,7n $tmp-riyosha_status_all_pre               |
+LANG=C sort -k6,7 $tmp-riyosha_status_all_pre               |
+getlast 6 6                                                  |
+LANG=C sort -k6,6                                            > $tmp-riyosha_status_all
+
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "${tateya}")                              |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+cp $tmp-riyosha_master ${work}/royosha_master
+
+
+# 部屋
+self 6 5 $tmp-riyosha_status                                 |
+LANG=C sort                                                  |
+tee ${work}/stabuta |
+join1 key=1 $tmp-riyosha_master                              |
+self 1 3 2                                                   > $tmp-riyosha_room
+# 1:利用者ID 2:部屋 3:名前
+
+# join用
+self 6 5 $tmp-riyosha_status_all                             |
+LANG=C sort -k1,1                                            |
+join1 key=1 $tmp-riyosha_master                              |
+self 1 3 2                                                   > $tmp-riyosha_room_all
+# 1:利用者ID 2:部屋 3:名前
+cp $tmp-riyosha_room ${work}/roooom 
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                  > $tmp-all
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  self 6                                                            |
+  LANG=C sort -k1,1n                                                |
+  join1 key=1 $tmp-riyosha_master                                   |
+  cat $tmp-all -                                                    |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME
+  join0 key=1 <(echo "${riyosha_name}")                             |
+  self 2                                                            > ${tmp}-riyosha_name
+else
+  :                                                                 > ${tmp}-riyosha_name
+fi
+
+# 施設の取得
+if [ -n "${shisetsu}" -a "${shisetsu}" != "_" ];then
+  echo "0" "全て"                                              |
+  cat - ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON              |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${shisetsu})                              |
+  self 2                                                       > ${tmp}-shisetsu_name
+else
+  :                                                            > ${tmp}-shisetsu_name
+fi
+
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_floor
+  cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 3                                                       |
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         |
+  LANG=C sort -k1,1n                                           |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  join0 key=1 <(echo ${floor})                                 |
+  self 2                                                       > ${tmp}-floor_name
+else
+  :                                                            > ${tmp}-floor_name
+fi
+
+# 対象
+if [ "${tatekae_taisho}" = "nyukyosha" ];then
+  echo "入居者" > $tmp-taisho
+elif [ "${tatekae_taisho}" = "all" ];then
+  echo "全て" > $tmp-taisho
+else
+  echo "入居者以外" > $tmp-taisho
+fi
+# 立替方法
+if [ "${tatekae_houhou}" = "seikyusho" ];then
+  echo "請求書" > $tmp-tatekaehouhou
+elif [ "${tatekae_houhou}" = "genkin" ];then
+  echo "現金" > $tmp-tatekaehouhou
+elif [ "${tatekae_houhou}" = "all" ];then
+  echo "全て" > $tmp-tatekaehouhou
+else
+  echo "その他" > $tmp-tatekaehouhou
+fi
+# 入出金
+if [ "${nyushukkin}" = "all" ];then
+  echo "全て" > $tmp-nyushukkin
+elif [ "${nyushukkin}" = "nyukin" ];then
+  echo "入金" > $tmp-nyushukkin
+else
+  echo "出金" > $tmp-nyushukkin
+fi
+
+# 年月
+echo ${text_kensaku_hiduke_from}                         > $tmp-from
+echo ${text_kensaku_hiduke_to}                           > $tmp-end
+
+cat ${searchfile}                                        |
+awk 'NR!=1'                                              |
+awk '{nen=substr($1,1,4);getu=substr($1,5,2);niti=substr($1,7,2);print nen"/"getu"/"niti,$0}' |
+delf 2             > $tmp-search_second
+# 1:立替日付 2:対象者ID 3:入出金フラグ 4:立替方法 5:立替項目フラグ
+# 6:立替項目 7:摘要 8:入金額 9:出金額 10:所属建屋
+# 11:所属フロア 12:所属ユニット 13:ID 14:登録時間
+cp $tmp-search_second ${work}/sachiko 
+
+cat ${apptbl_dir}/${shisetsu}/TATEKAE_TAISHO |
+1bai 1                                       |
+LANG=C sort -k1,1                            |
+self 1 2                                     |
+awk '{print $1,"_",$2}'                      > $tmp-tatekae_taisho_master
+
+case ${tatekae_taisho} in
+    nyukyosha )
+      cat $tmp-search_second          |
+      delf 2                          |
+      LANG=C sort -k2,2n  |
+#      join2 key=2 $tmp-riyosha_room   |
+      join2 key=2 $tmp-riyosha_room_all   |
+      delf 2
+      # 1:立替日付       2:対象者ID    3:部屋          4:入出金フラグ 5:立替方法
+      # 6:立替項目フラグ 7:立替項目    8:摘要          9:入金額       10:出金額
+      # 11:所属建屋      12:所属フロア 13:所属ユニット 14:ID          15:登録時間
+    ;;
+    * )
+    # 立替方法が入居か入居者以外かで分けて処理
+      cat $tmp-search_second          |
+      awk '$2=="nyukyosha"'           |
+      delf 2                          > $tmp-second_nyukyosha
+      cat $tmp-search_second          |
+      awk '$2=="sonota"'              |
+      delf 2                          > $tmp-second_sonota
+
+      # 入居者
+      cat $tmp-second_nyukyosha       |
+      LANG=C sort -k2,2n  |
+#      join2 key=2 $tmp-riyosha_room   |
+      join2 key=2 $tmp-riyosha_room_all   |
+      delf 2              > $tmp-third_nyukyosha
+cp $tmp-third_nyukyosha ${work}/third
+      # 1:立替日付       2:対象者ID    3:部屋          4:入出金フラグ 5:立替方法
+      # 6:立替項目フラグ 7:立替項目    8:摘要          9:入金額       10:出金額
+      # 11:所属建屋      12:所属フロア 13:所属ユニット 14:ID          15:登録時間
+
+      # 入居者以外
+      cat $tmp-second_sonota          |
+      1bai 2                          |
+      LANG=C sort -k2,2               |
+      join2 key=2 $tmp-tatekae_taisho_master |
+      delf 2             > $tmp-third_sonota
+
+      cat $tmp-third_nyukyosha $tmp-third_sonota
+
+
+    ;;
+  esac                > $tmp-not_master
+
+  # マスタ準備
+  cat ${apptbl_dir}/${shisetsu}/TATEKAE_HOUHOU |
+  1bai 1                                       |
+  LANG=C sort -k1,1                            |
+  self 1 2                                     > $tmp-tatekae_houhou_master
+  cat ${apptbl_dir}/${shisetsu}/NYUKIN_KOUMOKU     |
+  1bai 1                                       |
+  LANG=C sort -k1,1                            |
+  self 1 2                                     > $tmp-nyukin_koumoku_master
+  cat ${apptbl_dir}/${shisetsu}/SHUKKIN_KOUMOKU    |
+  1bai 1                                       |
+  LANG=C sort -k1,1                            |
+  self 1 2                                     > $tmp-shukkin_koumoku_master
+
+cat $tmp-not_master |
+tee ${work}/buta |
+1bai 5              |
+LANG=C sort -k5,5   |
+join2 key=5 $tmp-tatekae_houhou_master |
+delf 4 5            > ${tmp}-pre_search
+# 1:立替日付    2:対象者        3:部屋   4:立替方法  5:立替項目フラグ
+# 6:立替項目    7:摘要          8:入金額 9:出金額    10:所属建屋
+# 11:所属フロア 12:所属ユニット 13:ID    14:登録時間
+# 入金の場合
+cat ${tmp}-pre_search |
+LANG=C sort -k5,5n    |
+join0 key=5 <(echo "1") |
+1bai 6               |
+LANG=C sort -k6,6    |
+join2 key=6 $tmp-nyukin_koumoku_master |
+delf 5 6              > ${tmp}-nyukin
+# 出金の場合
+cat ${tmp}-pre_search |
+LANG=C sort -k5,5n    |
+join0 key=5 <(echo "2") |
+1bai 6                |
+LANG=C sort -k6,6    |
+join1 key=6 $tmp-shukkin_koumoku_master |
+delf 5 6              > ${tmp}-shukkin
+
+cat ${tmp}-nyukin ${tmp}-shukkin          |
+delf 10 11 12                             |
+LANG=C sort -k12,12n                      |
+awk '{if($6=="_"){$6="@"};print}'         |
+case ${search_sort} in
+  sort_date )
+    LANG=C sort -k1,1 -k11,11
+  ;;
+  sort_koumoku )
+    LANG=C sort -k5,5 -k1,1 -k11,11
+  ;;
+  sort_kyoshitsu )
+    LANG=C sort -k2,2 -k1,1 -k11,11
+  ;;
+  sort_time )
+    LANG=C sort -k11,11 -k1,1 -k2,2
+  ;;
+  * )
+    LANG=C sort -k1,1 -k11,11
+  ;;
+esac                                      |
+if [ -n "${zandaka_hyoji}" -a "${zandaka_hyoji}" = "on" ];then
+  delf 10 11 12                            > ${tmp}-search_data1
+  cat ${tmp}-search_data1                 |
+  sm2 0 0 7 8                             |
+  lcalc '$1,$2,$1-$2'                     |
+  awk '{print "@","@","@","@","合計","@",$0}' > $tmp-goukeigyo
+else
+  delf 9 10 11 12                         > ${tmp}-search_data1
+  cat ${tmp}-search_data1                 |
+  sm2 0 0 7 NF                            |
+  awk '{print "@","@","@","@","合計","@",$0}' > $tmp-goukeigyo
+fi
+cat ${tmp}-search_data1 $tmp-goukeigyo   > $tmp-search_data
+if [ -n "${zandaka_hyoji}" -a "${zandaka_hyoji}" = "on" ];then
+  TEMPLA=${temp_dir}/TATEKAEKIN_TEMPLATE.xls
+else
+  TEMPLA=${temp_dir}/TATEKAEKIN_TEMPLATE_ZANDAKANASHI.xls
+fi
+
+Ehexcel < ${TEMPLA} 1 b4 $tmp-from                       \
+                    1 d4 $tmp-end                        \
+                    1 b5 $tmp-tatekaehouhou              \
+                    1 b6 $tmp-floor_name                 \
+                    1 b7 $tmp-nyushukkin                 \
+                    1 d5 $tmp-taisho                     \
+                    1 d6 $tmp-riyosha_name               \
+                    1 a13 ${tmp}-search_data             > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/TATEKAEKIN/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

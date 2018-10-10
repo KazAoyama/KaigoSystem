@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="jp">
+  <head>
+    <meta charset="utf-8">
+    <title>アンマッチリスト</title>
+    <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <link rel="stylesheet" type="text/css" href="###DOMAIN###/css/bootstrap.css">
+    
+    <link rel="stylesheet" type="text/css" href="###DOMAIN###/css/theme.css">
+    <link rel="stylesheet" href="###DOMAIN###/css/font.css">
+    <script src="###DOMAIN###/js/jquery-1.7.2.min.js" type="text/javascript"></script>
+	<script>
+// 作成済み表示＆実績あれば含み（対象月と利用者IDで検索）
+//  事業者タイプ、サービス区分、実績確定区分、予定データ値、実績データ値、サービス開始時間、サービス終了時間、供給者ID、保険区分、付随費用
+	sakuseid=[
+//                ###RIYOUHYOUDATA###
+	   		{ "taishoushaname":"%1","jigyoushatype":"%2","id":"%3","jissekikakutei":"%4","yoteidate":"%5","jissekidate":"%6","start":"%7","end":"%8","kyoukyusha":"%9","hoken":"%10","plusfee":"%11" },
+//                ###RIYOUHYOUDATA###
+		];
+
+
+	// データセット部
+	// サービス区分（サービスコード種類、サービスコード区分、サービス名、最小時間、最大時間、対象介護度、対象事業規模、対象事業者種類、サ責、同一建物、朝夜、深夜、単位）
+	kaigoservice=[
+//                     ###SERVICECODE###
+                {"jigyoushatype":"%1","id":"%2","value":"%3","min":"%4","max":"%5","kaigodo":"%6","scale":"%7","facilitytype":"%8","servicemanager":"%9","douitsu":"%10","asayoru":"%11","shinya":"%12","unit":"%13","fee":"%14"},
+//                     ###SERVICECODE###
+		];
+
+
+	// 供給者データ（供給者ID、供給者名、提供サービスコード種類、事業規模、事業種類、特定事業所加算倍率、サービス提供責任者２級フラグ）
+	kyoukyusha=[
+//                     ###KYOUKYUSHA###
+                 {"id":"%1","value":"%2","jigyoushatype":"%3","scale":"%4","facilitytype":"%5","areatanka":"%6","servicemanager":"%7","douitsu":"%8","ketsuin":"%9","facilityunit":"%10","nightcare":"%11"},
+//                     ###KYOUKYUSHA###
+		];
+
+
+	// 地域単価
+	areatanka=10.1;
+
+	var YoubiDay= new Array("日","月","火","水","木","金","土");
+
+        var warekid=[
+//                     ###TAISHOUWAREKI###
+                        {"id":"%1","value":"%2","year":"%3"},
+//                     ###TAISHOUWAREKI###
+                ];
+
+	var dataArrEventRiyoushaId = new Array();
+
+
+
+//  テーブルレコード数
+    var numRecord=0;
+
+
+
+//  予定データ（テーブル、日）
+    var dataArrayYotei= new Array();
+
+//  実績データ（テーブル、日）
+    var dataArrayJisseki= new Array();
+
+//  エラーメッセージ
+    var error_msg="";
+
+	jQuery(function(){
+
+        var realdate = new Date();
+        var realseirekiyear = realdate.getFullYear();        
+        var curdate = new Date(###TAISHOUMONTH###);
+        var seirekiyear = curdate.getFullYear();
+        var nextmonth = curdate.getMonth()+parseInt(1);
+        if(nextmonth>12){
+            nextmonth=1;
+        }
+        for(var m=1; m<13; m++) {
+            if(m==nextmonth) {
+	        $("#taishoumonth").html(m);
+                break;
+            }
+        }
+
+        var minusyear=0;
+        var warekimei="";
+        for(var w in warekid) {
+            if(warekid[w].id=='05') {
+                minusyear=warekid[w].year;
+                warekimei=warekid[w].value;
+                break;
+            }
+        }
+       
+        var plusyear=0; 
+        var curyear=seirekiyear-minusyear;
+        var realyear=realseirekiyear-minusyear;
+        var nextyear = realyear+parseInt(1);
+        $("#taishouyear").html(realyear)
+        $("#taishouwareki").html(warekimei);
+
+
+		var date = new Date(###TAISHOUMONTH###);
+		var d = date.getDate();
+		var m = date.getMonth();
+		var y = date.getFullYear();
+
+//　ヘッダー作成
+		var htmlhd="<thead><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">対象者氏名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">提供時間帯</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス事業所名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス内容</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >日付</th>";
+
+		var tm = m+1;
+		var NumOfDays= new Date(y,tm,0).getDate();
+		var yd=1;
+		var wn=1;
+		var yoteigoukei=0;
+                var yoteifuzui=0;
+		var yoteinokori=0;
+                var jissekigoukei=0;
+                var jissekifuzui=0;
+
+//　ヘッダーの日付
+    	for (yd; yd<=NumOfDays; yd=yd+1) {
+			htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+yd+"</th>";
+		}
+		htmlhd=htmlhd+"</tr><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >曜日</th>";
+
+//　ヘッダーの曜日
+    	for (yd=1; yd<=NumOfDays; yd=yd+1) {
+			var YoubiDate = new Date(y,m,yd);
+			var Youbi=YoubiDate.getDay();
+			if(Youbi=="0") {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" ><font color=\"red\">"+YoubiDay[Youbi]+"</font></th>";
+			} else {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+YoubiDay[Youbi]+"</th>";
+			}
+		}
+
+//　ヘッダーの集計
+		htmlhd=htmlhd+"</tr></thead>";
+		$('#RiyouhyouIchiran').append(htmlhd);
+
+
+		date = new Date(###TAISHOUMONTH###);
+		d = date.getDate();
+		m = date.getMonth();
+		y = date.getFullYear();
+
+		htmlhd="<thead><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">対象者氏名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">提供時間帯</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス事業所名</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\">サービス内容</th><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >日付</th>";
+
+		tm = m+1;
+		NumOfDays= new Date(y,tm,0).getDate();
+		yd=1;
+		wn=1;
+
+//　ヘッダーの日付
+    	for (yd; yd<=NumOfDays; yd=yd+1) {
+			htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+yd+"</th>";
+		}
+		htmlhd=htmlhd+"</tr><tr><th style=\"text-align:center; border:#bbbbbb solid 1px;\" >曜日</th>";
+
+//　ヘッダーの曜日
+    	for (yd=1; yd<=NumOfDays; yd=yd+1) {
+			var YoubiDate = new Date(y,m,yd);
+			var Youbi=YoubiDate.getDay();
+			if(Youbi=="0") {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" ><font color=\"red\">"+YoubiDay[Youbi]+"</font></th>";
+			} else {
+				htmlhd=htmlhd+"<th style=\"text-align:center; border:#bbbbbb solid 1px;\" >"+YoubiDay[Youbi]+"</th>";
+			}
+		}
+
+//　ヘッダーの集計
+		htmlhd=htmlhd+"</tr></thead>";
+
+
+
+		$("#RiyouhyouIchiran").children().remove();
+		$('#RiyouhyouIchiran').append(htmlhd);
+
+		var htmlval="";
+
+//　作成済みの設定↓ここから↓
+        if(sakuseid.length>0) {
+		for (var s in sakuseid ) {
+			var tmpTimeStart=sakuseid[s].start.split(":");
+			var tmpTimeEnd=sakuseid[s].end.split(":");
+			var tmpMinuteStart=parseInt(tmpTimeStart[0]*60)+parseInt(tmpTimeStart[1]);
+			var tmpMinuteEnd=parseInt(tmpTimeEnd[0]*60)+parseInt(tmpTimeEnd[1]);
+			var serviceTime=tmpMinuteEnd-tmpMinuteStart;
+			var servicefee=0;
+			htmlval=htmlval+"<tr class=\"tryotei\">";
+
+//  対象者氏名
+                htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><span id=\"taishoushaname"+numRecord+"\" name=\"taishoushaname"+numRecord+"\" style=\"width:150px;\" class=\"taishoushaname\" >"+sakuseid[s].taishoushaname+"</span></td>";
+//　提供時間帯設定
+    		htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\" rowspan=\"2\"><span id=\"start"+numRecord+"\" name=\"start"+numRecord+"\" style=\"width:40px;\" class=\"teikyoujikanstart\" >"+sakuseid[s].start+"</span>～<span id=\"end"+numRecord+"\" name=\"end"+numRecord+"\" style=\"width:40px;\" class=\"teikyoujikanend\" >"+sakuseid[s].end+"</span></td>";
+
+//　供給者選択設定
+    		htmlval=htmlval+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><span id=\"Kyokyusha"+numRecord+"\" name=\"Kyokyusha"+numRecord+"\" class=\"Kyokyusha\" >";
+                var stype="";
+    		for (var k in kyoukyusha) {
+				if(kyoukyusha[k].id==sakuseid[s].kyoukyusha){
+					htmlval=htmlval+kyoukyusha[k].value;
+                                        break;
+				}
+			}
+    		htmlval=htmlval+"</span></td>";
+
+//　サービス内容設定
+    		htmlval=htmlval+"<td style=\"text-align:left; border:#bbbbbb solid 1px;\" rowspan=\"2\"><span id=\"ServiceNaiyou"+numRecord+"\" name=\"ServiceNaiyou"+numRecord+"\" class=\"ServiceNaiyou\" >";
+//　selectedがたったものは変数servicefeeにその単位をセットする（→集計単位をだすため）
+    		for (var g in kaigoservice) {
+			if(sakuseid[s].jigyoushatype==kaigoservice[g].jigyoushatype) {
+				if(kaigoservice[g].id==sakuseid[s].id){
+					htmlval=htmlval+kaigoservice[g].value;
+                                        break;
+				}
+			}
+		}
+    		htmlval=htmlval+"</span></td>";
+
+//　各日付ごとにサービス実施の設定を行う↓ここから↓
+//　その月の全日数から１日ごとに曜日と週を確認して、inputデータの内容と合えば、1をセットし、flgをたてて、kaisuを1増やす（→集計のため）
+
+		htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\">予定</td>";
+		var kaisu=0;
+                var yoteidayval = new Array();
+                var countday=0;
+                yoteidayval = sakuseid[s].yoteidate.split(",");
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+				if(yoteidayval[countday]=="1"){
+					htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\"><span id=\"riyou"+sakuseid[s].id+yd+"\" name=\"RiyouYotei\" class=\"Riyou"+yd+"\" style=\"width:100%;\">1</span></td>";
+    				        kaisu++;
+				} else {
+    				        htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\"><span id=\"riyou"+sakuseid[s].id+yd+"\" name=\"RiyouYotei\" class=\"Riyou"+yd+"\" style=\"width:100%;\"></span></td>";
+				}
+                countday=yd;
+		}
+
+                htmlval=htmlval+"</tr><tr class=\"trjisseki\">";
+		htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\">実績</td>";
+                var jissekidayval = new Array();
+                jissekidayval = sakuseid[s].jissekidate.split(",");
+                countday=0;
+                kaisu=0;
+    		for (yd=1; yd<=NumOfDays; yd=yd+1) {
+			if(jissekidayval[countday]=="1"){
+			    htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\"><span name=\"RiyouJisseki\" class=\"Jisseki"+yd+"\" style=\"width:100%;\">1</span></td>";
+			    kaisu++;
+	                } else {
+			    htmlval=htmlval+"<td style=\"text-align:center; border:#bbbbbb solid 1px;\"><span name=\"RiyouJisseki\" class=\"Jisseki"+yd+"\" style=\"width:100%;\"></span></td>";
+        	        }
+                        countday=yd;
+		}
+		htmlval=htmlval+"</tr>";
+
+                numRecord++;
+	    }
+		
+
+		$('#RiyouhyouIchiran').append(htmlval);
+
+		}
+		
+
+    });
+	</script>
+
+    <!-- Demo page code -->
+
+    <style type="text/css">
+        #line-chart {
+            height:300px;
+            width:800px;
+            margin: 0px auto;
+            margin-top: 1em;
+        }
+    </style>
+
+    <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="lib/html5.js"></script>
+    <![endif]-->
+
+  </head>
+
+  <!--[if lt IE 7 ]> <body class="ie ie6"> <![endif]-->
+  <!--[if IE 7 ]> <body class="ie ie7 "> <![endif]-->
+  <!--[if IE 8 ]> <body class="ie ie8 "> <![endif]-->
+  <!--[if IE 9 ]> <body class="ie ie9 "> <![endif]-->
+  <!--[if (gt IE 9)|!(IE)]><!--> 
+  <body class=""> 
+  <!--<![endif]-->
+    <div class="container-fluid">
+		<div class="well"style="min-width:1536px;">
+            <form id="frmRiyouhyou" name="frmRiyouhyou">
+			<div>
+                   <table style="width:1000px;margin-top:1em;">
+                     <tr>
+                        <td style="margin-top:.5em;padding:0px 10px 0px 10px;width:8%"></td>
+                        <td style="margin-top:.5em;padding:0px 10px 0px 10px;text-align:center;"><font style="font-size:20px">アンマッチリスト</font></td>
+                     </tr>
+                   </table>
+                 <table style="width:900px;">
+                    <tr>
+                       <td style="width:20%">
+              <span id="taishouwareki" name="taishouwareki"></span><span id="taishouyear" name="taishouyear" style="" ></span>年<span id="taishoumonth" name="taishoumonth" style=""></span>月
+                       </td>
+                    </tr>
+                 </table>
+            </div>
+            <div class="clearfix"></div>
+            <div style="">
+			<div style="">
+				<table id="RiyouhyouIchiran" style="border:#bbbbbb solid 2px;width:100%;">
+				</table>
+            </div>
+            <div class="clearfix"></div>
+	        </div>
+            </form>
+	    </div>
+	</div>    
+
+
+    <script src="###DOMAIN###/js/bootstrap.js"></script>
+    <script type="text/javascript">
+        $("[rel=tooltip]").tooltip();
+        $(function() {
+            $('.demo-cancel-click').click(function(){return false;});
+        });
+    </script>
+    
+  </body>
+</html>
+
+

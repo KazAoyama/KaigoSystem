@@ -1,0 +1,103 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KAKO_FLG 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 2.過去ぶんの請求に関する処理(月額利用料のみ対象)
+
+### c. 返金したレコード、日割り返金したレコードはフラグ更新する
+# 過去更新ぶんinputを使用して過去ぶん更新ファイルを作成する(人ごとに繰り返す)
+
+# 更新ファイル名用初期化
+: > ${tmp}-kako_meisai_koushin_name
+
+# 処理開始
+for member_id in $(cat ${tmp}-member) ; do
+
+  #--------------------------------------
+  # 更新するファイルの年月リストを作成
+  ls -l ${tmp}-HENKIN_HIWARI_KAKO.${member_id}.* ${tmp}-HENKIN_ALL_KAKO.${member_id}.* |
+  tr "." " "                            |
+  self NF                               |
+  LANG=C sort -u                        > ${tmp}-kako_koushin_nengetsu
+  #--------------------------------------
+
+  #--------------------------------------
+  # ファイルがなければ次のループ処理へ
+  [ ! -s ${tmp}-kako_koushin_nengetsu ] && continue
+  #--------------------------------------
+
+  #--------------------------------------
+  # 更新年月で繰り返し
+  cat ${tmp}-kako_koushin_nengetsu      |
+  while read nengetsu ; do
+    cat ${seikyu_dir}/${shisetsu}/MEISAI/${nengetsu}/SEIKYU_MEISAI.${nengetsu}.${member_id} \
+        ${tmp}-HENKIN_HIWARI_KAKO.${member_id}.${nengetsu} \
+        ${tmp}-HENKIN_ALL_KAKO.${member_id}.${nengetsu}    |
+    # 1:請求年月    2:入居者ID                 3:行分類フラグ 4:契約ID            5:項目ID
+    # 6:契約枝番    7:レコードが発生した年月日 8:非課税フラグ 9:金額税抜き        10:金額税込み
+    # 11:税額       12:内訳1                   13:内訳2       14:特別処理済フラグ 15:予備1
+    # 16:予備       17:予備                    18:予備        19:予備             20:予備
+    # 21:予備       22:予備                    23:予備        24:予備             25:削除フラグ
+    # 26:更新時時間 27:更新者
+    LANG=C sort -k1,6 -k26,26           |
+    getlast 1 6                         > ${tmp}-SEIKYU_MEISAI.${nengetsu}.${member_id}.new #過去更新対象!!
+
+#    [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+#    [ -e ${tmp}-err ] && break;
+
+    #--------------------------------------
+    # ファイルがなければ次のループ処理へ
+    [ ! -s ${tmp}-SEIKYU_MEISAI.${nengetsu}.${member_id}.new ] && continue
+    #--------------------------------------
+
+    #--------------------------------------
+    # 更新時に使用する明細ファイルリストに追記
+	cat <<- FIN | yarr >> ${tmp}-kako_meisai_koushin_name
+	${tmp}-SEIKYU_MEISAI.${nengetsu}.${member_id}.new
+	${seikyu_dir}/${shisetsu}/MEISAI/${nengetsu}/KAKO/SEIKYU_MEISAI.${nengetsu}.${member_id}
+	${input_dir}/${today}/SEIKYU/SEIKYU_MEISAI.${nengetsu}.${member_id}.$(basename ${0}).${current_time}
+	27
+	FIN
+    #過去更新リスト!!
+    #--------------------------------------
+  done
+  #--------------------------------------
+done
+#[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(KAKO_3)"
+### cここまで
+#---------------------------------------------------------------
+
+exit 0

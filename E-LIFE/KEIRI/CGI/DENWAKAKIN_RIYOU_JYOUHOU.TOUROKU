@@ -1,0 +1,429 @@
+#!/bin/bash
+#
+# DENWAKAKIN_RIYOU_JYOUHOU.TOUROKU : 電話課金利用情報マスタ
+#
+# Written by S.Otsubo
+
+# 画面から直接よびだし
+# 月ごとにファイルを置くので、アップされるごとに上書きするかんじ
+
+# inputはアップロードファイルを変換したもの
+# pompaは帳票出力用のかたち
+# 共通ファイルはpompaをみじかくしたもの
+
+# 最小単位「利用者・内線」の集計行に税込み金額の値をいれる
+
+# ログ
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/DENWAKAKIN_RIYOU_JYOUHOU.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+#------------------------------------------------------------
+# パラメーターの取得
+
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  password
+  shisetsu
+  shisetsu_key
+  up_Shisetsu_select
+  up_kikan_month_select
+FIN
+  
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+
+  # アップロードしたファイルは別で取得
+  mime-read "upload_file" ${tmp}-param |
+  # 変換
+  nkf -wLu |
+  # 空行削除
+  grep -v "^$" |
+  # カンマ区切りの変換
+  tr " " "_" |
+  sed 's/^,/_,/g' |
+  sed 's/,$/,_/g' |
+  sed 's/,,/,_,/g' |
+  sed 's/,,/,_,/g' |
+  tr "," " " > ${tmp}-upload_file
+  # 1:(分からない)  2:(分からない)            3:(分からない) 4:(分からない) 5:(分からない)
+  # 6:種別          7:発信番号                8:発信先番号   9:通話開始時間 10:通話時間(たぶん秒)
+  # 11:(分からない) 12:通話金額(たぶん税抜き)
+
+  # アップロードファイル名取得
+  mime-read -v ${tmp}-param |
+  grep "upload_file" |
+  sed -e 's/^.*filename="\(.*\)".*$/\1/' -e 's/ /_/g' -e 's/#/＃/g' -e 's/%/％/g' > ${tmp}-upload_file_name
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+
+#dd bs=${CONTENT_LENGTH}        |
+#cgi-name -d_ -i_               |
+#LANG=C sort                    > $tmp-name
+cookie-name                    |
+LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------------
+
+# ディレクトリ設定
+ch_cgi_dir="${home_dir}/TEST/CGI"
+
+
+#------------------------------------------------------------
+# 処理モードの決定
+eval $(name-source ${tmp}-cookie)
+eval $(name-source $tmp-name)
+[ -z "${MODE}" ] && MODE="init"
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# ディレクトリの作成
+
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN/${up_Shisetsu_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN/${up_Shisetsu_select}
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN/${up_Shisetsu_select}/${up_kikan_month_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN/${up_Shisetsu_select}/${up_kikan_month_select}
+[ ! -e ${pompa_dir}/DENWA_KAKIN ] && mkdir ${pompa_dir}/DENWA_KAKIN
+[ ! -e ${pompa_dir}/DENWA_KAKIN/${up_Shisetsu_select} ] && mkdir ${pompa_dir}/DENWA_KAKIN/${up_Shisetsu_select}
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+upl key=1 ${tmp}-cookie $tmp-name > $tmp-name.new0
+#cp -p $tmp-name $tmp-name_origin
+mv -f $tmp-name.new0 $tmp-name
+
+#echo "USER_ID kaizen" >> $tmp-name
+#------------------------------------------------------------
+
+
+#------------------------------------------------------------
+# エラー
+
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${home_dir}/TBL/KEIRI/${File}.LOCK
+  : ;done
+  error_exit ${message}
+} 
+#------------------------------------------------------------
+
+##------------------------------------------------------------
+## セッションチェック
+#case "$MODE" in
+#  *)
+#    $function_dir/FUNCTION.SESSION_CHECK -chk $session_dir/$SESSION_ID > $tmp-session_result
+#
+#    # エラーの場合、MODEを変え、namedateも変換する
+#    if [ "$(awk 'NR==1{print $1}' $tmp-session_result)" == "ng" ]; then
+#      MODE="$(awk 'NR==1{print $2}' $tmp-session_result)"
+#      echo "MODE $MODE" > $tmp-new_mode
+#      cat $tmp-name   |
+#      sed '/^MODE /d' |
+#      cat $tmp-new_mode - > $tmp-name.new
+#      mv -f $tmp-name.new $tmp-name
+#    fi
+#  ;;
+#esac
+##------------------------------------------------------------
+
+
+#------------------------------------------------------------
+# アップロードしたファイルのチェック
+
+# ファイル名から拡張子
+kakucyousi="$(cat ${tmp}-upload_file_name | tr "." " " | self NF)"
+[ "${kakucyousi}" != "txt" ] && error_exit "アップロードできるファイルはテキストです"
+
+# ファイルの列チェック
+[ "$(retu ${tmp}-upload_file)" != "12" ] && error_exit "列数が違います。ファイルの内容を確認してください"
+
+# 選択した年月の請求が確定している場合はアップロードできない
+LANG=C sort -k1,2 -k5,5 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!="9"' -                                                                 |
+getlast 1 1                                                                     |
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+cjoin0 key=2<(echo "${up_kikan_month_select}")                                  > ${tmp}-kakutei_file
+
+if [ -s ${tmp}-kakutei_file ] ; then
+  kakutei_status="$(self 3 ${tmp}-kakutei_file)"
+  if [ "${kakutei_status}" = "2" ] ; then
+    error_exit "請求処理で当月確定しているためアップロードできません"
+  else
+    error_exit "請求処理で仮確定しているためアップロードできません"
+  fi
+fi
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# 登録開始
+
+# DENWA_KAKIN
+# 1:利用者ID 2:内線番号 3:日付       4:識別コード 5:時刻
+# 6:通話時間 7:通話金額 8:削除フラグ 9:更新時間   10:更新者
+
+# ファイルを置くだけなのでロックしない
+
+# ${tmp}-upload_file
+# 1:(分からない)  2:(分からない)            3:(分からない) 4:(分からない) 5:(分からない)
+# 6:種別          7:発信番号                8:発信先番号   9:通話開始時間 10:通話時間(たぶん秒)
+# 11:(分からない) 12:通話金額(たぶん税抜き)
+
+# ----------
+# 利用者マスタから部屋番号と利用者IDをとってくる
+
+# 処理月に各部屋に存在した人のリストを作成する
+cjoin0 key=1 <(echo "${up_Shisetsu_select}") ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:削除フラグ 10:更新時間
+# 11:更新者
+awk '$9!="9"' |
+self 1/8 7.1.6 8.1.6 |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:入居月     10:退去月
+LANG=C sort |
+getlast 1 6 |
+tee ${work}/butatyou |
+# 入居退去期間が処理月を含む人のみ抽出
+awk '$9<="'${up_kikan_month_select}'" && $10>="'${up_kikan_month_select}'"' |
+tee ${work}/bbutafutoi |
+delf 9/10 > ${tmp}-heya_hito_list
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日
+
+awk '$(NF-2)!=9&&$1=="'${shisetsu}'"' /home/hands/E-LIFE/TBL/SEIKYUSAKI_SETTEI/${shisetsu}/DENWAKAKIN_SETTEI.${shisetsu} |
+awk '$5<="'${up_kikan_month_select}'"&&$6>="'${up_kikan_month_select}'"&&$7!="_"{print $4,$7}' |
+LANG=C sort > $tmp-kakin_settei
+cp $tmp-kakin_settei ${work}/kakin_settei
+
+
+# -
+# 部屋ごとに誰が支払うのか決定する
+cp ${tmp}-heya_hito_list ${work}/heya_hito_list
+self 5 ${tmp}-heya_hito_list |
+# 1:居室ID
+LANG=C sort -u |
+while read heya ; do
+  # 部屋にいる人リストを処理中の部屋で絞る
+  cjoin0 key=5 <(echo "${heya}") ${tmp}-heya_hito_list > ${tmp}-heya_hito
+  # 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+  # 6:入居者ID 7:入居日 8:退去日
+ 
+  # 部屋にいる人が一人か判定
+  if [ "$(gyo ${tmp}-heya_hito)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito
+    continue
+  fi
+
+  # 請求先設定で設定があるかどうか
+  cat $tmp-heya_hito                    |
+  # 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+  # 6:入居者ID 7:入居日 8:退去日
+  join1 key=5 $tmp-kakin_settei         > $tmp-kakinsettei_ari
+  # 1:施設ID   2:建屋ID   3:フロアID 4:ユニットID 5:居室ID
+  # 6:請求先ID 7:入居者ID 8:入居日   9:退去日
+
+  if [ $(gyo $tmp-kakinsettei_ari) -ne 0 ];then
+    awk '$6==$7{print $1,$2,$3,$4,$5,$7,$8,$9}' $tmp-kakinsettei_ari
+    continue
+  fi
+  
+  ### 一人じゃない場合は日付をみて判定する
+  # 退去日が大きい人
+  hantei_date=$(self 8 ${tmp}-heya_hito | LANG=C sort | tail -1)
+  cjoin0 key=8 <(echo "${hantei_date}") ${tmp}-heya_hito > ${tmp}-heya_hito2
+  # 結果が一人になったか判定
+  if [ "$(gyo ${tmp}-heya_hito2)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito2
+    continue
+  fi
+
+  # 絞りきれなかったときは上記結果に対して判定
+  # 入居日が小さい人
+  hantei_date2=$(self 7 ${tmp}-heya_hito2 | LANG=C sort | head -1)
+  cjoin0 key=7 <(echo "${hantei_date2}") ${tmp}-heya_hito2 > ${tmp}-heya_hito3
+  # 結果が一人になったか判定
+  if [ "$(gyo ${tmp}-heya_hito3)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito3
+    continue
+  fi
+
+  # それでも決まらない場合は入居者IDが若い方で決定する
+  hantei_hito=$(self 6 ${tmp}-heya_hito3 | LANG=C sort | head -1)
+  cjoin0 key=6 <(echo "${hantei_hito}") ${tmp}-heya_hito3
+  ###
+done |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日
+self 5/6 1/4 > ${tmp}-riyousya
+# 1:居室ID     2:入居者ID 3:施設ID 4:建屋ID 5:フロアID
+# 6:ユニットID
+cp ${tmp}-riyousya /home/hands/E-LIFE/KEIRI/WORK/denwariyouhsa
+# ----------
+
+# ----------
+# 税計算用税率とってくる
+
+zeiritsu="$(awk '$5!="9" && $3<="'${up_kikan_month_select}'" && $4>"'${up_kikan_month_select}'"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU | self 2)"
+zeiritsu_keisan="$(echo "${zeiritsu} + 1" | bc)"
+# ----------
+
+# ----------
+# 共通ディレクトリ用データ
+
+self 7/10 NF ${tmp}-upload_file |
+# 1:発信番号 2:発信先番号 3:通話開始時間 4:通話時間(たぶん秒) 5:通話金額(たぶん税抜き)
+# -
+# 発信番号頭3始まりが利用者なのでわける
+awk '$1~/^3/{print}' - |
+# 通話開始時間と内線番号を分割する
+self 1.2.4 1 2 3.1.10 3.12.19 4/NF |
+# 1:部屋番号 2:発信番号 3:発信先番号 4:通話日 5:通話開始時間
+# 6:通話時間 7:通話金額
+sed 's/\///g' |
+LANG=C sort |
+join2 key=1 ${tmp}-riyousya - |
+# 1:部屋番号  2:入居者ID  3:施設ID     4:建屋ID 5:フロア
+# 6:ユニット  7:発信番号  8:発信先番号 9:通話日 10:通話開始時間
+# 11:通話時間 12:通話金額
+# -
+# 帳票のためにデータ一時はきだし
+tee ${tmp}-cyouhyou_kari |
+self 2 7 9 10 11 12 |
+# 1:入居者ID 2:発信番号 3:通話日 4:通話開始時間 5:通話時間
+# 6:通話金額
+# -
+# 入居者をキーにして合計行を作成
+LANG=C sort |
+sm4 1 2 3 4 5 6 |
+# 合計行の変換と識別コード挿入
+sed 's/@/_/g' |
+unsco |
+# 通話開始時間がアンスコなのが合計行(識別コード＝2)
+# 合計行だけ税込み計算する(小数点以下切捨て)
+awk '{if($4=="_"){shikibetsu="2";zeikomi=int($6*"'${zeiritsu_keisan}'")}
+             else{shikibetsu="1";zeikomi="_"};print $0,shikibetsu,zeikomi,1,"'${cur_time}'","'${userid}'"}' |
+# 1:入居者ID 2:発信番号   3:通話日         4:通話開始時間 5:通話時間
+# 6:通話金額 7:識別コード 8:通話金額税込み 9:削除フラグ   10:更新時間
+# 11:更新者
+# -
+self 1/3 7 4/6 8 9/NF |
+# 1:入居者ID 2:発信番号 3:通話日         4:識別コード 5:通話開始時間
+# 6:通話時間 7:通話金額 8:通話金額税込み 9:削除フラグ 10:更新時間
+# 11:更新者
+LANG=C sort > ${tmp}-seikyu_denwa_kakin
+# ----------
+
+# ----------
+# 帳票用データ
+
+# ${tmp}-cyouhyou_kari
+# 1:部屋番号  2:入居者ID  3:施設ID     4:建屋ID 5:フロア
+# 6:ユニット  7:発信番号  8:発信先番号 9:通話日 10:通話開始時間
+# 11:通話時間 12:通話金額
+
+# sm4するためのならべかえ
+self 2 7 9 1 3/6 8 10/NF ${tmp}-cyouhyou_kari |
+# 1:入居者ID  2:発信番号  3:通話日   4:部屋番号   5:施設ID
+# 6:建屋ID    7:フロア    8:ユニット 9:発信先番号 10:通話開始時間
+# 11:通話時間 12:通話金額
+LANG=C sort |
+sm4 1 2 3 10 11 12 |
+sed 's/@/_/g' |
+unsco |
+# 4-10がアンスコなら合計行(識別コード＝2)
+# 合計行だけ税込み計算する(小数点以下切捨て)
+awk '{if($4=="_"){shikibetsu="2";zeikomi=int($12*"'${zeiritsu_keisan}'")}
+             else{shikibetsu="1";zeikomi="_"};print $0,shikibetsu,zeikomi,1,"'${cur_time}'","'${userid}'"}' |
+# 1:入居者ID  2:発信番号  3:通話日      4:部屋番号        5:施設ID
+# 6:建屋ID    7:フロア    8:ユニット    9:発信先番号      10:通話開始時間
+# 11:通話時間 12:通話金額 13:識別コード 14:通話時間税込み 15:削除フラグ
+# 16:更新時間 17:更新者
+# -
+self 1/3 13 10/12 14 9 6/8 4 15/NF |
+# 1:入居者ID 2:発信番号  3:通話日         4:識別コード  5:通話開始時間
+# 6:通話時間 7:通話金額  8:通話時間税込み 9:発信先番号  10:建屋ID
+# 11:フロア  12:ユニット 13:部屋番号      14:削除フラグ 15:更新時間
+# 16:更新者
+LANG=C sort > ${tmp}-cyouhyou_denwa_kakin
+# ----------
+
+
+# 各ファイルを置いてくる
+#   inputはアップロードファイルを変換したもの
+#   pompaは帳票出力用のかたち
+#   共通ファイルはpompaをみじかくしたもの
+
+cat << FIN | self 1/NF > ${tmp}-file_okiba
+${tmp}-cyouhyou_denwa_kakin ${pompa_dir}/DENWA_KAKIN/${up_Shisetsu_select}/DENWA_KAKIN_CYOUHYOU.${up_Shisetsu_select}.${up_kikan_month_select} 16
+${tmp}-seikyu_denwa_kakin   ${data_dir}/SEIKYU/SHISETSU/DENWA_KAKIN/${up_Shisetsu_select}/${up_kikan_month_select}/DENWA_KAKIN.${up_Shisetsu_select}.${up_kikan_month_select} 11
+${tmp}-upload_file          ${input_dir}/${today}/DENWA_KAKIN.${up_Shisetsu_select}.${up_kikan_month_select}.$(basename ${0}).${cur_time} 12
+FIN
+# 1:ファイル名 2:パス 3:列数
+
+# ファイル列チェック
+cat ${tmp}-file_okiba |
+self 1 3 |
+while read File retu_no; do
+  [ "$(retu ${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${File} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 置く
+cat ${tmp}-file_okiba |
+while read File Pass Retu ; do
+  cp -p ${File} ${Pass}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+
+#------------------------------------------------------------
+
+## HTMLファイルを表示する
+#if [ -e "$tmp-html" ];then
+#  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+#  cat - ${tmp}-html
+#else
+#  cat $tmp-html2
+#fi
+
+cat << FIN > ${tmp}-alert
+<script type="text/javascript">alert("アップロードが完了しました");</script>
+FIN
+
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-alert
+
+
+## 終了
+rm -f ${tmp}-*
+exit 0

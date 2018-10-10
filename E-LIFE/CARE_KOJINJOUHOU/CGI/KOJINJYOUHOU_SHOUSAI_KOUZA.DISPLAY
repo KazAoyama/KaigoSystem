@@ -1,0 +1,227 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KOUZA.DISPLAY
+# 個人情報詳細　口座タブ　表示用CGI
+#
+# Written by E.Okuda　2013/12/11
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+data=$2
+today="$(date +%Y%m%d)"
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+  RIYOUSHAID=$(nameread              "RIYOUSHAID"      $namedata)
+  NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+  NYUUKYOTATEYAID=$(nameread         "NYUUKYOTATEYAID"      $namedata)
+  NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+  NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+  NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+  SHISETSUID="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+# 入居者所属施設名
+  NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+  NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYAID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+
+[ -z "${NYUUKYOSHISETSUNAME}" -o "${NYUUKYOSHISETSUNAME}" = "_" ] && NYUUKYOSHISETSUNAME=$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###NYUUKYOSHISETSUID### ${NYUUKYOSHISETSUID}
+###NYUUKYOSHISETSUNAME### ${NYUUKYOSHISETSUNAME}
+###NYUUKYOTATEYAID### ${NYUUKYOTATEYAID}
+###NYUUKYOTATEYANAME### ${NYUUKYOTATEYANAME}
+###NYUUKYOFLOOR### ${NYUUKYOFLOOR}
+###NYUUKYOUNITID### ${NYUUKYOUNITID}
+###NYUUKYOUNITNAME### ${NYUUKYOUNITNAME}
+###NYUUKYOKYOSHITSU### ${NYUUKYOKYOSHITSU}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init)
+  
+# ${data}
+# 1:口座ID         2:金融機関コード 3:金融機関名 4:支店コード   5:支店名
+# 6:請求内容コード 7:口座種類       8:口座番号   9:支払期間From 10:支払期間To
+# 11:名義人        12:備考          13:更新日時  14:UserID      15:顧客番号
+
+
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER |
+self 1 2 > $tmp-user_master
+
+  if [ -s ${data} ] ; then
+   cat ${data} |
+
+  # User名
+  cjoin2 +"@" key=14 $tmp-user_master - |
+  delf NF-2 |
+
+
+  # 口座
+   awk '{if($7=="1"){print $0,"普通"}
+         else if($7=="2"){print $0,"当座"}
+         else{print $0,"_"}
+       }'     |
+   self 1/7 NF 8/NF-1  |
+
+  # 請求内容の設定i
+   awk '{if($6=="1"){print $0,"全請求"}
+         else if($6=="2"){print $0,"施設請求"}
+         else if($6=="3"){print $0,"居宅訪問介護請求"}
+        }'     |
+   self 1/6 NF 7/NF-1  |
+   sed 's/_/@/g'       |
+
+# 1:口座ID         2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+# 6:請求内容コード 7:請求内容       8:口座種類   9:口座種類名 10:口座番号
+# 11:支払期間From  12:支払期間To    13:名義人    14:備考      15:更新日時
+# 16:UserID        17:顧客番号
+#  tee $tmp-kouzadisplay1 |     
+  # classの設定
+   awk '{if($12!="_"&&$12<"'${today}'"){print $0,"kouza_gyo_old"}
+         else{print $0,"kouza_gyo"}
+        }' |
+  LANG=C sort -k11,12nr |
+# 1:口座ID         2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+# 6:請求内容コード 7:請求内容       8:口座種類   9:口座種類名 10:口座番号
+# 11:支払期間From  12:支払期間To    13:名義人    14:備考      15:更新日時
+# 16:UserID        17:顧客番号      18:CLASS
+  # 日付の表記
+  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11!="@"?substr($11,1,4)"/"substr($11,5,2):"@",$12!="999999"?substr($12,1,4)"/"substr($12,5,2):"@",$13,$14!="@"?$14:"@",$15!="@"?substr($15,1,4)"/"substr($15,5,2)"/"substr($15,7,2):"@",$15!="@"?substr($15,9,2)":"substr($15,11,2):"@",$16,$18,$17}'  |
+  tee $tmp-kouzadisplay2 |
+
+  # 整形
+  awk '{print $1,$6,$7,$2,$3,$4,$5,$8,$9,$10,$13,$11,$12,$14,$15"　"$16,$17,$18,$19!="0"?$19:"番号削除済"}' > $tmp-listdata
+# 1:口座ID     2:請求内容コード 3:請求内容    4:金融機関コード 5:金融機関名
+# 6:支店コード 7:支店名         8:口座種類    9:口座種類名     10:口座番号
+# 11:名義人    12:支払期間From  13:支払期間To 14:備考          15:更新日時
+# 16:UserID    17:CLASS         18:顧客番号
+
+
+
+  else
+
+    : > $tmp-listdata
+
+  fi
+
+  ;;
+
+
+esac
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" ] ; then
+	cat <<- FINN > $tmp-html2
+          <script type="text/javascript" language="javascript">
+           kouza_pop = window.open("","kouza_pop");
+           kouza_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1=""
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_KOUZA.html         |
+calsed -f $tmp-calsed_data_result -                     |
+mojihame -llist_rusult - $tmp-listdata                  |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

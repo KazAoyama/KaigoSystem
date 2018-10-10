@@ -1,0 +1,196 @@
+#!/bin/bash
+#
+# POP_SENTAKU_NYUKYOSHA.DISPLAY : スケジュール一覧表示
+#
+# Usage : POP_SENTAKU_NYUKYOSHA.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定(仮)
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+if [ -n "${tateya_select}" -a "${tateya_select}" != "_" ];then
+  :
+else
+  tateya_select="02"
+fi
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    : > $tmp-listdata
+  ;;
+
+  # 検索結果
+#  search)
+#    if [ "$(gyo ${result_data})" != 0 ] ; then
+#      cat ${result_data}        |
+      # 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終>更新日時
+      # 6:最終更新者
+#      LANG=C sort -k6,6nr       |
+#      self 1 2 3 4 5            |
+#      rank                      |
+#      head -100                  > $tmp-listdata
+#    else
+#      : > $tmp-listdata
+#    fi
+#  ;;
+
+esac
+
+echo "SHOKYAKU_KANRI.CGI" > $tmp-cgi
+
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                      |
+awk '$9=="1"'                                                  > $tmp-shisetsu_tateya_floor_id
+
+# 建屋準備
+cat ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME                     |
+self 1 3                                                       > $tmp-tateya_master
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${test_pompa_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       |
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+
+self 1 2 ${home_dir}/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+join0 key=1 $tmp-shisetsu > $tmp-shisetsu_list
+
+
+# 建屋名
+cat ${tbl_dir}/TATEYA_NAME   |
+LANG=C sort -k1,1            |
+self 1 3                     > $tmp-tateya_name
+
+cat ${tbl_dir}/SHISETSU_TATEYA_FLOOR   |
+awk '$1=="'$shisetsu'"{print $2}'      |
+LANG=C sort -k1,1                      |
+join1 key=1 $tmp-tateya_name |
+awk '{print int($1),$2}'               > $tmp-tateya_mst
+
+awk '{print $1,$2,"'$tateya_select'"}' $tmp-tateya_mst   |
+awk '{if($1==$3){$3="selected"}else{$3=""};print $0}'    > $tmp-tateya_list
+
+# 建屋の取得
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ];then
+  cat $tmp-shisetsu_tateya_floor_id                            |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 2                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-tateya_master                               |
+  awk '{print $0,"'${Tateya}'"}'                               |
+  awk '{if($1==$3){print int($1),$2,"selected"}else{print int($1),$2,""}}' > $tmp-tateya_name
+else
+  cat $tmp-shisetsu_tateya_floor_id                            |
+  # 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  self 2                                                       |
+  LANG=C sort -u -k1,1n                                        |
+  join1 key=1 $tmp-tateya_master                               |
+  awk '{print int($1),$2}'  > $tmp-tateya_name
+fi
+
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+##else
+##cat << FIN > $tmp-html2
+##    <script type="text/javascript" language="javascript">
+##      window.close();
+##    </script>
+##FIN
+fi
+#--------------------------------------------------------------
+
+awk '$1=="'$tateya_select'"{print $2}' $tmp-tateya_mst > $tmp-disp_tateya
+
+dispTateya=$(self 1 $tmp-disp_tateya)
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###EVENTTATEYA### $tateya_select
+###DISPTATEYA### $dispTateya
+FIN
+
+: > $tmp-list
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/POP_SENTAKU_NYUKYOSHA.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###TAISHOUSHA### - $tmp-list  |
+mojihame -l###SHISETSU_NAME### - $tmp-shisetsu_list |
+mojihame -l###TATEYA_NAME### - $tmp-tateya_name |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+#formhame -d"_" - ${namedata}  |
+cat -
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,166 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU.EXCEL : EXCEL出力
+#
+# Usage : KAIGOSEIKYU_KYOTAKU.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 施設情報取得
+LAST_MONTH=$(mdate ${seikyu_nengetsu}m/-1)
+awk '$(NF-2)!=9&&$7<="'${LAST_MONTH}'31"&&$8>="'${LAST_MONTH}'01"' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS |
+LANG=C sort -k6,7 |
+getlast 6 6       |
+self 6 1 5        |
+LANG=C sort       > $tmp-riyosha_status
+# 1:利用者ID 2:施設 3:居室
+
+# 施設マスタ準備
+awk '$(NF-2)' ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2 > $tmp-shisetsu_master
+# 1:施設コード 2:施設名
+
+# 利用者名マスタ
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2 3 > $tmp-riyosha_kihon
+# 1:利用者ID 2:利用者名 3:利用者名カナ
+
+LANG=C sort -k2,2 $tmp-riyosha_status |
+# 1:利用者ID 2:施設 3:居室
+join2 +"施設外" key=2 $tmp-shisetsu_master      |
+LANG=C sort -k1,1                               > $tmp-riyosha_room
+# 1:利用者ID 2:施設 3:施設名 4:居室
+
+
+# 介護度マスタ
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-kaigodo_master
+12 要支援1
+13 要支援2
+21 要介護1
+22 要介護2
+23 要介護3
+24 要介護4
+25 要介護5
+FIN
+
+# 保険者マスタ
+awk '$(NF-2)!=9' ${hometbl_dir}/HOKENJA/HOKENJA_TABLE |
+self 2 4 |
+LANG=C sort -k1,1 |
+maezero 1.8 > $tmp-hokenja
+
+# POMPAデータ呼び出し
+awk '$10=="99"' ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/*.KYUFUKANRI  |
+# 1:利用者ID            2:更新日時             3:8222                            4:対象年月            5:保険者番号
+# 6:事業所番号          7:給付管理情報作成区分 8:給付管理表作成年月日            9:給付管理表種別区分  10:給付管理表明細行番号
+# 11:被保険者番号       12:被保険者生年月日    13:性別コード                     14:要介護区分         15:限度額適用期間開始
+# 16:限度額適用期間終了 17:支給限度額          18:居宅サービス計画作成区分コード 19:事業所番号         20:指定基準該当地域密着型サービス識別コード
+# 21:サービス種類コード 22:給付計画単位数      23:給付計画日数                   24:指定サービス分小計 25:基準該当サービス分小計
+LANG=C sort -k5,5   |
+join2 key=5 $tmp-hokenja |
+# 1:利用者ID                                  2:更新日時            3:8222                 4:対象年月                        5:保険者番号
+# 6:保険者                                    7:事業所番号          8:給付管理情報作成区分 9:給付管理表作成年月日            10:給付管理表種別区分
+# 11:給付管理表明細行番号                     12:被保険者番号       13:被保険者生年月日    14:性別コード                     15:要介護区分
+# 16:限度額適用期間開始                       17:限度額適用期間終了 18:支給限度額          19:居宅サービス計画作成区分コード 20:事業所番号
+# 21:指定基準該当地域密着型サービス識別コード 22:サービス種類コード 23:給付計画単位数      24:給付計画日数                   25:指定サービス分小計
+# 26:基準該当サービス分小計
+LANG=C sort -k15,15 |
+join2 key=15 $tmp-kaigodo_master |
+# 1:利用者ID              2:更新日時                                  3:8222                 4:対象年月             5:保険者番号
+# 6:保険者                7:事業所番号                                8:給付管理情報作成区分 9:給付管理表作成年月日 10:給付管理表種別区分
+# 11:給付管理表明細行番号 12:被保険者番号                             13:被保険者生年月日    14:性別コード          15:要介護区分
+# 16:介護度               17:限度額適用期間開始                       18:限度額適用期間終了  19:支給限度額          20:居宅サービス計画作成区分コード
+# 21:事業所番号           22:指定基準該当地域密着型サービス識別コード 23:サービス種類コード  24:給付計画単位数      25:給付計画日数
+# 26:指定サービス分小計   27:基準該当サービス分小計
+LANG=C sort -k1,1  |
+join2 +"施設外" key=1 $tmp-riyosha_room |
+# 1:利用者ID              2:施設                  3:施設名                          4:居室                  5:更新日時
+# 6:8222                  7:対象年月              8:保険者番号                      9:保険者                10:事業所番号
+# 11:給付管理情報作成区分 12:給付管理表作成年月日 13:給付管理表種別区分             14:給付管理表明細行番号 15:被保険者番号
+# 16:被保険者生年月日     17:性別コード           18:要介護区分                     19:介護度               20:限度額適用期間開始
+# 21:限度額適用期間終了   22:支給限度額           23:居宅サービス計画作成区分コード 24:事業所番号           25:指定基準該当地域密着型サービス識別コード
+# 26:サービス種類コード   27:給付計画単位数       28:給付計画日数                   29:指定サービス分小計   30:基準該当サービス分小計
+join2 key=1 $tmp-riyosha_kihon |
+# 1:利用者ID              2:利用者名                                  3:利用者名カナ          4:施設                  5:施設名
+# 6:居室                  7:更新日時                                  8:8222                  9:対象年月              10:保険者番号
+# 11:保険者               12:事業所番号                               13:給付管理情報作成区分 14:給付管理表作成年月日 15:給付管理表種別区分
+# 16:給付管理表明細行番号 17:被保険者番号                             18:被保険者生年月日     19:性別コード           20:要介護区分
+# 21:介護度               22:限度額適用期間開始                       23:限度額適用期間終了   24:支給限度額           25:居宅サービス計画作成区分コード
+# 26:事業所番号           27:指定基準該当地域密着型サービス識別コード 28:サービス種類コード   29:給付計画単位数       30:給付計画日数
+# 31:指定サービス分小計   32:基準該当サービス分小計
+tee ${work}/fugu |
+self 9 5 6 17 2 21 11 22 23 24 33  |
+1bai NF-1 NF                       | juni > $tmp-meisai
+
+
+
+
+TEMPLA=${temp_dir}/CHECK_KYUFUKANRI.xls
+Ehexcel < ${TEMPLA} 1 a4 ${tmp}-meisai                  > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+touch ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.KYOTAKU_CHECKED
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

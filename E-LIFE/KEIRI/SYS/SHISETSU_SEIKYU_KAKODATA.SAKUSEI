@@ -1,0 +1,128 @@
+#!/bin/bash
+#
+# APDATASET.DAYMD.SHOKYAKU_KANRI　(償却管理のPOMPA更新)
+#
+# Usage:APDATASET.DAYMD.SHOKYAKU_KANRI
+#
+# Written By Aoyagi (HandsLab .Inc) :
+#
+
+# 設定ファイ読込 #########################################################################
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#}}}Functions#############################################################################
+upcnt "$HOSTNAME $(basename ${0}) START $(date +%Y%m%d%H%M%S)"
+
+
+# エラー終了  ############################################################################
+function error_exit {
+  touch ${semaphore_dir}/$(basename ${0}).${HOSTNAME}.ERROR.${today}
+  rm -f ${tmp}-*
+  exit 1
+}
+
+
+shisetsu=${1}
+month=${2}
+
+# 変数・ディレクトリ設定 #################################################################
+current_time="$(date "+%Y%m%d%H%M%S")"
+yesterday=$(mdate $today/-1)
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+input_dir="/home/hands/E-LIFE/UNEI/INPUT"
+tmp="/var/tmp/${$}"
+semaphore_dir="${home_dir}/SEMAPHORE"
+meisai_dir="${app_dir}/MEISAI"
+rireki_dir="${app_dir}/RIREKI"
+kanri_dir="${app_dir}/KANRI"
+pompa_dir="${app_dir}/POMPA/SHOKYAKU_KANRI"
+work="${app_dir}/WORK"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+keiri_input="${app_dir}/INPUT"
+
+# リスト作成
+YOKUTSUKI=$(mdate ${month}m/+2)
+YOKUGETSU=$(mdate ${month}m/+1)
+ls /DATA/E-LIFE/SEIKYU/SHISETSU/${shisetsu}/MEISAI/${month} |
+awk '$1~/SE/{print substr($1,22)}' |
+yarr > $tmp-member_list
+
+# 先取りの利用料のマスタ
+cat ${home_dir}/E-LIFE/TBL/RIYOURYOU_MASTER/RIYOURYOU_MASTER                |
+# 1:施設コード 2:利用料種別ID 3:利用料名 4:税区分 5:金額
+# 6:支払い区分 7:費用算出方法 8:有効フラグ 9:更新日 10:更新者
+awk '$1=="'${shisetsu}'" && $6=="1" && $(NF-2)!="9"{print $2}' > $tmp-saki_yoku
+
+cat ${home_dir}/E-LIFE/TBL/RIYOURYOU_MASTER/RIYOURYOU_MASTER                |
+# 1:施設コード 2:利用料種別ID 3:利用料名 4:税区分 5:金額
+# 6:支払い区分 7:費用算出方法 8:有効フラグ 9:更新日 10:更新者
+awk '$1=="'${shisetsu}'" && $6=="2" && $(NF-2)!="9"{print $2}' > $tmp-saki
+
+cat $tmp-saki_yoku $tmp-saki                               > $tmp-yokumoku
+
+for member in $(cat $tmp-member_list);do
+#for member in $(echo "00000068");do
+  cat /DATA/E-LIFE/SEIKYU/SHISETSU/${shisetsu}/MEISAI/${month}/SEIKYU_MEISAI.${month}.${member} > $tmp-member_data
+cp $tmp-member_data ${work}/member_data
+
+  awk '$3=="10"' $tmp-member_data                          > $tmp-shisetsu_riyou
+
+  cat $tmp-shisetsu_riyou                                  |
+  join0 key=5 $tmp-saki_yoku                               |
+  awk '$7~/'${YOKUTSUKI}'/'                                > $tmp-riyouryou_101
+
+  cat $tmp-shisetsu_riyou                                  |
+  join0 key=5 $tmp-saki                                    |
+  awk '$7~/'${YOKUGETSU}'/'                                > $tmp-riyouryou_102
+
+  # 先取り以外
+  cat $tmp-shisetsu_riyou                                  |
+  join0 +ng key=5 $tmp-yokumoku    2> $tmp-riyouryou_nokori 1> /dev/null
+
+  cat $tmp-riyouryou_101 $tmp-riyouryou_102 $tmp-riyouryou_nokori               > $tmp-riyouryou_10
+cp $tmp-riyouryou_10 ${work}/butanokori
+
+  # 合計行
+  self 1/3 NF-2 NF-2 NF 9/11 $tmp-riyouryou_10             |
+  sm2 1 6 7 9                                              |
+  awk '{print $0,"0","_"}'                                 |
+  self 1/3 NF NF NF NF NF 7/9 NF NF NF-1 NF NF NF NF NF NF NF NF NF NF 4/6 |
+  awk '{$3="15";print}'                                    > $tmp-riyouryou_15
+
+  # 施設利用料以外
+  awk '$3=="20" || $3=="25"' $tmp-member_data              > $tmp-nokori
+  cp $tmp-nokori ${work}/nokori
+
+  # 最後の合計行
+  awk '$3=="25"' $tmp-nokori                               |
+  cat - $tmp-riyouryou_15                                  |
+tee ${work}/goukeiyou |
+  self 1/2 NF-2 NF-2 NF 9/11                               |
+  sm2 1 5 6 8                                              |
+  awk '{print $0,"0","_"}'                                 |
+  self 1/2 NF NF NF NF NF NF 6/8 NF NF NF-1 NF NF NF NF NF NF NF NF NF NF 3/5 |
+  awk '{$3="30";print}'                                    > $tmp-riyouryou_30
+  
+  # 合体
+  cat $tmp-riyouryou_10 $tmp-riyouryou_15 $tmp-nokori $tmp-riyouryou_30  > $tmp-new_data
+
+cp $tmp-new_data ${work}/new_data
+  mv $tmp-new_data /DATA/E-LIFE/SEIKYU/SHISETSU/${shisetsu}/MEISAI/${month}/SEIKYU_MEISAI.${month}.${member}
+
+done
+
+
+
+# 終了 ######################################################################
+rm -f ${tmp}-*
+exit 0
+

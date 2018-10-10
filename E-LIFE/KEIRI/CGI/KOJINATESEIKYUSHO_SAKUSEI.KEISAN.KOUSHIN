@@ -1,0 +1,136 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.KOUSHIN 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# データ更新
+
+# 更新対象
+# -
+# 過去明細
+#   ${tmp}-SEIKYU_MEISAI.${年月}.*.new 更新リスト：${tmp}-kako_meisai_koushin_name
+# 現在明細
+#   ${tmp}-MEISAI_KANSEI.* 更新リスト：${tmp}-genzai_meisai_koushin_name
+# 現在ヘッダ
+#   ${tmp}-HEAD_MST
+#   ${tmp}-HEAD_INPUT
+# -
+
+# -------------------------------
+# 列チェックリスト更新リストの作成
+
+cat << FIN | cat - ${tmp}-genzai_meisai_koushin_name > ${tmp}-genzai_check_koushin_list
+${tmp}-HEAD_MST ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD _ 26
+${tmp}-HEAD_INPUT _ ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+FIN
+# 1:ファイル名 2:更新マスタ名 3:更新INPUT名 4:列数
+# -------------------------------
+
+# -------------------------------
+# 列チェック
+
+self 1 4 ${tmp}-genzai_check_koushin_list |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+self 1 4 ${tmp}-kako_meisai_koushin_name |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+# -------------------------------
+
+## -------------------------------
+## ディレクトリ作成
+#
+#[ ! -e ${seikyu_dir}/${shisetsu}/HEAD ] && mkdir ${seikyu_dir}/${shisetsu}/HEAD
+#[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI
+#[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month} ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}
+## -------------------------------
+
+# -------------------------------
+# 更新
+# (ヘッダ：履歴+INPUT分作成済み、明細：新たなファイルを上書き作成)
+
+# input
+cat ${tmp}-genzai_check_koushin_list |
+self 1 3 |
+awk '$2!="_"' - |
+while read file input; do
+  cp -p ${file} ${input}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+
+# マスタ
+cat ${tmp}-genzai_check_koushin_list |
+self 1 2 |
+awk '$2!="_"' - |
+while read file mst; do
+  cp -p ${file} ${mst}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# -------------------------------
+
+# -------------------------------
+# 過去データは当月確定時に更新するので更新対象と更新リストを保管しておく(計算はしるたびに上書き)
+# 過去明細を置き場に置く
+self 1 2 ${tmp}-kako_meisai_koushin_name |
+while read file input ; do
+  cp -p ${file} ${input}
+done
+
+# リスト
+#[ ! -e ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO ] && mkdir ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO
+self 2 ${tmp}-kako_meisai_koushin_name |
+LANG=C sort                            > ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/KAKO/KAKO_SEIKYU_LIST.${seikyu_syori_month}
+# 1:更新過去明細ファイル名リスト
+# -------------------------------
+
+#---------------------------------------------------------------
+
+exit 0
+

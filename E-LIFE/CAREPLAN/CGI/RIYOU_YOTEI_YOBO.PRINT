@@ -1,0 +1,210 @@
+#!/bin/bash
+#
+# RIYOU_YOTEI_YOBO.PRINT : 利用予定表印刷
+#
+# Usage : RIYOU_YOTEI_YOBO.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_riyouhyou
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 本日の日付
+#curday=$(mdate today | self 1)
+curday=$hdTaishouYear$taishoumonth"01"
+
+# 今月の最初の日付
+firstday=$(mdate ${hdTaishouYear}${taishoumonth}m | tateyoko | head -1)
+# 今月の最後の日付
+lastday=$(mdate ${hdTaishouYear}${taishoumonth}m | tateyoko | tail -1)
+
+# 本日の日付
+#curday=$(mdate today | self 1)
+
+# 今月の最初の日付
+#firstday=$(mdate month | tateyoko | head -1)
+# 今月の最後の日付
+#lastday=$(mdate month | tateyoko | tail -1)
+
+# 入居者情報(仮)
+# 介護度マスタ
+# 1:介護度 2:介護度名 3:単位
+cat ${home_dir}/TBL/CONFIG/KAIGODO_MASTER          |
+awk '$4<="'$curday'"&&$5>"'$curday'"{print $1,$2,$3}'     |
+LANG=C sort -k1,1                                 > $tmp-kaigodo_master
+
+
+# 元号マスタ
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)-1,substr($4,1,4)}'                   > $tmp-gengou_master
+self 1 2 $tmp-gengou_master                        > $tmp-gengou_master2
+
+
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+tee $tmp-riyousha_mst                              |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+  # 検索結果
+if [ "$(gyo ${result_data})" != 0 ] ; then
+   cat ${result_data}        > $tmp-listdata
+else
+   : > $tmp-listdata
+fi
+
+#--------------------------------------------------------------
+
+echo "1" "月" > $tmp-youbi_mst
+echo "2" "火" >> $tmp-youbi_mst
+echo "3" "水" >> $tmp-youbi_mst
+echo "4" "木" >> $tmp-youbi_mst
+echo "5" "金" >> $tmp-youbi_mst
+echo "6" "土" >> $tmp-youbi_mst
+echo "7" "日" >> $tmp-youbi_mst
+
+cat ${tmp}-listdata |
+awk '$1=="l"'       |
+delf 1              |
+awk '{if($2=="7"){$8="border:1px###SPACE###solid;"}else{$8="@"};print $0}'   |
+LANG=C sort -k2,2   |
+join1 key=2 $tmp-youbi_mst |
+delf 2              |
+LANG=C sort -k1,1   |
+awk '{if(($3=="@"||$3=="_")&&($4=="@"||$4=="_")){$3="@"}else{$3=$3"～"$4};print int($1),$2,$3,$5,$6,$7,$8}' > $tmp-listdata2
+
+awk '$3<"'${hdTaishouYear}'"&&$4>"'${hdTaishouYear}'"{print $2,"'${hdTaishouYear}'"-$3}' $tmp-gengou_master > $tmp-wareki_year
+headerTaishouMonth=$(echo $taishoumonth | awk '{print int($1)}')
+headerTaishouWareki=$(awk '{print $1}' $tmp-wareki_year)
+headerTaishouYear=$(awk '{print $2}' $tmp-wareki_year)
+headerWarekiYear=${headerTaishouWareki}${headerTaishouYear}
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID###  ${Riyoushaid}
+###RIYOUSHAMEI### $Riyoushamei
+###TAISHOUYEAR###  ${headerWarekiYear}
+###TAISHOUMONTH###  ${headerTaishouMonth}
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_RIYOU_YOTEI_YOBO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -l###MEISAI### - ${tmp}-listdata2 |
+sed 's/###SPACE###/ /g'  |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-riyou_yotei_yobo_pdf.html
+
+cp $tmp-riyou_yotei_yobo_pdf.html $work_dir/riyou_yotei_yobo_pdf.html
+
+case "${MODE}" in
+  #一括印刷
+  allprint )
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-top 6 $tmp-riyou_yotei_yobo_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/IKKATSU_GEKKAN_YOBO/$USER_ID/${Riyoushaid}_I_RIYOU_YOTEI_YOBO.pdf
+  ;;
+
+  # 個別印刷
+  * )
+mkdir -p ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/RIYOU_YOTEI_YOBO.pdf
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --margin-top 6 $tmp-riyouhyou_yobo_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/RIYOU_YOTEI_YOBO.pdf
+#--------------------------------------------------------------
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${Riyoushaid}/RIYOU_YOTEI_YOBO.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+;;
+esac
+
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

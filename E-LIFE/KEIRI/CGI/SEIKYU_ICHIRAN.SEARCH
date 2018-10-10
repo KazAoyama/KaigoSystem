@@ -1,0 +1,230 @@
+#!/bin/bash
+#
+# SEIKYU_ICHIRAN.SEARCH : 請求一覧さーち
+#
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/SEIKYU_ICHIRAN.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+# 引数設定
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+# 変数
+eval $(name-source ${namefile})
+if [ \( -n "${MODE}" \) -o \( "${MODE}" = "_" \) ] ; then
+  MODE="init"
+fi
+this_year="$(date +%Y)"
+
+# ------------------------------------------
+# エラー関数
+function error_exit {
+  message="${1}"
+  echo "${message}"
+#  rm ${tmp}-*
+  exit 1
+}
+# ------------------------------------------
+
+# ------------------------------------------
+# マスタ用意
+POMPADIR="/home/hands/E-LIFE/KEIRI/POMPA/SEIKYU_ICHIRAN/${shisetsu}"
+
+# なまえ
+awk '$6!="9"' ${riyosha_dir}/RIYOUSHA_MASTER |
+self 1/2 |
+LANG=C sort > ${tmp}-RIYOUSHA_MASTER
+# 1:入居者ID 2:入居者名
+# ------------------------------------------
+
+# ------------------------------------------
+# 検索処理
+
+# 1.ヘッダから明細を回収
+# 2.入居者IDごとに明細を展開して
+# 3.請求明細の表示項目ごとに合計しなおす
+#   管理費賃料：項目ID＝001と003
+#   食費：項目ID＝002,shokuji,kesshoku
+#   月額利用料：項目ID＝数字3桁で001-003以外
+#   立替金：項目ID＝tatekae${数字}
+#   その他：今のところ項目ID＝service,denwa
+
+# ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+# -
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+# -
+# ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/SEIKYU_MEISAI.${seikyu_syori_month}.${seikyusaki}
+# -
+# 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備      18:予備        19:予備           20:予備
+# 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+
+# POMPAに更新中のファイルがあったら検索しない
+if [ -e ${POMPADIR}/${year}${month}/KOUSHINTYU ];then
+  SEIKYU_JIKKOU_MONTH=${year}${month}
+  /home/hands/E-LIFE/KEIRI/SYS/APDATASET.DAYMD.SEIKYU_ICHIRAN_NEW ${SEIKYU_JIKKOU_MONTH} ${shisetsu}
+  /home/hands/E-LIFE/KEIRI/SYS/APDATASET.DAYMD.SEIKYU_ICHIRAN ${SEIKYU_JIKKOU_MONTH} ${shisetsu}
+  rm -f ${pompa_dir}/SEIKYU_ICHIRAN/${shisetsu}/${SEIKYU_JIKKOU_MONTH}/KOUSHINTYU
+else
+  :
+fi
+
+
+# 当月のみチェックボックスにより検索するヘッダの内容を変える
+if [ -n "${tougetsu_nomi}" -a "${tougetsu_nomi}" = "on" ];then
+  FILENAME="SEIKYU_ICHIRAN_TOUGETSUNOMI"
+  echo "2 3 5 6 7" | tarr > $tmp-head_search
+else
+  FILENAME="SEIKYU_ICHIRAN"
+  echo "4 5 6 7" | tarr > $tmp-head_search
+fi
+
+cp $tmp-head_search ${work}/head_search
+
+# ヘッダから「請求ステータス：6当月確定済みか7FBデータ作成済み」で「請求確定月＝選択した年月」を取得
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+awk '$24!="9"' -                          |
+getlast 1 2                               |
+#-------------4/30 青柳追記--------------------
+cjoin0 key=3 $tmp-head_search          -   |
+tee ${work}/head_1 |
+#----------------------------------------------
+cjoin0 key=1 <(echo "${year}${month}") - |
+tee ${work}/head_2 |
+#-------------4/30 青柳追記--------------------
+tee $tmp-head_kari_kari                   |
+#----------------------------------------------
+self 8 2 1 10                             > ${tmp}-head_kari
+# 1:居室番号 2:入居者ID 3:処理月 4:明細ファイル名
+cp ${tmp}-head_kari ${work}/head_kari
+
+#-------------4/30 青柳追記--------------------
+cat $tmp-head_kari_kari                   |
+self 3                                    |
+LANG=C sort -u -k1,1n                     |
+tail -n1                                  > $tmp-head_status
+#----------------------------------------------
+# POMPAが空の人は除く
+
+self 3 $tmp-head_kari                     |
+LANG=C sort -u                            |
+while read MONTH ;do
+  ls ${POMPADIR}/${MONTH}/           |
+  tee ${work}/pompa_ichiran |
+  awk '$1!="HEADER"&&$1!="TAIHI"{print substr($1,1,8)}' |
+  LANG=C sort -u                          |
+  while read id ;do
+    GYO=$(gyo ${POMPADIR}/${MONTH}/${id}.${FILENAME})
+    [ "${GYO}" -ne 0 ] && echo ${id}
+  done
+done                        |
+LANG=C sort -u > $tmp-jogai_id
+cp $tmp-jogai_id ${work}/jogai
+
+
+
+# 建屋での絞り込み
+self 3 $tmp-head_kari                      |
+LANG=C sort -u                             |
+while read MONTH ;do
+  awk '$22!="9"' ${riyosha_dir}/RIYOUSHA_KEIYAKU |
+  # 1:利用者ID   2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+  # 6:ユニットID 7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+  # 11:引渡し日  12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+  # 16:備考      17:予備       18:予備       19:予備      20:予備
+  # 21:予備      22:削除フラグ 23:更新日     24:更新者
+
+  # 契約種別IDは固定(001：体験、002：ショートステイ、003-007：本入居)のため絞込み
+  awk '$9=="002"'                    |
+  # 請求の月を含む期間を抽出し、同じ利用者で複数行出る場合は最新をとる
+  awk '$12<="'${MONTH}'31" && $13>="'${MONTH}'01"' |
+  self 7 |
+  LANG=C sort -u > $tmp-short_stay_room
+
+  awk '$(NF-2)!=9' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+  awk '$1=="'${shisetsu}'" && $7<="'${MONTH}'31"&&$8>="'${MONTH}'"'   |
+  LANG=C sort -k5,5 |
+  join0 +ng key=5 $tmp-short_stay_room 2>&1 1> /dev/null
+done                                       |
+#awk '$(NF-2)!=9' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+#awk '$1=="'${shisetsu}'" && $7<="'${year}''${month}'31" && $8>="'${year}''${month}'" && $2=="'${tateya}'"{print $6}' |
+#awk '$1=="'${shisetsu}'" && $7<="'${year}''${month}'31" && $8>="'${year}''${month}'"' |
+#awk '$1=="'${shisetsu}'" && $7<="'${year}''${month}'31"' |
+LANG=C sort -k6,7 |
+getlast 6 6      |
+awk '$2=="'${tateya}'"' |
+tee $tmp-shisetsu_riyosha |
+tee ${work}/shisetsu_riyosha |
+self 6            |
+
+#--- 一時的な対応 --
+#20141107 青葉台二丁目、深見様のケア棟ショートステイを201410請求では考慮しない
+if [ "${shisetsu}" = "0001" -a "${tateya}" = "02" -a "${year}""${month}" = "201410" ] ; then
+  awk '$1!="00000102"&&$1!="00001056"'
+else
+  cat -
+fi |
+#----
+
+LANG=C sort -u -k1,1 > $tmp-tateya_riyosha
+cp $tmp-tateya_riyosha ${work}/tateya_riyosha
+
+#----------------------------------------------
+# 集計グループマスタ
+echo "sonota その他"            > $tmp-sonota_master
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER  |
+self 1 2                        |
+cat - $tmp-sonota_master        |
+LANG=C sort                     > $tmp-shukei_master
+# 1:集計GrID 2:集計Gr名
+cp $tmp-shukei_master ${work}/shukei_master
+
+
+
+
+
+self 2 ${tmp}-head_kari |
+LANG=C sort -u |
+join0 key=1 $tmp-jogai_id |
+if [ "${shisetsu}" = "0001" ];then
+  join0 key=1 $tmp-tateya_riyosha
+else
+  cat -
+fi                        |
+while read id ; do
+  cat ${POMPADIR}/${year}${month}/${id}.${FILENAME}
+  # 1:居室             2:入居者ID               3:提供年月           4:全項目合計         5:金額税込み(賃料)
+  # 6:金額税込み(管理費) 7:金額税込み(食費) 8:金額税込み(サービス費) 9:金額税込み(介護支援サービス費) 10:金額税込み(月額利用料)
+  # 11:金額税込み(立替金) 12:金額税込み(その他立替金) 13:金額税込み(サービス利用料金) 14:金額税込み(その他)
+done |
+# なまえつける
+LANG=C sort -k2,2 |
+join1 key=2 ${tmp}-RIYOUSHA_MASTER -  |
+tee ${work}/meisai |
+# 1:居室                    2:入居者ID            3:入居者名            4:提供年月               5:全項目合計
+# 6:金額税込み(賃料)        7:金額税込み(管理費)  8:金額税込み(食費)    9:金額税込み(サービス費) 10:金額税込み(介護支援サービス費)
+# 11:金額税込み(月額利用料) 12:金額税込み(立替金) 13:金額税込み(その他立替金) 14:金額税込み(サービス利用料金) 15:金額税込み(その他)
+# ------------------------------------------
+
+#-------------4/30 青柳追記--------------------
+cat $tmp-head_status -
+#----------------------------------------------
+
+rm -f ${tmp}-*
+exit 0
+

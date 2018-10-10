@@ -1,0 +1,145 @@
+#!/bin/bash
+#
+#KOJINJYOUHOU_SHOUSAI_KEIYAKU.SEARCH  : 個人情報詳細(契約)
+# 
+# 
+#
+# Written by E.Okuda :2013/12/9
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+cgi_dir="${app_dir}/UNEI/CGI"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+# MODEによる処理の分岐
+if [ "${MODE}" = "init" -o "${MODE}" = "edit_keiyakusho_upload" -o "${MODE}" = "keiyaku_sakujyo" -o "${MODE}" = "keiyakusho_sakujyo" ] ; then
+
+#-------------------------------------------------------------
+# ファイルの取得
+# 1:利用者(入居者)ID 2:契約ID      3:施設ID      4:建屋ID     5:フロアID
+# 6:ユニットID       7:居室ID      8:入居時年齢  9:契約種類ID 10:契約日
+# 11:引渡し日        12:契約開始日 13:契約終了日 14:退去理由  15:退去理由詳細
+# 16:備考            17:予備1      18:予備2      19:予備3     20:予備4
+# 21:予備5           22:削除フラグ 23:更新日     24:更新者
+
+# 1:利用者(入居者)ID 2:契約ID          3:施設ID     4:建屋ID        5:フロアID
+# 6:ユニットID       7:居室ID          8:入居時年齢 9:契約種類ID    10:契約日
+# 11:引渡し日        12:入居日         13:退去日    14:契約開始日   15:契約終了日
+# 16:請求対象開始日  17:請求対象終了日 18:退去理由  19:退去理由詳細 20:備考
+# 21:削除フラグ      22:更新日時       23:UserID
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+  self 2 3 7 9 12 13 16 NF-1 NF 1        > $tmp-keiyaku_data
+# 1:契約ID     2:施設ID 3:居室ID   4:契約種類ID 5:契約開始日
+# 6:契約終了日 7:備考   8:更新日時 9:UserID     10:利用者(入居者)ID
+  # 契約日と更新日時の表記を整形
+#  awk '{print $1,$2,$3,$4!="_"?substr($4,1,4)"/"substr($4,5,2)"/"substr($4,7,2):"_",$5!="99999999"?substr($5,1,4)"/"substr($5,5,2)"/"substr($5,7,2):$5,$6,$7!="_"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"_",$7!="_"?substr($7,9,2)":"substr($7,11,2):$7,$8}'  |
+#  awk '{print $1,$2,$3,$4,$5,$6,$7"　"$8,$9}'   |
+#  sed 's/_/@/g'  > $tmp-keiyaku_data
+# 1:契約ID 2:施設ID   3:契約種類ID 4:契約開始日 5:契約終了日
+# 6:備考   7:更新日時 8:UserID
+
+  # 該当データがあれば施設名称、契約名称を取得
+  if [ -s "$tmp-keiyaku_data" ] ; then
+   cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+   self 1 2 > $tmp-shisetsu_name
+   cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+   self 1 2 >> $tmp-shisetsu_name
+
+   cat $tmp-shisetsu_name |
+   LANG=C sort -u         > $tmp-shisetsu_result
+
+   cat ${tbl_dir}/KEIYAKU_MASTER/KEIYAKU_NAME  |
+   self 1 2 > $tmp-keiyaku_shurui
+
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER |
+  self 1 2 > $tmp-userid
+
+   cat $tmp-keiyaku_data |
+   LANG=C sort -k9,9     |
+   cjoin2 key=9 $tmp-userid - |
+# 1:契約ID            2:施設ID 3:居室ID   4:契約種類ID 5:契約開始日
+# 6:契約終了日        7:備考   8:更新日時 9:UserID     10:USER_ID
+# 11:利用者(入居者)ID
+   delf NF-2      |
+   LANG=C sort -k4,4     |
+   cjoin2 key=4 $tmp-keiyaku_shurui - |
+   LANG=C sort -k2,2     |
+   cjoin2 key=2 $tmp-shisetsu_result -       |
+#   LANG=C sort -k1,1nr    > $tmp-result
+# 1:契約ID       2:施設ID            3:施設名     4:居室 5:契約種類ID
+# 6:契約種類名称 7:契約開始日        8:契約終了日 9:備考 10:更新日時
+# 11:UserID      12:利用者(入居者)ID
+
+  #------------------^
+  # 削除ボタンの設置  2014.05.02追記
+  #-------------------
+
+  if [ "${TOUROKUDISP}" != "none" ] ; then
+    awk '{if($7==$8){print $0,"@"}
+          else{print $0,"none"}
+         }' 
+  else
+   awk '{print $0,"none"}'
+  fi |
+
+   LANG=C sort -k1,1nr    > $tmp-result
+
+  else
+   :
+  fi
+
+else
+ :
+fi
+
+#cp $tmp-* /home/hands/work/okuda
+if [ -s $tmp-result ] ;then
+ cat $tmp-result 
+fi
+# 1:契約ID       2:施設ID            3:施設名     4:居室 5:契約種類ID
+# 6:契約種類名称 7:契約開始日        8:契約終了日 9:備考 10:更新日時
+# 11:UserID      12:利用者(入居者)ID 13:削除ボタンDISPLAY
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

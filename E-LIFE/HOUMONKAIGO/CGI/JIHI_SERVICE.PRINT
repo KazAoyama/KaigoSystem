@@ -1,0 +1,255 @@
+#!/bin/bash
+#
+# JIHI_SERVICE.PRINT : 自費サービス明細出力
+#
+# Usage : JIHI_SERVICE.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+# テスト
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON       |
+join1 key=1 ${tmp}-riyoushaid                      |
+self 2                                             > ${tmp}-riyoushamei
+Riyoushamei=$(cat ${tmp}-riyoushamei)
+
+
+
+# サービス事業所も含める
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+LANG=C sort -k1,1                                                |
+join1 key=1 ${tmp}-shisetsu                                      > $tmp-jigyousha_mst
+
+seikyu_shisetsu=$(self 2 $tmp-jigyousha_mst | tail -1)
+
+
+#--------------------------------------------------------------
+
+recordflg="1"
+#--------------------------------------------------------------
+# 1:ID    2:実施日付 3:開始時間 4:終了時間 5:項目
+# 6:内容  7:単位時間 8:費用     9:担当者   10:単価
+# 11:税率
+if [ "$(gyo ${result_data})" != 0 ] ; then
+   cat ${result_data}        > $tmp-listdata
+else
+   recordflg="0"
+   : > $tmp-listdata
+fi
+
+###################################
+# 自費サービス関連マスタ
+###################################
+# 自費サービス項目
+cat ${home_dir}/TBL/CONFIG/JIHI_SERVICE_KOUMOKU |
+LANG=C sort -k1,1           |
+# 1:事業者コード（仮） 2:項目内容
+#--------------------------------------------------------------
+join0 key=1 $tmp-shisetsu   |
+tee $tmp-jihi_service_koumoku_mst  |
+self 2 3                    |
+LANG=C sort -k1,1           |
+# 追加は延長に文言変更
+sed 's/（追加）/会員(延長)/g' |
+# サービス項目の余分な部分は表示しない(4/20)
+sed -e 's/（.*$/会員/'           > ${tmp}-jihi_service_koumoku
+
+# 合計回数追加
+goukeikaisu=$(gyo $tmp-listdata)
+
+
+# 1:自費サービス項目ID 2:タイプID
+self 2 4 $tmp-jihi_service_koumoku_mst |
+LANG=C sort -k1,1 > $tmp-jihi_service_koumoku_type
+
+# オリジナル自費サービス回数
+cat $tmp-listdata |
+LANG=C sort -k5,5 |
+join1 key=5 $tmp-jihi_service_koumoku_type |
+awk '$6=="0"' |
+delf 6 > $tmp-list_data_original_jihi
+
+# オリジナル自費合計回数
+jihikaisu=$(gyo $tmp-list_data_original_jihi)
+
+displayJihi=""
+[ ${jihikaisu} -eq 0 ] && displayJihi="none"
+
+# クレール自費サービス回数
+cat $tmp-listdata |
+LANG=C sort -k5,5 |
+join1 key=5 $tmp-jihi_service_koumoku_type |
+awk '$6=="1"||$6=="2"||$6=="3"' |
+delf 6 > $tmp-list_data_clair
+
+# クレール自費合計回数
+clairkaisu=$(gyo $tmp-list_data_clair)
+
+# 通院同行自費サービス回数
+cat $tmp-listdata |
+LANG=C sort -k5,5 |
+join1 key=5 $tmp-jihi_service_koumoku_type |
+awk '$6=="4"' |
+delf 6 > $tmp-list_data_tsuuin
+
+# 通院同行自費合計回数
+tsuuinkaisu=$(gyo $tmp-list_data_tsuuin)
+
+
+
+if [ $recordflg = "1" ] ; then
+  cat $tmp-listdata          |
+  sm2 0 0 8 8                > $tmp-gokeiseikyu
+
+  cat $tmp-list_data_original_jihi |
+  sm2 0 0 8 8                > $tmp-jihiseikyu
+
+  cat $tmp-list_data_clair |
+  sm2 0 0 8 8                > $tmp-clairseikyu
+
+  cat $tmp-list_data_tsuuin |
+  sm2 0 0 8 8                > $tmp-tsuuinseikyu
+
+  seikyugaku=$(cat $tmp-gokeiseikyu | tail -1)
+  jihiseikyugaku=$(cat $tmp-jihiseikyu | tail -1)
+  clairseikyugaku=$(cat $tmp-clairseikyu | tail -1)
+  tsuuinseikyugaku=$(cat $tmp-tsuuinseikyu | tail -1)
+
+  seikyunengetsu=$(echo $hdTaishouNengappi | awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}')
+
+  cat $tmp-listdata          |
+  LANG=C sort -k5,5          |
+# 1:ID       2:実施日付 3:開始時間 4:終了時間 5:項目
+# 6:項目内容 7:内容     8:単位時間 9:費用     10:担当者
+# 11:単価    12:税率
+  join1 key=5 ${tmp}-jihi_service_koumoku  |
+  LANG=C sort -k2,4                        |
+  awk '{print $2,$3"～"$4,$6,$7,$8,$9}'    |
+  sed 's/ _ / ###SPACE### /g'              > $tmp-seikyu_meisai
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOSHAMEI### $Riyoushamei
+###JIHISEIKYUGAKU### $jihiseikyugaku
+###JIHIKAISU### $jihikaisu
+###DISPLAYJIHI### $displayJihi
+###CLAIRSEIKYUGAKU### $clairseikyugaku
+###CLAIRKAISU### $clairkaisu
+###TSUUINSEIKYUGAKU### $tsuuinseikyugaku
+###TSUUINKAISU### $tsuuinkaisu
+###GOSEIKYUGAKU### $seikyugaku
+###GOUKEIKAISU### $goukeikaisu
+###SEIKYU_SHISETSU### $seikyu_shisetsu
+###SEIKYUNENGETSU### $seikyunengetsu
+###DOMAIN### $domain
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_JIHI_SERVICE.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###MEISAI### - $tmp-seikyu_meisai |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}  |
+cat - > $tmp-jihi_service_pdf.html
+#--------------------------------------------------------------
+cp $tmp-jihi_service_pdf.html $work_dir/jihi_service_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/JIHI_SERVICE_MEISAI.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-jihi_service_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/JIHI_SERVICE_MEISAI.pdf
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/JIHI_SERVICE_MEISAI.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+else
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           alert('データがありません。');
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+fi
+
+cat ${tmp}-html.html
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

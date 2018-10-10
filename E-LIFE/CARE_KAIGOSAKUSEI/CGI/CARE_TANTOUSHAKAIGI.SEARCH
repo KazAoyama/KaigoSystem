@@ -1,0 +1,149 @@
+#!/bin/bash
+#
+# CARE_TANTOUSHAKAIGI.DISPLAY
+# 担当者会議（介護）　表示用CGI
+#
+# Written by K.Aoyama :20131206
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# 作成年月日セット
+awk '$(NF-2)!="9"' ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_TANTOUSHAKAIGI   |
+tail -1                         |
+self 2 > $tmp-latest_date
+dispHdKeikakuSakuseiDate=$(cat $tmp-latest_date)
+
+[ "$MODE" = "delete" ] && Rireki=${dispHdKeikakuSakuseiDate}
+[ "$MODE" = "regist" ] && Rireki=${hdKeikakuSakuseiDate}
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdKaisaiDate
+KaisaiDate
+KaisaiPlace
+OpenHour
+OpenMinute
+CloseHour
+CloseMinute
+KaisaiNumber
+KentouKoumoku
+KentouNaiyou
+Ketsuron
+Kadai
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_TANTOUSHAKAIGI |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# ケアプラン日付
+# --------------------------
+# 
+awk '$2=="'${Rireki}'"'  |
+# --------------------------
+# 開催日付
+# --------------------------
+#
+#if [ -z "${hdKaisaiDate}" -o "${hdKaisaiDate}" = "_" ] ; then
+#  cat -  |
+#  LANG=C sort -k4,4
+#else
+#  awk '$4=="'${hdKaisaiDate}'"'
+#fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+#getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1/3                    |
+cat ${tmp}-header_yoko -    |
+tateyoko                    > ${tmp}-tantoushakaigi_base
+
+# 追加用データの取得
+caresakusei_date=$(awk '{print $2}' $tmp-result)
+kaisai_date=$(awk '{print $4}' $tmp-result)
+
+
+# 出席者データ
+cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/TANTOUSHAKAIGI_SHUSSEKISHA  |
+awk '$1=="'${Riyoushaid}'"&&$2=="'${caresakusei_date}'"&&$3=="'${kaisai_date}'" {print $4,$5}' |
+tee ${tmp}-shussekisha_num     |
+yarr > ${tmp}-shussekisha_value
+
+#cp ${tmp}-shussekisha_value $work_dir/shussekisha_value
+
+# ヘッダ設定
+shussekishanum=$(gyo ${tmp}-shussekisha_num)
+echo "SHUSSEKISHANUM" "${shussekishanum}" > ${tmp}-shussekishanum
+seq ${shussekishanum} |
+while read shnum ; do
+snum=$((shnum-1))
+cat <<- FIN >> ${tmp}-header_shussekisha
+ShussekishaShimei$snum
+ShussekishaShozoku$snum
+FIN
+done
+
+if [ ${shussekishanum} -gt 0 ] ; then
+  cat ${tmp}-header_shussekisha |
+  tateyoko                 |
+  cat - ${tmp}-shussekisha_value |
+  tateyoko                 > ${tmp}-tantoushakaigi_shussekisha
+else
+  :> ${tmp}-tantoushakaigi_shussekisha
+fi
+
+#cp ${tmp}-tantoushakaigi_shussekisha $work_dir/syussekisha_kaigo
+
+# 全てのデータをマージする
+cat ${tmp}-tantoushakaigi_base ${tmp}-shussekishanum ${tmp}-tantoushakaigi_shussekisha
+
+
+## 終了
+rm -f $tmp-*
+exit 0

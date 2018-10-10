@@ -1,0 +1,1030 @@
+#!/bin/bash
+#
+# ASSESSMENT_HOUMONKAIGO.DISPLAY : アセスメント表示
+#
+# Usage : ASSESSMENT_HOUMONKAIGO.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+kengen_dir="${home_dir}/TBL/KENGEN_KANRI"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} $work_dir/namedata_houmonkaigo
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ユーザ退去制御
+awk '$(NF-2)!="9"' ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_KIHON     |
+awk '$4<="'$today'"&&"'$today'"<=$5{print $1}'  |
+LANG=C sort -k1,1                                    > $tmp-yuko-jyugyoin
+
+# ログインUSER名と施設の取得
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+# 施設で絞込み
+#cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU |
+# 施設で絞込み + 特別所属（20140602）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_SHISETSU ${home_dir}/TBL/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU |
+awk '$2=="'$shisetsu'"{print $1}'                   |
+LANG=C sort -k1,1  > $tmp-shisetsu_user
+
+self 1 2 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+cat $tmp-user_mst                                  |
+LANG=C sort -k1,1                                  |
+join0 key=1 $tmp-shisetsu_user                     |
+join0 key=1 $tmp-yuko-jyugyoin                     |
+awk '{print $0,"'${userid}'"}'                     |
+awk '{if($1==$3){$3="selected"}else{$3=""};print $0}' > ${tmp}-kinyusha
+
+cat $tmp-disp_shisetsu_mst |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 元号
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+LANG=C sort -k3,3nr                                |
+awk '$5!="9"{print $2,substr($3,1,4)-1}'        > $tmp-gengou_mst
+
+# 続柄マスタ
+cat ${home_dir}/TBL/CONFIG/ZOKUGARA_MASTER         > $tmp-zokugara_master
+
+# サービス種別
+cat ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE |
+self 1 3                                           > $tmp-kaigohoken_serviceshubetsu
+
+# 診療科マスタ
+cat ${home_dir}/TBL/CONFIG/SHINRYOUKA_MASTER       > $tmp-shinryouka_master
+
+# 元号マスタ
+awk '$5!="9"{print $1,$2,substr($3,1,4)-1}' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU > $tmp-gengou_master
+awk '$5!="9"{print $1,$2}' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU > $tmp-gengou_master2
+
+# 入居者情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+tee $tmp-riyousha_mst                              |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名
+# 4:誕生日年 5:誕生日月   6:誕生日 7:住所
+join1 key=2 $tmp-gengou_master2 -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 4 5 6 7                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'           > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+: > $tmp-calsed
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 検索結果
+  search | torikomi)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    : > $tmp-listdata
+  ;;
+  # 削除
+  delete)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="削除完了"
+      echo "###DELETESUCCESS###" "document.frmBack.submit();" >> $tmp-calsed
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    : > $tmp-listdata
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${tmp}-listdata)
+#--------------------------------------------------------
+
+[ -s ${tmp}-listdata ] && cat ${tmp}-listdata > ${namedata}
+
+# 追加レコード対応
+# 家族
+seq $NyukyoshaKazokuVal  |
+while read kazokunum ; do
+   knum=$((kazokunum-1))
+   nyukyoshashimei=$(nameread NyukyoshaKazokuShimei$knum $namedata | head -1)
+   nyukyoshazokugara=$(nameread NyukyoshaKazokuZokugara$knum $namedata | head -1)
+   [ "$nyukyoshazokugara" = "_" ] && nyukyoshazokugara=""
+   nyukyoshanenrei=$(nameread NyukyoshaKazokuNenrei$knum $namedata | head -1)
+   [ "$nyukyoshanenrei" = "_" ] && nyukyoshanenrei=""
+   nyukyoshakenkou=$(nameread NyukyoshaKazokuKenkou$knum $namedata | head -1)
+   [ "$nyukyoshakenkou" = "_" ] && nyukyoshakenkou=""
+   nyukyoshakenkousonota=$(nameread NyukyoshaKazokuKenkouSonota$knum $namedata | head -1)
+   [ "$nyukyoshakenkousonota" = "_" ] && nyukyoshakenkousonota=""
+   if [ "$nyukyoshashimei" != "_" -a -n "$nyukyoshashimei" ] ; then
+   echo -n '{"shimei":"'$nyukyoshashimei'","zokugara":"'$nyukyoshazokugara'","nenrei":"'$nyukyoshanenrei'","kenkou":"'$nyukyoshakenkou'","kenkousonota":"'$nyukyoshakenkousonota'"},' >> ${tmp}-kazokurecord
+   fi
+done
+
+addKazokuRecord=$(cat ${tmp}-kazokurecord)
+
+# 緊急連絡先
+seq $NyukyoshaKinkyuVal  |
+while read kinkyunum ; do
+   knnum=$((kinkyunum-1))
+   kinkyushimei=$(nameread NyukyoshaKinkyuShimei$knnum $namedata | head -1)
+   kinkyuzokugara=$(nameread NyukyoshaKinkyuZokugara$knnum $namedata | head -1)
+   [ "$kinkyuzokugara" = "_" ] && kinkyuzokugara=""
+   kinkyujusho=$(nameread NyukyoshaKinkyuJusho$knnum $namedata | head -1)
+   [ "$kinkyujusho" = "_" ] && kinkyujusho=""
+   kinkyudenwa=$(nameread NyukyoshaKinkyuDenwa$knnum $namedata | head -1)
+   [ "$kinkyudenwa" = "_" ] && kinkyudenwa=""
+   if [ "$kinkyushimei" != "_" -a -n "$kinkyushimei" ] ; then
+   echo -n '{"shimei":"'$kinkyushimei'","zokugara":"'$kinkyuzokugara'","jusho":"'$kinkyujusho'","tel":"'$kinkyudenwa'"},' >> ${tmp}-kinkyurecord
+   fi
+done
+
+addRenrakuRecord=$(cat ${tmp}-kinkyurecord)
+
+# 保険サービス
+seq $RiyouServiceVal |
+while read rservicenum ; do
+    rnum=$((rservicenum-1))
+    serviceshubetsu=$(nameread slGenzaiKaigoServiceShubetsu$rnum $namedata | head -1)
+    servicejigyousho=$(nameread txtGenzaiKaigoServiceJigyousho$rnum $namedata | head -1)
+   [ "$servicejigyousho" = "_" ] && servicejigyousho=""
+    servicebiko=$(nameread txtGenzaiKaigoServiceBiko$rnum $namedata | head -1)
+   [ "$servicebiko" = "_" ] && servicebiko=""
+   if [ "$serviceshubetsu" != "_" -a -n "$serviceshubetsu" ] ; then
+   echo -n '{"shubetsu":"'$serviceshubetsu'","jigyousho":"'$servicejigyousho'","biko":"'$servicebiko'"},' >> ${tmp}-servicerecord
+   fi
+done
+
+addServiceRecord=$(cat ${tmp}-servicerecord)
+
+
+# 受診病院
+seq $JushinJoukyouVal  |
+while read jushinnum ; do
+   jnum=$((jushinnum-1))
+   byouinmei=$(nameread txtJushinByouinmei$jnum $namedata | head -1)
+   ishimei=$(nameread txtJushinIshimei$jnum $namedata | head -1)
+   [ "$ishimei" = "_" ] && ishimei=""
+   kamoku=$(nameread slJushinShinryouKamoku$jnum $namedata | head -1)
+   [ "$kamoku" = "_" ] && kamoku=""
+   jdenwa=$(nameread txtJushinDenwabangou$jnum $namedata | head -1)
+   [ "$jdenwa" = "_" ] && jdenwa=""
+   jjoukyou=$(nameread txtJushinJoukyou$jnum $namedata | head -1)
+   [ "$jjoukyou" = "_" ] && jjoukyou=""
+   if [ "$byouinmei" != "_" -a -n "$byouinmei" ] ; then
+   echo -n '{"byouinmei":"'$byouinmei'","ishimei":"'$ishimei'","kamoku":"'$kamoku'","tel":"'$jdenwa'","joukyou":"'$jjoukyou'"},' >> ${tmp}-byouinrecord
+   fi
+done
+
+addByouinRecord=$(cat ${tmp}-byouinrecord)
+
+
+# 傷病
+seq $ShoubyouVal  |
+while read shoubyounum ; do
+   shnum=$((shoubyounum-1))
+   byoumei=$(nameread txtShoubyoumei$shnum $namedata | head -1)
+   umu=$(nameread slShoubyouumu$shnum $namedata | head -1)
+   [ "$umu" = "_" ] && umu=""
+   bui=$(nameread txtShoubyoubui$shnum $namedata | head -1)
+   [ "$bui" = "_" ] && bui=""
+   if [ "$byoumei" != "_" -a -n "$byoumei" ] ; then
+   echo -n '{"byoumei":"'$byoumei'","umu":"'$umu'","bui":"'$bui'"},' >> ${tmp}-shoubyourecord
+   fi
+done
+
+addShoubyouRecord=$(cat ${tmp}-shoubyourecord)
+
+# 新規の場合に基本情報からセット
+# 氏名
+if [ -z "$txtNyukyoshaShimei" -o "$txtNyukyoshaShimei" = "_" ] ; then
+  txtNyukyoshaShimei=$Riyoushamei
+fi
+# フリガナ
+if [ -z "$txtNyukyoshaFurigana" -o "$txtNyukyoshaFurigana" = "_" ]; then
+  txtNyukyoshaFurigana=$(self 3 $tmp-riyousha_mst)
+fi
+# 性別
+if [ -z "$slNyukyoshaSeibetsu" -o "$slNyukyoshaSeibetsu" = "_" ]; then
+  slNyukyoshaSeibetsu=$(self 4 $tmp-riyousha_mst)
+fi
+# 生年月日(和暦)
+if [ -z "$slNyukyoshaSeinengappiWareki" -o "$slNyukyoshaSeinengappiWareki" = "_" ]; then
+  slNyukyoshaSeinengappiWareki=$(self 5 $tmp-riyousha_mst)
+fi
+# 生年月日(年)
+if [ -z "$slNyukyoshaSeinengappiYear" -o "$slNyukyoshaSeinengappiYear" = "_" ]; then
+  slNyukyoshaSeinengappiYear=$(self 6 $tmp-riyousha_mst)
+fi
+# 生年月日(月)
+if [ -z "$slNyukyoshaSeinengappiMonth" -o "$slNyukyoshaSeinengappiMonth" = "_" ]; then
+  slNyukyoshaSeinengappiMonth=$(self 7 $tmp-riyousha_mst)
+fi
+# 生年月日(日)
+if [ -z "$slNyukyoshaSeinengappiDay" -o "$slNyukyoshaSeinengappiDay" = "_" ]; then
+  slNyukyoshaSeinengappiDay=$(self 8 $tmp-riyousha_mst)
+fi
+# 生年月日(西暦)
+if [ -z "$hdNyukyoshaSeinengappi" -o "$hdNyukyoshaSeinengappi" = "_" ]; then
+  hdNyukyoshaSeinengappi=$(self 9 $tmp-riyousha_mst)
+  current_date=$(date +%Y%m%d | self 1)
+  ShousuNenrei=$(echo "${current_date}" "${hdNyukyoshaSeinengappi}" | lcalc '($1-$2)/10000')
+  txtNyukyoshaNenrei=$(echo "$ShousuNenrei" | marume -sage 1.0)
+fi
+# 住所
+if [ -z "$txtNyukyoshaJusho" -o "$txtNyukyoshaJusho" = "_" ]; then
+  txtNyukyoshaJusho=$(self 14 $tmp-riyousha_mst)
+fi
+
+todate=$(date +%Y%m%d | self 1)
+
+# 介護保険情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN          |
+awk '$(NF-2)!="9"'                                         |
+awk '$23<="'$todate'"&&"'$todate'"<=$28'                   |
+join1 key=1 ${tmp}-riyoushaid                      > $tmp-riyoush_kaigo_mst
+
+# 介護度
+if [ -z "$slYoukaigodo" -o "$slYoukaigodo" = "_" ]; then
+  slYoukaigodo=$(self 3 $tmp-riyoush_kaigo_mst)
+fi
+
+awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU |
+self 1/4 > $tmp-disp_gengou_mst
+# 認定年月日
+if [ -z "$txtNinteinengappi" -o "$txtNinteinengappi" = "_" ]; then
+  henkanmaeNinteiNengappi=$(self 18 $tmp-riyoush_kaigo_mst)
+  # 和暦変換
+  cat $tmp-disp_gengou_mst  |
+  awk '$3<="'$henkanmaeNinteiNengappi'"&&"'$henkanmaeNinteiNengappi'"<=$4' |
+  awk '{print $2,"'$henkanmaeNinteiNengappi'",substr($3,1,4)-1}'    |
+  awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+  awk '{print $1$2"年"$3"月"$4"日"}' > $tmp-ninteinengappi
+
+  txtNinteinengappi=$(cat $tmp-ninteinengappi)
+  hdNinteinengappi=$henkanmaeNinteiNengappi
+fi
+# 認定開始時間
+if [ -z "$txtNinteiKikanStart" -o "$txtNinteiKikanStart" = "_" ]; then
+  henkanmaeNinteiStart=$(self 23 $tmp-riyoush_kaigo_mst)
+  # 和暦変換
+  cat $tmp-disp_gengou_mst  |
+  awk '$3<="'$henkanmaeNinteiStart'"&&"'$henkanmaeNinteiStart'"<=$4' |
+  awk '{print $2,"'$henkanmaeNinteiStart'",substr($3,1,4)-1}'    |
+  awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+  awk '{print $1$2"年"$3"月"$4"日"}' > $tmp-ninteistart
+
+  txtNinteiKikanStart=$(cat $tmp-ninteistart)
+  hdNinteiKikanStart=$henkanmaeNinteiStart
+fi
+# 認定終了時間
+if [ -z "$txtNinteiKikanEnd" -o "$txtNinteiKikanEnd" = "_" ]; then
+  henkanmaeNinteiEnd=$(self 28 $tmp-riyoush_kaigo_mst)
+  # 和暦変換
+  cat $tmp-disp_gengou_mst  |
+  awk '$3<="'$henkanmaeNinteiEnd'"&&"'$henkanmaeNinteiEnd'"<=$4' |
+  awk '{print $2,"'$henkanmaeNinteiEnd'",substr($3,1,4)-1}'    |
+  awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+  awk '{print $1$2"年"$3"月"$4"日"}' > $tmp-ninteiend
+
+  txtNinteiKikanEnd=$(cat $tmp-ninteiend)
+  hdNinteiKikanEnd=$henkanmaeNinteiEnd
+fi
+
+# 介護保険者番号
+if [ -z "$txtKaigohokenHihokenshaBangou" -o "$txtKaigohokenHihokenshaBangou" = "_" ] ; then
+   txtKaigohokenHihokenshaBangou=$(self 6 $tmp-riyoush_kaigo_mst)
+fi
+
+# 連絡先情報
+if [ -z "$addKazokuRecord" -o "$addKazokuRecord" = "_" ]; then
+  cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_RENRAKUSAKI          |
+  join1 key=1 ${tmp}-riyoushaid                               |
+  self 3 2                                                    |
+  awk '{print "{\"shimei\":\""$1"\",\"zokugara\":\""$2"\",\"nenrei\":\"\",\"kenkou\":\"\"}"}' > ${tmp}-kazokurecord
+  NyukyoshaKazokuVal=$(gyo ${tmp}-kazokurecord)
+  addKazokuRecord=$(cat ${tmp}-kazokurecord)
+fi
+
+# 和暦変換（変更日）
+awk '$5!="9"' ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU |
+self 1/4 |
+awk '$3<="'$hdNyukyoshaSeinengappi'"&&"'$hdNyukyoshaSeinengappi'"<=$4' |
+awk '{print $2,"'$hdNyukyoshaSeinengappi'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-print_date
+
+headerPrintDate=$(cat $tmp-print_date)
+
+echo "1" "男" > $tmp-seibetsu_mst
+echo "2" "女" >> $tmp-seibetsu_mst
+
+awk '$1=="'$slNyukyoshaSeibetsu'"{print $2}' $tmp-seibetsu_mst > $tmp-disp_seibetsu
+
+headerSeibetsu=$(cat $tmp-disp_seibetsu)
+
+
+echo "HOUMONKAIGO_MENU.CGI" > $tmp-cgi
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+awk '$2=="0000"||$2=="'$shisetsu'"'         |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -k7,7                                          |
+join0 key=7 $tmp-cgi                                       > ${tmp}-kengenlist
+
+# 見取図存在チェック
+#[ -s ${home_dir}/CAREPLAN/HTML/CAREPLAN-KAIGO/${Riyoushaid}/output-mitorizu-${hdShokaiSakuseidate}.html ] && htmlMitorizu="/E-LIFE/CAREPLAN/HTML/CAREPLAN-KAIGO/${Riyoushaid}/output-mitorizu-${hdShokaiSakuseidate}.html" || htmlMitorizu=""
+#dispHtmlMitorizu="/E-LIFE/CAREPLAN/HTML/CAREPLAN-KAIGO/${Riyoushaid}/output-mitorizu-${hdShokaiSakuseidate}.html"
+[ -s ${home_dir}/HOUMONKAIGO/HTML/ASSESSMENT/${Riyoushaid}/output-mitorizu-231.html ] && htmlMitorizu="/E-LIFE/HOUMONKAIGO/HTML/ASSESSMENT/${Riyoushaid}/output-mitorizu-231.html" || htmlMitorizu=""
+dispHtmlMitorizu="/E-LIFE/HOUMONKAIGO/HTML/ASSESSMENT/${Riyoushaid}/output-mitorizu-231.html"
+
+cat << FIN | sed 's/ _$/ @/g' >> $tmp-calsed
+###TXTSHOKAISAKUSEIDATE### $txtShokaiSakuseidate
+###HDSHOKAISAKUSEIDATE### $hdShokaiSakuseidate
+###SLSHOKAIJISSIBASHO### $slShokaiJissibasho
+###SLSHOKAIKINYUSHA### $slShokaiKinyusha
+###SLASSESSMENTRIYU### $slAssessmentRiyu
+###TXTNYUKYONENGAPPI### $txtNyukyoNengappi
+###TXTNYUKYOSHAFURIGANA### $txtNyukyoshaFurigana
+###SLNYUKYOSHASEIBETSU### $slNyukyoshaSeibetsu
+###DISPLAYSEIBETSU###  $headerSeibetsu
+###SLNYUKYOSHASEINENGAPPIWAREKI### $slNyukyoshaSeinengappiWareki
+###SLNYUKYOSHASEINENGAPPIYEAR### $slNyukyoshaSeinengappiYear
+###SLNYUKYOSHASEINENGAPPIMONTH### $slNyukyoshaSeinengappiMonth
+###SLNYUKYOSHASEINENGAPPIDAY### $slNyukyoshaSeinengappiDay
+###HDNYUKYOSHASEINENGAPPI### $hdNyukyoshaSeinengappi
+###DISPLAYSEINENGAPPI###   $headerPrintDate
+###TXTNYUKYOSHANENREI### $txtNyukyoshaNenrei
+###TXTNYUKYOSHASHIMEI### $txtNyukyoshaShimei
+###TXTNYUKYOSHAJUSHO### $txtNyukyoshaJusho
+###TXTNYUKYOSHADENWABANGOU### $txtNyukyoshaDenwabangou
+###SLNYUKYOSHASETAIKUBUN### $slNyukyoshaSetaikubun
+###TXTSHOKAISOUDANUKETSUKEGAPPI### $txtShokaiSoudanUketsukegappi
+###SLSOUDSANUKETSUKEHOUHOU### $slSoudsanUketsukehouhou
+###SLSOUDANIRAISHA### $slSoudanIraisha
+###TXTSOUDANKEIRO### $txtSoudanKeiro
+###TXTSOUDANNAIYOU### $txtSoudanNaiyou
+###TXTSEIKATSUREKI### $txtSeikatsureki
+###TXTGENZAISEIKATSUJOUKYOU### $txtGenzaiSeikatsujoukyou
+###TAB4NETAKIRI### $tab4Netakiri
+###TAB4NINCHISHOU### $tab4Ninchishou
+###SLYOUKAIGODO### $slYoukaigodo
+###TXTNINTEINENGAPPI### $txtNinteinengappi
+###HDNINTEINENGAPPI### $hdNinteinengappi
+###TXTNINTEIKIKANSTART### $txtNinteiKikanStart
+###TXTNINTEIKIKANEND### $txtNinteiKikanEnd
+###HDNINTEIKIKANSTART### $hdNinteiKikanStart
+###HDNINTEIKIKANEND### $hdNinteiKikanEnd
+###TXTKAIGOHOKENHIHOKENSHABANGOU### $txtKaigohokenHihokenshaBangou
+###TXTIRYOUHOKEN### $txtIryouHoken
+###SLSHINTAISHOUGAISHATECHOU### $slShintaiShougaishaTechou
+###TXTSHINTAISHOUGAISHASYU### $txtShintaiShougaishaSyu
+###TXTSHINTAISHOUGAISHAKYU### $txtShintaiShougaishaKyu
+###TXTSHINTAISHOUGAISHABUI### $txtShintaiShougaishaBui
+###SLSEIKATSUHOGO### $slSeikatsuhogo
+###TXTSEIKATSUHOGOJUKYUSHABANGOU### $txtSeikatsuhogoJukyushaBangou
+###TXTSEIKATSUHOGOFUTANSHABANGOU### $txtSeikatsuhogoFutanshaBangou
+###TXTASSESSMENTSAKUSEIDATE0### $txtAssessmentSakuseidate0
+###SLASSESSMENTJISSIBASHO0### $slAssessmentJissibasho0
+###SLASSESSMENTRIYU0### $slAssessmentRiyu0
+###SLASSESSMENTKINYUSHA0### $slAssessmentKinyusha0
+###TXTASSESSMENTSAKUSEIDATE1### $txtAssessmentSakuseidate1
+###SLASSESSMENTJISSIBASHO1### $slAssessmentJissibasho1
+###SLASSESSMENTRIYU1### $slAssessmentRiyu1
+###SLASSESSMENTKINYUSHA1### $slAssessmentKinyusha1
+###TXTASSESSMENTSAKUSEIDATE2### $txtAssessmentSakuseidate2
+###SLASSESSMENTJISSIBASHO2### $slAssessmentJissibasho2
+###SLASSESSMENTRIYU2### $slAssessmentRiyu2
+###SLASSESSMENTKINYUSHA2### $slAssessmentKinyusha2
+###RIYOUSHANOZOMUSEIKATSU### $RiyoushaNozomuSeikatsu
+###KAZOKUNOZOMUSEIKATSU### $KazokuNozomuSeikatsu
+###RDKAIGORYOKU### $rdKaigoryoku
+###TXTOMONAKAIGOSHAMEI### $txtOmonaKaigoshamei
+###SLOMONAKAIGOSHAZOKUGARA### $slOmonaKaigoshazokugara
+###SLOMONAKAIGOSHADOUKYO### $slOmonaKaigoshaDoukyo
+###TXTSONOTAKAIGOSHAMEI### $txtSonotaKaigoshamei
+###SLSONOTAKAIGOSHAZOKUGARA### $slSonotaKaigoshazokugara
+###SLSONOTAKAIGOSHADOUKYO### $slSonotaKaigoshaDoukyo
+###TXTKAIGOHIYOU### $txtKaigoHiyou
+###TXTKAIGOKANGAE### $txtKaigoKangae
+###TXTKAIGORYOUKUKADAI### $txtKaigoryoukuKadai
+###ICHINICHISEIKATSU6### $IchinichiSeikatsu6
+###ICHINICHISEIKATSU7### $IchinichiSeikatsu7
+###ICHINICHISEIKATSU8### $IchinichiSeikatsu8
+###ICHINICHISEIKATSU9### $IchinichiSeikatsu9
+###ICHINICHISEIKATSU10### $IchinichiSeikatsu10
+###ICHINICHISEIKATSU11### $IchinichiSeikatsu11
+###ICHINICHISEIKATSU12### $IchinichiSeikatsu12
+###ICHINICHISEIKATSU13### $IchinichiSeikatsu13
+###ICHINICHISEIKATSU14### $IchinichiSeikatsu14
+###ICHINICHISEIKATSU15### $IchinichiSeikatsu15
+###ICHINICHISEIKATSU16### $IchinichiSeikatsu16
+###ICHINICHISEIKATSU17### $IchinichiSeikatsu17
+###ICHINICHISEIKATSU18### $IchinichiSeikatsu18
+###ICHINICHISEIKATSU19### $IchinichiSeikatsu19
+###ICHINICHISEIKATSU20### $IchinichiSeikatsu20
+###ICHINICHISEIKATSU21### $IchinichiSeikatsu21
+###ICHINICHISEIKATSU22### $IchinichiSeikatsu22
+###ICHINICHISEIKATSU23### $IchinichiSeikatsu23
+###ICHINICHISEIKATSU0### $IchinichiSeikatsu0
+###ICHINICHISEIKATSU1### $IchinichiSeikatsu1
+###ICHINICHISEIKATSU2### $IchinichiSeikatsu2
+###ICHINICHISEIKATSU3### $IchinichiSeikatsu3
+###ICHINICHISEIKATSU4### $IchinichiSeikatsu4
+###ICHINICHISEIKATSU5### $IchinichiSeikatsu5
+###SLNICCHUUSUGOSHIKATA### $slNicchuuSugoshikata
+###SLGAISYUTUHINDO### $slGaisyutuHindo
+###TXTSHINCHOU### $txtShinchou
+###TXTTAIJU### $txtTaiju
+###TXTBMI### $txtBMI
+###TXTHEIJOUKETSUATSU### $txtHeijouKetsuatsu
+###TXTHEINETSU### $txtHeinetsu
+###TXTAREAKENKOUJOUTAI### $txtareaKenkouJoutai
+###TXTAREAFUKUYAKU### $txtareaFukuyaku
+###RDADLNEGAERI1### $rdADLNegaeri1
+###SLADLNEGAERINEDOKO1### $slADLNegaeriNedoko1
+###TXTADLNEGAERI1### $txtADLNegaeri1
+###RDADLNEGAERI2### $rdADLNegaeri2
+###SLADLNEGAERINEDOKO2### $slADLNegaeriNedoko2
+###TXTADLNEGAERI2### $txtADLNegaeri2
+###RDADLNEGAERI3### $rdADLNegaeri3
+###SLADLNEGAERINEDOKO3### $slADLNegaeriNedoko3
+###TXTADLNEGAERI3### $txtADLNegaeri3
+###RDADLOKIAGARI1### $rdADLOkiagari1
+###TXTADLOKIAGARI1### $txtADLOkiagari1
+###RDADLOKIAGARI2### $rdADLOkiagari2
+###TXTADLOKIAGARI2### $txtADLOkiagari2
+###RDADLOKIAGARI3### $rdADLOkiagari3
+###TXTADLOKIAGARI3### $txtADLOkiagari3
+###RDADLIJOU1### $rdADLIjou1
+###TXTADLIJOU1### $txtADLIjou1
+###RDADLIJOU2### $rdADLIjou2
+###TXTADLIJOU2### $txtADLIjou2
+###RDADLIJOU3### $rdADLIjou3
+###TXTADLIJOU3### $txtADLIjou3
+###RDADLOKUNAIHOKOU1### $rdADLOkunaiHokou1
+###SLADLOKUNAIHOKOU1### $slADLOkunaiHokou1
+###TXTADLOKUNAIHOKOU1### $txtADLOkunaiHokou1
+###RDADLOKUNAIHOKOU2### $rdADLOkunaiHokou2
+###SLADLOKUNAIHOKOU2### $slADLOkunaiHokou2
+###TXTADLOKUNAIHOKOU2### $txtADLOkunaiHokou2
+###RDADLOKUNAIHOKOU3### $rdADLOkunaiHokou3
+###SLADLOKUNAIHOKOU3### $slADLOkunaiHokou3
+###TXTADLOKUNAIHOKOU3### $txtADLOkunaiHokou3
+###RDADLOKUGAIHOKOU1### $rdADLOkugaiHokou1
+###SLADLOKUGAIHOKOU1### $slADLOkugaiHokou1
+###TXTADLOKUGAIHOKOU1### $txtADLOkugaiHokou1
+###RDADLOKUGAIHOKOU2### $rdADLOkugaiHokou2
+###SLADLOKUGAIHOKOU2### $slADLOkugaiHokou2
+###TXTADLOKUGAIHOKOU2### $txtADLOkugaiHokou2
+###RDADLOKUGAIHOKOU3### $rdADLOkugaiHokou3
+###SLADLOKUGAIHOKOU3### $slADLOkugaiHokou3
+###TXTADLOKUGAIHOKOU3### $txtADLOkugaiHokou3
+###RDADLZAI1### $rdADLZai1
+###TXTADLZAI1### $txtADLZai1
+###RDADLZAI2### $rdADLZai2
+###TXTADLZAI2### $txtADLZai2
+###RDADLZAI3### $rdADLZai3
+###TXTADLZAI3### $txtADLZai3
+###RDADLCHAKUI1### $rdADLChakui1
+###TXTADLCHAKUI1### $txtADLChakui1
+###RDADLCHAKUI2### $rdADLChakui2
+###TXTADLCHAKUI2### $txtADLChakui2
+###RDADLCHAKUI3### $rdADLChakui3
+###TXTADLCHAKUI3### $txtADLChakui3
+###RDADLMIDASHINAMI1### $rdADLMidashinami1
+###TXTADLMIDASHINAMI1### $txtADLMidashinami1
+###RDADLMIDASHINAMI2### $rdADLMidashinami2
+###TXTADLMIDASHINAMI2### $txtADLMidashinami2
+###RDADLMIDASHINAMI3### $rdADLMidashinami3
+###TXTADLMIDASHINAMI3### $txtADLMidashinami3
+###RDADLNYUYOKU1### $rdADLNyuyoku1
+###TXTADLNYUYOKU1### $txtADLNyuyoku1
+###RDADLNYUYOKU2### $rdADLNyuyoku2
+###TXTADLNYUYOKU2### $txtADLNyuyoku2
+###RDADLNYUYOKU3### $rdADLNyuyoku3
+###TXTADLNYUYOKU3### $txtADLNyuyoku3
+###RDSHOKUJIJOUKYOU1### $rdShokujiJoukyou1
+###SLSHOKUJIJOUKYOUBASHO1### $slShokujiJoukyouBasho1
+###SLSHOKUJIJOUKYOUWAY1### $slShokujiJoukyouWay1
+###TXTSHOKUJIJOUKYOUTYPE1### $txtShokujiJoukyouType1
+###RDSHOKUJIJOUKYOU2### $rdShokujiJoukyou2
+###SLSHOKUJIJOUKYOUBASHO2### $slShokujiJoukyouBasho2
+###SLSHOKUJIJOUKYOUWAY2### $slShokujiJoukyouWay2
+###TXTSHOKUJIJOUKYOUTYPE2### $txtShokujiJoukyouType2
+###RDSHOKUJIJOUKYOU3### $rdShokujiJoukyou3
+###SLSHOKUJIJOUKYOUBASHO3### $slShokujiJoukyouBasho3
+###SLSHOKUJIJOUKYOUWAY3### $slShokujiJoukyouWay3
+###TXTSHOKUJIJOUKYOUTYPE3### $txtShokujiJoukyouType3
+###RDSHOKUJIENKA1### $rdShokujiEnka1
+###TXTSHOKUJIENKA1### $txtShokujiEnka1
+###RDSHOKUJIENKA2### $rdShokujiEnka2
+###TXTSHOKUJIENKA2### $txtShokujiEnka2
+###RDSHOKUJIENKA3### $rdShokujiEnka3
+###TXTSHOKUJIENKA3### $txtShokujiEnka3
+###RDSHOKUJIKEITAI1### $rdShokujiKeitai1
+###SLSHOKUJIKEITAINAIYOU1### $slShokujiKeitaiNaiyou1
+###TXTSHOKUJIKEITAITYPE1### $txtShokujiKeitaiType1
+###RDSHOKUJIKEITAI2### $rdShokujiKeitai2
+###SLSHOKUJIKEITAINAIYOU2### $slShokujiKeitaiNaiyou2
+###TXTSHOKUJIKEITAITYPE2### $txtShokujiKeitaiType2
+###RDSHOKUJIKEITAI3### $rdShokujiKeitai3
+###SLSHOKUJIKEITAINAIYOU3### $slShokujiKeitaiNaiyou3
+###TXTSHOKUJIKEITAITYPE3### $txtShokujiKeitaiType3
+###RDEIJOUJOUTAI1### $rdEiyouJoutai1
+###TXTEIYOUJOUTAIBASHO1### $txtEiyouJoutaibasho1
+###RDEIJOUJOUTAI2### $rdEiyouJoutai2
+###TXTEIYOUJOUTAIBASHO2### $txtEiyouJoutaibasho2
+###RDEIJOUJOUTAI3### $rdEiyouJoutai3
+###TXTEIYOUJOUTAIBASHO3### $txtEiyouJoutaibasho3
+###RDSUIBUNSESSYU1### $rdSuibunSessyu1
+###SLSUIBUNSESSYUSEIGEN1### $slSuibunSessyuSeigen1
+###SLSUIBUNSESSYUTEKISETSU1### $slSuibunSessyuTekisetsu1
+###TXTSUIBUNSESSYURYOU1### $txtSuibunSessyuRyou1
+###RDSUIBUNSESSYU2### $rdSuibunSessyu2
+###SLSUIBUNSESSYUSEIGEN2### $slSuibunSessyuSeigen2
+###SLSUIBUNSESSYUTEKISETSU2### $slSuibunSessyuTekisetsu2
+###TXTSUIBUNSESSYURYOU2### $txtSuibunSessyuRyou2
+###RDSUIBUNSESSYU3### $rdSuibunSessyu3
+###SLSUIBUNSESSYUSEIGEN3### $slSuibunSessyuSeigen3
+###SLSUIBUNSESSYUTEKISETSU3### $slSuibunSessyuTekisetsu3
+###TXTSUIBUNSESSYURYOU3### $txtSuibunSessyuRyou3
+###RDKOUKUJOUTAI1### $rdKoukuJoutai1
+###SLKOUKUJOUTAIGISHI1### $slKoukuJoutaiGishi1
+###SLKOUKUJOUTAINAIYOU1### $slKoukuJoutaiNaiyou1
+###TXTKOUKUJOUTAIRYOU1### $txtKoukuJoutaiRyou1
+###RDKOUKUJOUTAI2### $rdKoukuJoutai2
+###SLKOUKUJOUTAIGISHI2### $slKoukuJoutaiGishi2
+###SLKOUKUJOUTAINAIYOU2### $slKoukuJoutaiNaiyou2
+###TXTKOUKUJOUTAIRYOU2### $txtKoukuJoutaiRyou2
+###RDKOUKUJOUTAI3### $rdKoukuJoutai3
+###SLKOUKUJOUTAIGISHI3### $slKoukuJoutaiGishi3
+###SLKOUKUJOUTAINAIYOU3### $slKoukuJoutaiNaiyou3
+###TXTKOUKUJOUTAIRYOU3### $txtKoukuJoutaiRyou3
+###RDHAISETSUKOUI1### $rdHaisetsuKoui1
+###SLHAISETSUKOUIWAY1### $slHaisetsuKouiWay1
+###TXTHAISETSUKOUITYPE1### $txtHaisetsuKouiType1
+###RDHAISETSUKOUI2### $rdHaisetsuKoui2
+###SLHAISETSUKOUIWAY2### $slHaisetsuKouiWay2
+###TXTHAISETSUKOUITYPE2### $txtHaisetsuKouiType2
+###RDHAISETSUKOUI3### $rdHaisetsuKoui3
+###SLHAISETSUKOUIWAY3### $slHaisetsuKouiWay3
+###TXTHAISETSUKOUITYPE3### $txtHaisetsuKouiType3
+###RDNYOUI1### $rdNyoui1
+###TXTNYOUINICCHUHINDO1### $txtNyouiNicchuHindo1
+###TXTNYOUIYAKANHINDO1### $txtNyouiYakanHindo1
+###TXTNYOUIBIKO1### $txtNyouiBiko1
+###RDNYOUI2### $rdNyoui2
+###TXTNYOUINICCHUHINDO2### $txtNyouiNicchuHindo2
+###TXTNYOUIYAKANHINDO2### $txtNyouiYakanHindo2
+###TXTNYOUIBIKO2### $txtNyouiBiko2
+###RDNYOUI3### $rdNyoui3
+###TXTNYOUINICCHUHINDO3### $txtNyouiNicchuHindo3
+###TXTNYOUIYAKANHINDO3### $txtNyouiYakanHindo3
+###TXTNYOUIBIKO3### $txtNyouiBiko3
+###RDBENI1### $rdBeni1
+###TXTBENINICCHUHINDO1### $txtBeniNicchuHindo1
+###TXTBENIYAKANHINDO1### $txtBeniYakanHindo1
+###TXTBENIBIKO1### $txtBeniBiko1
+###RDBENI2### $rdBeni2
+###TXTBENINICCHUHINDO2### $txtBeniNicchuHindo2
+###TXTBENIYAKANHINDO2### $txtBeniYakanHindo2
+###TXTBENIBIKO2### $txtBeniBiko2
+###RDBENI3### $rdBeni3
+###TXTBENINICCHUHINDO3### $txtBeniNicchuHindo3
+###TXTBENIYAKANHINDO3### $txtBeniYakanHindo3
+###TXTBENIBIKO3### $txtBeniBiko3
+###RDNYOUSHIKKIN1### $rdNyouShikkin1
+###TXTNYOUSHIKKINHINDO1### $txtNyouShikkinHindo1
+###TXTNYOUSHIKKINYAKANHINDO1### $txtNyouShikkinYakanHindo1
+###TXTNYOUSHIKKINBIKO1### $txtNyouShikkinBiko1
+###RDNYOUSHIKKIN2### $rdNyouShikkin2
+###TXTNYOUSHIKKINHINDO2### $txtNyouShikkinHindo2
+###TXTNYOUSHIKKINYAKANHINDO2### $txtNyouShikkinYakanHindo2
+###TXTNYOUSHIKKINBIKO2### $txtNyouShikkinBiko2
+###RDNYOUSHIKKIN3### $rdNyouShikkin3
+###TXTNYOUSHIKKINHINDO3### $txtNyouShikkinHindo3
+###TXTNYOUSHIKKINYAKANHINDO3### $txtNyouShikkinYakanHindo3
+###TXTNYOUSHIKKINBIKO3### $txtNyouShikkinBiko3
+###RDBENSHIKKIN1### $rdBenShikkin1
+###TXTBENSHIKKINHINDO1### $txtBenShikkinHindo1
+###TXTBENSHIKKINYAKANHINDO1### $txtBenShikkinYakanHindo1
+###TXTBENSHIKKINBIKO1### $txtBenShikkinBiko1
+###RDBENSHIKKIN2### $rdBenShikkin2
+###TXTBENSHIKKINHINDO2### $txtBenShikkinHindo2
+###TXTBENSHIKKINYAKANHINDO2### $txtBenShikkinYakanHindo2
+###TXTBENSHIKKINBIKO2### $txtBenShikkinBiko2
+###RDBENSHIKKIN3### $rdBenShikkin3
+###TXTBENSHIKKINHINDO3### $txtBenShikkinHindo3
+###TXTBENSHIKKINYAKANHINDO3### $txtBenShikkinYakanHindo3
+###TXTBENSHIKKINBIKO3### $txtBenShikkinBiko3
+###RDYOUGUSHIYOU1### $rdYouguShiyou1
+###TXTYOUGUSHIYOU1### $txtYouguShiyou1
+###RDYOUGUSHIYOU2### $rdYouguShiyou2
+###TXTYOUGUSHIYOU2### $txtYouguShiyou2
+###RDYOUGUSHIYOU3### $rdYouguShiyou3
+###TXTYOUGUSHIYOU3### $txtYouguShiyou3
+###RDIADLCHOURI1### $rdIADLChouri1
+###TXTIADLCHOURI1### $txtIADLChouri1
+###RDIADLCHOURI2### $rdIADLChouri2
+###TXTIADLCHOURI2### $txtIADLChouri2
+###RDIADLCHOURI3### $rdIADLChouri3
+###TXTIADLCHOURI3### $txtIADLChouri3
+###RDIADLSOUJI1### $rdIADLSouji1
+###TXTIADLSOUJI1### $txtIADLSouji1
+###RDIADLSOUJI2### $rdIADLSouji2
+###TXTIADLSOUJI2### $txtIADLSouji2
+###RDIADLSOUJI3### $rdIADLSouji3
+###TXTIADLSOUJI3### $txtIADLSouji3
+###RDIADLSENTAKU1### $rdIADLSentaku1
+###TXTIADLSENTAKU1### $txtIADLSentaku1
+###RDIADLSENTAKU2### $rdIADLSentaku2
+###TXTIADLSENTAKU2### $txtIADLSentaku2
+###RDIADLSENTAKU3### $rdIADLSentaku3
+###TXTIADLSENTAKU3### $txtIADLSentaku3
+###RDIADLKAIMONO1### $rdIADLKaimono1
+###TXTIADLKAIMONO1### $txtIADLKaimono1
+###RDIADLKAIMONO2### $rdIADLKaimono2
+###TXTIADLKAIMONO2### $txtIADLKaimono2
+###RDIADLKAIMONO3### $rdIADLKaimono3
+###TXTIADLKAIMONO3### $txtIADLKaimono3
+###RDIADLKINSENKANRI1### $rdIADLKinsenKanri1
+###TXTIADLKINSENKANRI1### $txtIADLKinsenKanri1
+###RDIADLKINSENKANRI2### $rdIADLKinsenKanri2
+###TXTIADLKINSENKANRI2### $txtIADLKinsenKanri2
+###RDIADLKINSENKANRI3### $rdIADLKinsenKanri3
+###TXTIADLKINSENKANRI3### $txtIADLKinsenKanri3
+###RDIADLKUSURIKANRI1### $rdIADLKusuriKanri1
+###TXTIADLKUSURIKANRI1### $txtIADLKusuriKanri1
+###RDIADLKUSURIKANRI2### $rdIADLKusuriKanri2
+###TXTIADLKUSURIKANRI2### $txtIADLKusuriKanri2
+###RDIADLKUSURIKANRI3### $rdIADLKusuriKanri3
+###TXTIADLKUSURIKANRI3### $txtIADLKusuriKanri3
+###RDIADLDENWARIYOU1### $rdIADLDenwaRiyou1
+###TXTIADLDENWARIYOU1### $txtIADLDenwaRiyou1
+###RDIADLDENWARIYOU2### $rdIADLDenwaRiyou2
+###TXTIADLDENWARIYOU2### $txtIADLDenwaRiyou2
+###RDIADLDENWARIYOU3### $rdIADLDenwaRiyou3
+###TXTIADLDENWARIYOU3### $txtIADLDenwaRiyou3
+###RDIADLKOUTSUKIKAN1### $rdIADLKoutsuKikan1
+###TXTIADLKOUTSUKIKAN1### $txtIADLKoutsuKikan1
+###RDIADLKOUTSUKIKAN2### $rdIADLKoutsuKikan2
+###TXTIADLKOUTSUKIKAN2### $txtIADLKoutsuKikan2
+###RDIADLKOUTSUKIKAN3### $rdIADLKoutsuKikan3
+###TXTIADLKOUTSUKIKAN3### $txtIADLKoutsuKikan3
+###RDSHIRYOKU1### $rdShiryoku1
+###TXTSHIRYOKU1### $txtShiryoku1
+###RDSHIRYOKU2### $rdShiryoku2
+###TXTSHIRYOKU2### $txtShiryoku2
+###RDSHIRYOKU3### $rdShiryoku3
+###TXTSHIRYOKU3### $txtShiryoku3
+###RDCHOURYOKU1### $rdChouryoku1
+###TXTCHOURYOKU1### $txtChouryoku1
+###RDCHOURYOKU2### $rdChouryoku2
+###TXTCHOURYOKU2### $txtChouryoku2
+###RDCHOURYOKU3### $rdChouryoku3
+###TXTCHOURYOKU3### $txtChouryoku3
+###RDISHISOTSU1### $rdIshiSotsu1
+###TXTISHISOTSU1### $txtIshiSotsu1
+###RDISHISOTSU2### $rdIshiSotsu2
+###TXTISHISOTSU2### $txtIshiSotsu2
+###RDISHISOTSU3### $rdIshiSotsu3
+###TXTISHISOTSU3### $txtIshiSotsu3
+###RDSANKAIYOKU1### $rdSankaIyoku1
+###TXTSANKAIYOKU1### $txtSankaIyoku1
+###RDSANKAIYOKU2### $rdSankaIyoku2
+###TXTSANKAIYOKU2### $txtSankaIyoku2
+###RDSANKAIYOKU3### $rdSankaIyoku3
+###TXTSANKAIYOKU3### $txtSankaIyoku3
+###RDTASHAKAKAWARI1### $rdTashaKakawari1
+###TXTTASHAKAKAWARI1### $txtTashaKakawari1
+###RDTASHAKAKAWARI2### $rdTashaKakawari2
+###TXTTASHAKAKAWARI2### $txtTashaKakawari2
+###RDTASHAKAKAWARI3### $rdTashaKakawari3
+###TXTTASHAKAKAWARI3### $txtTashaKakawari3
+###RDSOUSHITSUKAN1### $rdSoushitsukan1
+###TXTSOUSHITSUKAN1### $txtSoushitsukan1
+###RDSOUSHITSUKAN2### $rdSoushitsukan2
+###TXTSOUSHITSUKAN2### $txtSoushitsukan2
+###RDSOUSHITSUKAN3### $rdSoushitsukan3
+###TXTSOUSHITSUKAN3### $txtSoushitsukan3
+###RDKODOKUKAN1### $rdKodokukan1
+###TXTKODOKUKAN1### $txtKodokukan1
+###RDKODOKUKAN2### $rdKodokukan2
+###TXTKODOKUKAN2### $txtKodokukan2
+###RDKODOKUKAN3### $rdKodokukan3
+###TXTKODOKUKAN3### $txtKodokukan3
+###RDTIIKIKYOURYOKU1### $rdTiikiKyouryoku1
+###TXTTIIKIKYOURYOKU1### $txtTiikiKyouryoku1
+###RDTIIKIKYOURYOKU2### $rdTiikiKyouryoku2
+###TXTTIIKIKYOURYOKU2### $txtTiikiKyouryoku2
+###RDTIIKIKYOURYOKU3### $rdTiikiKyouryoku3
+###TXTTIIKIKYOURYOKU3### $txtTiikiKyouryoku3
+###SLKYOJUKEITAI### $slKyojuKeitai
+###SLKYOJUFLOOR### $slKyojuFloor
+###SLKYOJUTYPE### $slKyojuType
+###SLKYOJUELV### $slKyojuELV
+###TXTKYOJUKEITAIKADAI### $txtKyojuKeitaiKadai
+###SLKYOJUYOKUSHITSU### $slKyojuYokushitsu
+###SLKYOJUYOKUSOU### $slKyojuYokusou
+###SLKYOJUSHOWER### $slKyojuShower
+###TXTKYOJUYOKUSHITSUKADAI### $txtKyojuYokushitsuKadai
+###TXTAREAFUKINKANKYO### $txtareaFukinKankyo
+###SLKYOJUTESURI### $slKyojuTesuri
+###TXTKYOJUTESURI### $txtKyojuTesuri
+###TXTKYOJUTESURIKADAI### $txtKyojuTesuriKadai
+###SLKYOJUDANSA### $slKyojuDansa
+###TXTKYOJUDANSAKADAI### $txtKyojuDansaKadai
+###SLKYOJUSHITSUNAI### $slKyojuShitsunai
+###TXTKYOJUSHITSUNAIKADAI### $txtKyojuShitsunaiKadai
+###SLKYOJUEISEI### $slKyojuEisei
+###TXTKYOJUEISEIKADAI### $txtKyojuEiseikadai
+###SLKYOJUREIDANBOUUMU### $slKyojuReidanbouUmu
+###SLKYOJUREIDANBOUSHITSUON### $slKyojuReidanbouShitsuon
+###TXTKYOJUREIDANBOUKADAI### $txtKyojuReidanboukadai
+###SLKYOJUPET### $slKyojuPet
+###TXTKYOJUPET### $txtKyojuPet
+###RDNINCHIMONOWASURE1### $rdNinchiMonowasure1
+###TXTNINCHIMONOWASURE1### $txtNinchiMonowasure1
+###RDNINCHIMONOWASURE2### $rdNinchiMonowasure2
+###TXTNINCHIMONOWASURE2### $txtNinchiMonowasure2
+###RDNINCHIMONOWASURE3### $rdNinchiMonowasure3
+###TXTNINCHIMONOWASURE3### $txtNinchiMonowasure3
+###RDNINCHIKETTEI1### $rdNinchiKettei1
+###TXTNINCHIKETTEI1### $txtNinchiKettei1
+###RDNINCHIKETTEI2### $rdNinchiKettei2
+###TXTNINCHIKETTEI2### $txtNinchiKettei2
+###RDNINCHIKETTEI3### $rdNinchiKettei3
+###TXTNINCHIKETTEI3### $txtNinchiKettei3
+###RDMONDAIHIGAITEKI1### $rdMondaiHigaiteki1
+###TXTMONDAIHIGAITEKI1### $txtMondaiHigaiteki1
+###RDMONDAIHIGAITEKI2### $rdMondaiHigaiteki2
+###TXTMONDAIHIGAITEKI2### $txtMondaiHigaiteki2
+###RDMONDAIHIGAITEKI3### $rdMondaiHigaiteki3
+###TXTMONDAIHIGAITEKI3### $txtMondaiHigaiteki3
+###RDMONDAIOCHITSUKINASHI1### $rdMondaiOchitsukinashi1
+###TXTMONDAIOCHITSUKINASHI1### $txtMondaiOchitsukinashi1
+###RDMONDAIOCHITSUKINASHI2### $rdMondaiOchitsukinashi2
+###TXTMONDAIOCHITSUKINASHI2### $txtMondaiOchitsukinashi2
+###RDMONDAIOCHITSUKINASHI3### $rdMondaiOchitsukinashi3
+###TXTMONDAIOCHITSUKINASHI3### $txtMondaiOchitsukinashi3
+###RDMONDAISAWA1### $rdMondaiSawa1
+###TXTMONDAISAWA1### $txtMondaiSawa1
+###RDMONDAISAWA2### $rdMondaiSawa2
+###TXTMONDAISAWA2### $txtMondaiSawa2
+###RDMONDAISAWA3### $rdMondaiSawa3
+###TXTMONDAISAWA3### $txtMondaiSawa3
+###RDMONDAIHITORIDETAI1### $rdMondaiHitoriDetai1
+###TXTMONDAIHITORIDETAI1### $txtMondaiHitoriDetai1
+###RDMONDAIHITORIDETAI2### $rdMondaiHitoriDetai2
+###TXTMONDAIHITORIDETAI2### $txtMondaiHitoriDetai2
+###RDMONDAIHITORIDETAI3### $rdMondaiHitoriDetai3
+###TXTMONDAIHITORIDETAI3### $txtMondaiHitoriDetai3
+###RDMONDAIKANJOFUAN1### $rdMondaiKanjoFuan1
+###TXTMONDAIKANJOFUAN1### $txtMondaiKanjoFuan1
+###RDMONDAIKANJOFUAN2### $rdMondaiKanjoFuan2
+###TXTMONDAIKANJOFUAN2### $txtMondaiKanjoFuan2
+###RDMONDAIKANJOFUAN3### $rdMondaiKanjoFuan3
+###TXTMONDAIKANJOFUAN3### $txtMondaiKanjoFuan3
+###RDMONDAISYUSYU1### $rdMondaiSyusyu1
+###TXTMONDAISYUSYU1### $txtMondaiSyusyu1
+###RDMONDAISYUSYU2### $rdMondaiSyusyu2
+###TXTMONDAISYUSYU2### $txtMondaiSyusyu2
+###RDMONDAISYUSYU3### $rdMondaiSyusyu3
+###TXTMONDAISYUSYU3### $txtMondaiSyusyu3
+###RDMONDAIHIRUYORU1### $rdMondaiHiruyoru1
+###TXTMONDAIHIRUYORU1### $txtMondaiHiruyoru1
+###RDMONDAIHIRUYORU2### $rdMondaiHiruyoru2
+###TXTMONDAIHIRUYORU2### $txtMondaiHiruyoru2
+###RDMONDAIHIRUYORU3### $rdMondaiHiruyoru3
+###TXTMONDAIHIRUYORU3### $txtMondaiHiruyoru3
+###RDMONDAIKOWASU1### $rdMondaiKowasu1
+###TXTMONDAIKOWASU1### $txtMondaiKowasu1
+###RDMONDAIKOWASU2### $rdMondaiKowasu2
+###TXTMONDAIKOWASU2### $txtMondaiKowasu2
+###RDMONDAIKOWASU3### $rdMondaiKowasu3
+###TXTMONDAIKOWASU3### $txtMondaiKowasu3
+###RDMONDAIONAJIHANASHI1### $rdMondaiOnajiHanashi1
+###TXTMONDAIONAJIHANASHI1### $txtMondaiOnajiHanashi1
+###RDMONDAIONAJIHANASHI2### $rdMondaiOnajiHanashi2
+###TXTMONDAIONAJIHANASHI2### $txtMondaiOnajiHanashi2
+###RDMONDAIONAJIHANASHI3### $rdMondaiOnajiHanashi3
+###TXTMONDAIONAJIHANASHI3### $txtMondaiOnajiHanashi3
+###RDMONDAIHITORIGOTO1### $rdMondaiHitorigoto1
+###TXTMONDAIHITORIGOTO1### $txtMondaiHitorigoto1
+###RDMONDAIHITORIGOTO2### $rdMondaiHitorigoto2
+###TXTMONDAIHITORIGOTO2### $txtMondaiHitorigoto2
+###RDMONDAIHITORIGOTO3### $rdMondaiHitorigoto3
+###TXTMONDAIHITORIGOTO3### $txtMondaiHitorigoto3
+###RDMONDAIOOGOE1### $rdMondaiOogoe1
+###TXTMONDAIOOGOE1### $txtMondaiOogoe1
+###RDMONDAIOOGOE2### $rdMondaiOogoe2
+###TXTMONDAIOOGOE2### $txtMondaiOogoe2
+###RDMONDAIOOGOE3### $rdMondaiOogoe3
+###TXTMONDAIOOGOE3### $txtMondaiOogoe3
+###RDMONDAIJIBUNKATTE1### $rdMondaiJibunKatte1
+###TXTMONDAIJIBUNKATTE1### $txtMondaiJibunKatte1
+###RDMONDAIJIBUNKATTE2### $rdMondaiJibunKatte2
+###TXTMONDAIJIBUNKATTE2### $txtMondaiJibunKatte2
+###RDMONDAIJIBUNKATTE3### $rdMondaiJibunKatte3
+###TXTMONDAIJIBUNKATTE3### $txtMondaiJibunKatte3
+###RDMONDAITEIKO1### $rdMondaiTeiko1
+###TXTMONDAITEIKO1### $txtMondaiTeiko1
+###RDMONDAITEIKO2### $rdMondaiTeiko2
+###TXTMONDAITEIKO2### $txtMondaiTeiko2
+###RDMONDAITEIKO3### $rdMondaiTeiko3
+###TXTMONDAITEIKO3### $txtMondaiTeiko3
+###RDMONDAIMATOMARANAI1### $rdMondaiMatomaranai1
+###TXTMONDAIMATOMARANAI1### $txtMondaiMatomaranai1
+###RDMONDAIMATOMARANAI2### $rdMondaiMatomaranai2
+###TXTMONDAIMATOMARANAI2### $txtMondaiMatomaranai2
+###RDMONDAIMATOMARANAI3### $rdMondaiMatomaranai3
+###TXTMONDAIMATOMARANAI3### $txtMondaiMatomaranai3
+###TXTAREAMONDAI### $txtareaMondai
+###CHKNICCHUDOKKYO### $chkNicchuDokkyo
+###CHKGYAKUTAI### $chkGyakutai
+###CHKTERMINAL### $chkTerminal
+###CHKSEINENKOUKEN### $chkSeinenKouken
+###CHKTOKUBETSUSONOTA### $chkTokubetsuSonota
+###TXTAREAGUTAITEKIJOUKYOU### $txtareaGutaitekiJoukyou
+###TXTAREATOKUBETSUBIKO### $txtareaTokubetsuBiko
+###TXTASSESSMENTRIYUSONOTA### $txtAssessmentRiyuSonota
+###TXTNYUKYOSHASETAISONOTA### $txtNyukyoshaSetaiSonota
+###TXTSOUDANUKETSUKESONOTA### $txtSoudanUketsukeSonota
+###TXTOMONADOUKYOSONOTA### $txtOmonaDoukyoSonota
+###TXTSONOTADOUKYOSONOTA### $txtSonotaDoukyoSonota
+###KAZOKURECORD### $addKazokuRecord
+###RENRAKURECORD### $addRenrakuRecord
+###HOKENSERVICE### $addServiceRecord
+###BYOUIN### $addByouinRecord
+###SHOUBYOU### $addShoubyouRecord
+###RIYOUSHAID### $Riyoushaid
+###HDKENSAKUSHISETSU### $hdKensakuShisetsu
+###USERID### $USER_ID
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###RIYOUSHAMEI### $Riyoushamei
+###SELECT_SHISETSU### $select_shisetsu
+###HTMLMITORIZU### $htmlMitorizu
+###DISPHTMLMITORIZU### $dispHtmlMitorizu
+FIN
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+self 9 $tmp-kengenlist |
+LANG=C sort -k1,1      |
+tail -1                > $tmp-dispkengen
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/ASSESSMENT_HOUMONKAIGO.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l###ZOKUGARA_MASTER_LIST### - ${tmp}-zokugara_master |
+mojihame -l###SERVICE_SHUBETSU### - $tmp-kaigohoken_serviceshubetsu |
+mojihame -l###SHINRYOUKA_MASTER### - $tmp-shinryouka_master |
+mojihame -l###GENGOU_MASTER### - $tmp-gengou_master |
+mojihame -l###GENGOU### - $tmp-gengou_mst |
+mojihame -l###KINYUSHA### - $tmp-kinyusha |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

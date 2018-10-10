@@ -1,0 +1,229 @@
+#!/bin/bash
+#
+# APDATASET.DAYMD.SEIKYU_ICHIRAN　(請求一覧のPOMPA更新)
+#
+# Usage:APDATASET.DAYMD.SEIKYU_ICHIRAN
+#
+# Written By Aoyagi (HandsLab .Inc) :
+#
+
+# 設定ファイ読込 #########################################################################
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#}}}Functions#############################################################################
+upcnt "$HOSTNAME $(basename ${0}) START $(date +%Y%m%d%H%M%S)"
+
+
+# エラー終了  ############################################################################
+function error_exit {
+  touch ${semaphore_dir}/$(basename ${0}).${HOSTNAME}.ERROR.${today}
+  rm -f ${tmp}-*
+  exit 1
+}
+
+
+# 起動時に入力がない場合当日を変数todayに設定
+[ -n "$(echo "${1}" | awk --re-interval '$1 ~ /[0-9]{6}/')" ] && seikyu_syori_month="${1}" || seikyu_syori_month="$(date "+%Y%m")"
+shisetsu=${2}
+
+
+# 変数・ディレクトリ設定 #################################################################
+current_time="$(date "+%Y%m%d%H%M%S")"
+yesterday=$(mdate $today/-1)
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+tmp="/var/tmp/${$}"
+semaphore_dir="${home_dir}/SEMAPHORE"
+meisai_dir="${app_dir}/MEISAI"
+rireki_dir="${app_dir}/RIREKI"
+kanri_dir="${app_dir}/KANRI"
+pompa_dir="${app_dir}/POMPA/SEIKYU_ICHIRAN"
+work="${app_dir}/WORK"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+keiri_input="${app_dir}/INPUT"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU"
+
+# inputディレクトリ作成
+mkdir -p ${keiri_input}/${today}/SHOKYAKU
+
+# 集計グループマスタ準備
+cat /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER                 |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                    > $tmp-shukei_gr_master
+# 1:集計GrID 2:集計Gr名 3:施設ID 4:請求書分類 5:予備
+# 6:予備 7:予備 8:予備 9:予備 10:有効フラグ
+# 11:更新日 12:userid
+
+# 月額利用料のマスタ
+awk '$2=="管理費" || $2=="管理費関係" || $2=="会員"' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print "H",$1}'                                            > $tmp-H_henrei
+cat /home/hands/E-LIFE/TBL/SEIKYU/RIYOURYOU_SHUKEI                          |
+# 1:施設ID 2:利用料ID 3:利用料名 4:？ 5:?
+# 6:? 7:? 8:集計GrID 9:有効フラグ 10:更新時間
+# 11:userid
+awk '$1=="'${shisetsu}'" && $(NF-2)!=9{print $2,$8}'                 |
+cat - $tmp-H_henrei | LANG=C sort                                    > $tmp-getsugakuriyou_master
+# 1:利用料ID 2:集計GrID
+
+# サービス利用料のマスタ
+awk '$2=="サービス費" || $2=="管理費関係"' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print "SH",$1}'                                            > $tmp-SH_henrei
+cat /home/hands/E-LIFE/TBL/SEIKYU/SERVICE_MASTER                     |
+# 1:施設ID 2:建屋 3:サービス利用料ID 4:区分 5:サービス利用名
+# 6:集計GrID 7:金額 8:
+awk '$1=="'${shisetsu}'"{print "service"$3,$6}'                      |
+cat - $tmp-SH_henrei       | LANG=C sort                             > $tmp-service_gr_master
+# 1:サービス利用ID 2:集計GrID
+
+# 食事代のマスタ
+awk '$2~/食費/ || $2~/食事代/' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print $1,"shokuji","shokuji_senior","kesshoku"}'           |
+tarr num=1                                                       |
+self 2 1                                                         > $tmp-shokuji_gr_master
+# 1:食事ID 2:集計GrID
+
+# 立替金のマスタ
+awk '$2~/^立替金/' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print $1,"tatekae"}'           |
+tarr num=1                                                       |
+self 2 1                                                         > $tmp-tatekae_gr_master
+# 1:立替ID 2:集計GrID
+
+# その他立替金のマスタ(青葉台二丁目対応)
+awk '$2~/その他立替金/' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print $1,"sonota_tatekae"}'           |
+tarr num=1                                                       |
+self 2 1                                                         > $tmp-sonota_tatekae_master
+# 1:立替ID 2:集計GrID
+SONOTA_TA="$(self 2 $tmp-sonota_tatekae_master)"
+
+# 電話のマスタ
+awk '$2~/電話/ || $2~/通話/ || $2~/公共料金/' /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1}'                |
+awk '{print $1,"denki denwa suido"}'           |
+tarr num=1                                                       |
+self 2 1                                                         > $tmp-denwa_gr_master
+# 1:denwaID 2:集計GrID
+
+# マスタ合体
+cat $tmp-getsugakuriyou_master $tmp-service_gr_master $tmp-shokuji_gr_master $tmp-tatekae_gr_master  $tmp-sonota_tatekae_master $tmp-denwa_gr_master |
+LANG=C sort                          > $tmp-Gr_master
+
+# ディレクトリ作成
+mkdir -p /home/hands/E-LIFE/KEIRI/POMPA/SEIKYU_ICHIRAN
+mkdir -p /home/hands/E-LIFE/KEIRI/POMPA/SEIKYU_ICHIRAN/${shisetsu}
+mkdir -p /home/hands/E-LIFE/KEIRI/POMPA/SEIKYU_ICHIRAN/${shisetsu}/${seikyu_syori_month}
+
+POMPADIR="/home/hands/E-LIFE/KEIRI/POMPA/SEIKYU_ICHIRAN/${shisetsu}/${seikyu_syori_month}"
+
+# ヘッダ取得
+LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+awk '$24!="9"' -                          |
+getlast 1 2                               |
+cjoin0 key=3 <(echo "4 5 6 7" | tarr) -   |
+tee ${work}/head_2 |
+cjoin0 key=14 <(echo "${seikyu_syori_month}") - |
+self 8 2 1 10                             > $tmp-head_kari
+# 1:居室番号 2:入居者ID 3:処理月 4:明細ファイル名
+cp $tmp-head_kari ${work}/head_kaari
+[ ${?} -eq 0 ] || error_exit
+
+# 明細ファイル展開
+self 2 $tmp-head_kari                        |
+LANG=C sort -u |
+while read id ; do
+  user_heya="$(cjoin0 key=2 <(echo "${id}") ${tmp}-head_kari | self 1 | LANG=C sort -u | tail -1)"
+  cjoin0 key=2 <(echo "${id}") ${tmp}-head_kari |
+    while read heya u_id syori_month file_name ; do
+    self 1/3 5 7 9/11 ${seikyu_dir}/${shisetsu}/MEISAI/${syori_month}/${file_name} |
+    # 1:処理月     2:入居者ID   3:行分類フラグ 4:項目ID 5:提供年月日
+    # 6:金額税抜き 7:金額税込み 8:税額
+    # -
+    # 合計項目(行分類フラグ15,25,30)を除く
+    cjoin0 +ng key=3 <(echo "15 25 30" | tarr) - 2>&1   > /dev/null               |
+    # 請求先設定で入居者IDが処理中の人じゃない場合があるのでよみかえる
+    awk '{$2="'${id}'";
+          print}'                                                                 |
+    # 集計グループマスタ
+    cjoin2 +sonota key=4 $tmp-Gr_master                                           > $tmp-all_shisetsu
+    # 1:処理月     2:入居者ID   3:行分類フラグ 4:項目ID 5:集計GrID
+    # 6:提供年月日 7:金額税抜き 8:金額税込み   9:税額   10:-
+    if [ "${shisetsu}" = "0001" ];then
+      awk '$5=="00019"' $tmp-all_shisetsu                                        > $tmp-base_tatekae
+      awk '$5!="00019"' $tmp-all_shisetsu                                        > $tmp-base_not_tatekae
+
+      # その他立替金のデータ
+      # その他立替金のマスタ
+      snt_tatekae="$(cat /home/hands/E-LIFE/TATEKAEKIN/TBL/${shisetsu}/SHUKKIN_KOUMOKU | awk '$2~/その他立替金/{print $1}')"
+
+      # 立替金のデータあるかどうか
+      if [ "$(gyo $tmp-base_tatekae)" -ne 0 ];then
+        cat $tmp-base_tatekae |
+        self 6.1.6            |
+        LANG=C sort -u        > $tmp-tatekae_month
+        # 1:年月
+        # あったら月ごとにその他立替金の金額を計算
+        for month in $(yarr $tmp-tatekae_month);do
+          cat /DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN/${shisetsu}/${month}/${month}.TATEKAEKIN |
+          # 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+          # 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+          # 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+          awk '$2=="nyukyosha" && $3=="'${id}'" && $4=="2" && $7=="'${snt_tatekae}'"'          |
+          self 1.1.6 10                                                                        |
+          sm2 1 1 2 2                                                                          > $tmp-month_snt
+          if [ "$(gyo $tmp-month_snt)" = 0 ];then
+            echo "${month} 0"
+          else
+            cat $tmp-month_snt
+          fi
+        done                                                                                   > $tmp-snt_tatekae
+        # 1:年月 2:金額
+
+        # 立替金のデータからその他立替金のデータを引いて新しいデータを作る
+        cat $tmp-base_tatekae                                                                  |
+        # 1:処理月     2:入居者ID   3:行分類フラグ 4:項目ID 5:集計GrID
+        # 6:提供年月日 7:金額税抜き 8:金額税込み   9:税額   10:-
+        self 6.1.6 1/NF                                                                        |
+        loopj num=1 - $tmp-snt_tatekae                                                         |
+        delf 1                                                                                 |
+        tee $tmp-sonota_sonota_base                                                            |
+        awk '{$8=$8-$NF;$7=$7-$NF;print}'                                                      |
+        delf NF                                                                                > $tmp-new_base_tatekae
+
+        # その他立替金のデータ
+        cat $tmp-sonota_sonota_base                                                            |
+        awk '{$4="sonota_tatekae";$5="'${SONOTA_TA}'";$7=$NF;$8=$NF;print}'                    |
+        delf NF                                                                                > $tmp-sonota_data
+
+        # 3行はく
+        cat $tmp-new_base_tatekae $tmp-sonota_data $tmp-base_not_tatekae
+      else
+        cat $tmp-base_not_tatekae
+      fi
+    else
+      cat $tmp-all_shisetsu
+    fi
+  done > ${tmp}-meisai_kihon_${id}
+  cp ${tmp}-meisai_kihon_${id} ${POMPADIR}/${id} 
+  cp $tmp-Gr_master ${POMPADIR}/HEADER
+done
+
+
+
+
+# 終了 ######################################################################
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,163 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KEISAN.FUZAIHENKIN 施設請求計算部分のCGI
+#
+# Written by aoyagi
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+
+rm ${tmp}-err
+#---------------------------------------------------------------
+
+# 対象者
+awk '$6==1 && $(NF-2)!=9' /DATA/E-LIFE/UNEI/NYUUINGAIHAKU/${shisetsu}/*/RIYOUSHA_NYUUINGAIHAKU    > $tmp-base_data
+# 1:利用者ID    2:入院外泊ID  3:施設      4:建屋     5:居室
+# 6:種別        7:期間FROM    8:期間TO    9:出発時間 10:帰宅時間
+# 11:入院外泊先 12:備考       13:欠食登録 14:出発日在籍 15:帰宅日不在
+# 16:予備       17:有効フラグ 18:登録時間 19:登録者
+
+# 8日以上外泊していた人のリスト
+shinichi=$(echo ${seikyu_syori_month} | awk '{print $1"01"}')
+getsumatsu=$(mdate ${seikyu_syori_month}m | tarr | tail -n1)
+
+# 税率マスタの準備
+cat /home/hands/E-LIFE/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU |
+awk '$3<="'${getsumatsu}'" && $4>="'${shinichi}' && $(NF-2)!=9"{print $2}' |
+tail -n1                                                                   > $tmp-zeiritsu
+ZEI=$(cat $tmp-zeiritsu)
+
+# この返戻はケア棟の人は対象外
+awk '$1=="'${shisetsu}'" && $(NF-2)!=9 && $7<="'${getsumatsu}'" && $8>="'${shinichi}'" && $2!="02"' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+self 6                        |
+LANG=C sort -u -k1,1          > $tmp-riyosha_status
+
+awk '$17!=9' $tmp-base_data   |
+self 1 7 8 14 15              |
+# 1:利用者ID 2:FROM 3:TO 4:出発日不在 5:帰宅日不在
+LANG=C sort -k1,1             |
+join0 key=1 $tmp-riyosha_status |
+awk '$2<="'${getsumatsu}'" && $3>="'${shinichi}'"' |
+tee ${work}/fuzaibuta |
+#awk '{if($3!~/^'${seikyu_syori_month}'/){$3="'${getsumatsu}'"};print}' |
+# 1:利用者ID 2:期間FROM 3:期間TO 4:出発日不在 5:帰宅日不在
+while read darega from to startbi endbi ; do
+  # 出発日ちと帰宅日にいたかいないか
+  [ "${startbi}" = 1 ] && from=$(mdate ${from}/+1)
+  if [ "${to}" -ge ${getsumatsu} ];then
+    to=${getsumatsu}
+  else
+    [ "${endbi}" = 1 ] && to=$(mdate ${to}/-1)
+  fi
+  fizai_kikan=$(mdate ${to} ${from} | lcalc '$1+1')
+  if [ "${fizai_kikan}" -gt 30 ];then
+    from=$(mdate ${from}/+30)
+    [ "${from}" -le "${shinichi}" ] && from=${shinichi}
+    fuzai_kikan2=$(mdate ${to} ${from} | lcalc '$1+1')
+    echo ${darega} ${from} ${to} ${fuzai_kikan2}
+  else
+    :
+  fi                          > $tmp-nisuu
+  NISUU=$(self 4 $tmp-nisuu)
+  # マイナスする金額はサービス利用料の日割りの半額
+  # マスタ準備
+  awk '$1=="'${shisetsu}'" && $(NF-2)!=9 && $3~/^サービス費/' /home/hands/E-LIFE/TBL/RIYOURYOU_MASTER/RIYOURYOU_MASTER  |
+  self 2                      > $tmp-servicehi_master
+  # 利用者利用料
+  join0 key=1 <(echo $darega) /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+  LANG=C sort -k4,4                                                         |
+  join0 key=4 $tmp-servicehi_master                                         |
+  awk '$6<="'${to}'" && $7>="'${from}'" && $(NF-2)!=9'                      |
+  LANG=C sort -k8,8n                                                        |
+  tail -n2                                                                  |
+  self 8 4                                                                   > $tmp-base_kingaku
+  # 1:サービス料金金額 2:月額利用料コード
+
+  cat $tmp-base_kingaku                                                     |
+  # 1:サービス料金金額 2:月額利用料コード
+  lcalc '$1/30/2,$2'                                                        |
+  #lcalc '$1/2'                                                              |
+  marume +age 1.0                                                           |
+  awk '{print $1,"'${NISUU}'",$2}'                                          |
+  lcalc '$1*$2,$3'                                                 > $tmp-nebikikingaku
+
+  cp $tmp-nisuu $tmp-nisuu_2
+  if [ $(gyo $tmp-nebikikingaku) = 1 ];then
+    ycat $tmp-nisuu $tmp-nebikikingaku
+  else
+    cat $tmp-nisuu $tmp-nisuu_2       |
+    ycat - $tmp-nebikikingaku
+  fi
+  # 1:利用者ID 2:期間from 3:期間to 4:不在日数 5:返金額 6:月額利用料金コード
+done                          | awk 'NF==6'                                 > $tmp-seikyu_base
+cp $tmp-seikyu_base ${work}/seikyu_henkin
+# 金額の計算
+cat $tmp-seikyu_base          |
+# 1:利用者ID 2:期間from 3:期間to 4:不在日数 5:返金額 6:月額利用料金コード
+1bai -r 5                     |
+# データの整形
+# 行分類は10
+if [ ${shisetsu} = "0001" ];then
+  awk '{zei="'${ZEI}'"+1;print "'${seikyu_syori_month}'",$1,"10","_","SH"$6,"_","'${seikyu_syori_month}'""01",2,$5,$5*zei,0,substr($2,5,2),substr($2,7,2),substr($3,5,2),substr($3,7,2),"_"}' 
+else
+  awk '{zei="'${ZEI}'"+1;print "'${seikyu_syori_month}'",$1,"10","_","SH","_","'${seikyu_syori_month}'""01",2,$5,$5*zei,0,substr($2,5,2),substr($2,7,2),substr($3,5,2),substr($3,7,2),"_"}' 
+fi |
+marume -sage 10.0                       |
+awk '{$11=$10-$9;print}'                |
+# 1:請求年月 2:入居者ID    3:行分類フラグ 4:_          5:項目ID
+# 6:_        7:年月        8:非課税フラグ 9:金額税抜き 10:金額税込み
+# 11:税額    12:期間from月 13:期間from日  14:期間to月  15:期間to日
+1bai 12 13 14 15                     |
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12"月"$13"日～"$14"月"$15"日不在返戻分","_"}'  |
+# 1:請求年月 2:入居者ID    3:行分類フラグ 4:_          5:_
+# 6:_        7:年月           8:非課税フラグ 9:金額税抜き 10:金額税込み
+# 11:税額    12:内訳      13:予備
+self 1/NF NF NF NF NF NF NF NF NF NF NF NF                | 
+# 1:請求年月 2:入居者ID 3:行分類フラグ 4:_          5:項目ID
+# 6:_        7:年月     8:非課税フラグ 9:金額税抜き 10:金額税込み
+# 11:税額    12:内訳    13:予備        14:予備      15:予備
+# 16:予備    17:予備    18:予備        19:予備      20:予備
+# 21:予備    22:予備    23:予備        24:予備
+awk '{print $0,"1","'${current_time}'","'${userid}'"}'    |
+LANG=C sort                                               > $tmp-SERVICE_HENKIN_INPUT #集計対象!!
+# 1:請求年月 2:入居者ID 3:行分類フラグ 4:_          5:項目ID
+# 6:_        7:年月     8:非課税フラグ 9:金額税抜き 10:金額税込み
+# 11:税額    12:内訳    13:予備        14:予備      15:予備
+# 16:予備    17:予備    18:予備        19:予備      20:予備
+# 21:予備    22:予備    23:予備        24:予備      25:削除フラグ
+# 26:更新時間 27:更新者
+
+# ---------------------
+# パイプでエラーがあったら落とす
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(FUZAI_HENKIN)"
+# ---------------------
+cp $tmp-SERVICE_HENKIN_INPUT ${work}/servifizai
+
+exit 0
+

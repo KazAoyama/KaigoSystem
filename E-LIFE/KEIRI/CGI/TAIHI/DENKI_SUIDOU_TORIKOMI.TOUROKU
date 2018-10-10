@@ -1,0 +1,756 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.TOUROKU : 電気水道料金情報マスタ
+#
+# Written by J.Mikami
+
+# 画面から直接よびだし
+# 月ごとにファイルを置くので、アップされるごとに上書きするかんじ
+
+# inputはアップロードファイルを変換したもの
+# pompaは帳票出力用のかたち
+# 共通ファイルはpompaをみじかくしたもの
+
+# 最小単位「入居者・内線」の集計行に税込み金額の値をいれる
+
+# ログ
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/DENKI_SUIDOU_JYOUHOU.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------------
+# パラメーターの取得
+
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  password
+  shisetsu
+  shisetsu_key
+  up_Shisetsu_select
+  up_kikan_month_select
+FIN
+  
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)"                 >> ${tmp}-name
+  done < ${tmp}-id_list
+
+#=============================================================================================================
+  # アップロードしたファイルは別で取得
+  mime-read "upload_file" ${tmp}-param                          |
+  # 変換
+  nkf -wLu                                                      |
+  # 空行削除
+  grep -v "^$"                                                  |
+  # カンマ区切りの変換
+  tr "_" " "                                                    |
+  tr ',' ' '                                                    |
+  tr -d '"'                                                     |
+  awk '$5=="住居"'                                              > ${tmp}-upload_file
+  
+  # アップロードファイル名取得
+  mime-read -v ${tmp}-param                                     |
+  grep "upload_file"                                            |
+  sed -e 's/^.*filename="\(.*\)".*$/\1/' -e 's/ /_/g' -e 's/#/＃/g' -e 's/%/％/g' > ${tmp}-upload_file_name
+else
+  cgi-name -d_ -i_ ${tmp}-param                                 > $tmp-name
+fi
+
+cookie-name                                                    |
+LANG=C sort                                                    > ${tmp}-cookie
+#------------------------------------------------------------
+
+# ディレクトリ設定
+ch_cgi_dir="${home_dir}/TEST/CGI"
+
+
+#------------------------------------------------------------
+# 処理モードの決定
+eval $(name-source ${tmp}-cookie)
+eval $(name-source $tmp-name)
+[ -z "${MODE}" ] && MODE="init"
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# ディレクトリの作成
+
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select}
+[ ! -e ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select}/${up_kikan_month_select} ] && mkdir ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select}/${up_kikan_month_select}
+[ ! -e ${pompa_dir}/DENKI_SUIDOU ] && mkdir ${pompa_dir}/DENKI_SUIDOU
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select} ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select}
+[ ! -e ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select}/MAIN-DATA ] && mkdir ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select}/MAIN-DATA
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+upl key=1 ${tmp}-cookie $tmp-name                               > $tmp-name.new0
+#cp -p $tmp-name $tmp-name_origin
+mv -f $tmp-name.new0 $tmp-name
+
+#------------------------------------------------------------
+
+
+#------------------------------------------------------------
+# エラー
+
+function error_exit {
+  message="$1"
+  echo -e "Content-Type: text/html; charset=UTF-8; \n\n"        |
+  cat - <(echo "<script type="text/javascript">alert('${message}');</script>")
+#  rm -f $tmp-*
+  exit 1
+}
+
+#--------------------------------------------------------------------------------
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou                                            |
+  self 1                                                        |
+  while read File;do
+    rm -f ${home_dir}/TBL/KEIRI/${File}.LOCK
+  : ;done
+  error_exit ${message}
+} 
+#------------------------------------------------------------
+
+#------------------------------------------------------------
+# アップロードしたファイルのチェック
+
+# ファイル名から拡張子
+kakucyousi="$(cat ${tmp}-upload_file_name | tr "." " " | self NF)"
+#[ "${kakucyousi}" != "txt" ] && error_exit "アップロードできるファイルはテキストです"
+[ "${kakucyousi}" != "TXT" ] && error_exit "アップロードできるファイルはテキストです"
+# ファイルの列チェック
+[ "$(retu ${tmp}-upload_file)" != "15" ] && error_exit "列数が違います。ファイルの内容を確認してください"
+# 選択した年月の請求が確定している場合はアップロードできない
+LANG=C sort -k1,2 -k5,5 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!="9"' -                                                 |
+getlast 1 1                                                     |
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+cjoin0 key=2 <(echo "${up_kikan_month_select}")                 > ${tmp}-kakutei_file
+
+if [ -s ${tmp}-kakutei_file ] ; then
+  kakutei_status="$(self 3 ${tmp}-kakutei_file)"
+  if [ "${kakutei_status}" = "2" ] ; then
+    error_exit "請求処理で当月確定しているためアップロードできません"
+  else
+    error_exit "請求処理で仮確定しているためアップロードできません"
+  fi
+fi
+#------------------------------------------------------------
+
+# 利用者マスタから部屋番号と利用者IDをとってくる
+
+# 処理月に各部屋に存在した人のリストを作成する
+cjoin0 key=1 <(echo "${up_Shisetsu_select}") ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:削除フラグ 10:更新時間
+# 11:更新者
+awk '$9!="9"' |
+self 1/8 7.1.6 8.1.6 |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:入居月     10:退去月
+LANG=C sort |
+getlast 1 6 |
+# 入居退去期間が処理月を含む人のみ抽出
+awk '$9<="'${up_kikan_month_select}'" && $10>="'${up_kikan_month_select}'"' |
+delf 9/10 > ${tmp}-heya_hito_list
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日
+# -
+# 部屋ごとに誰が支払うのか決定する
+self 5 ${tmp}-heya_hito_list |
+# 1:居室ID
+LANG=C sort -u |
+while read heya ; do
+  # 部屋にいる人リストを処理中の部屋で絞る
+  cjoin0 key=5 <(echo "${heya}") ${tmp}-heya_hito_list > ${tmp}-heya_hito
+  # 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+  # 6:入居者ID 7:入居日 8:退去日
+
+  # 部屋にいる人が一人か判定
+  if [ "$(gyo ${tmp}-heya_hito)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito
+    continue
+  fi
+
+  ### 一人じゃない場合は日付をみて判定する
+  # 退去日が大きい人
+  hantei_date=$(self 8 ${tmp}-heya_hito | LANG=C sort | tail -1)
+  cjoin0 key=8 <(echo "${hantei_date}") ${tmp}-heya_hito > ${tmp}-heya_hito2
+  # 結果が一人になったか判定
+  if [ "$(gyo ${tmp}-heya_hito2)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito2
+    continue
+  fi
+
+  # 絞りきれなかったときは上記結果に対して判定
+  # 入居日が小さい人
+  hantei_date2=$(self 7 ${tmp}-heya_hito2 | LANG=C sort | head -1)
+  cjoin0 key=7 <(echo "${hantei_date2}") ${tmp}-heya_hito2 > ${tmp}-heya_hito3
+  # 結果が一人になったか判定
+  if [ "$(gyo ${tmp}-heya_hito3)" = 1 ] ; then
+    # 一人のときは絞り込んだファイルを吐いて以下の処理をスキップ
+    cat ${tmp}-heya_hito3
+    continue
+  fi
+
+  # それでも決まらない場合は入居者IDが若い方で決定する
+  hantei_hito=$(self 6 ${tmp}-heya_hito3 | LANG=C sort | head -1)
+  cjoin0 key=6 <(echo "${hantei_hito}") ${tmp}-heya_hito3
+  ###
+done |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日
+#tee /home/hands/E-LIFE/KEIRI/WORK/mikami/denkisuidou_process1 |
+#----------------------------------------------------------------------------------------------#
+#----------------------------------------------------------------------------------------------#
+###!!!!!!!!!!一時、請求者が奥様になる方を制御する。後日忘れずに書き直し削除する。!!!!!!!!!!####
+# 621号室
+if [ ${up_kikan_month_select} -lt 201109 ]; then
+  if [ $hantei_hito2="00000343" ];then
+   sed -e s/00000343/00000342/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+#tee /home/hands/E-LIFE/KEIRI/WORK/mikami/denkisuidou_process2 |
+# 620号室
+if [ ${up_kikan_month_select} -lt 201112  ]; then
+  if [ $hantei_hito2="00000351" ];then
+   sed -e s/00000351/00000350/g
+  else
+   cat -
+  fi 
+else
+  cat -
+fi   |
+# 210号室
+if [ ${up_kikan_month_select} -lt 201311  ]; then
+  if [ $hantei_hito2="00000397" ];then
+   sed -e s/00000397/00000396/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+# 219号室
+if [ ${up_kikan_month_select} -lt 201205 ]; then
+  if [ $hantei_hito2="00000437" ];then
+   sed -e s/00000437/00000436/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+# 520号室
+if [ ${up_kikan_month_select} -lt 201212 ]; then
+  if [ $hantei_hito2="00000491" ];then
+   sed -e s/00000491/00000490/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+# 416号室
+if [ ${up_kikan_month_select} -lt 201205 ]; then
+  if [ $hantei_hito2="00000513" ];then
+   sed -e s/00000513/00000514/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+# 701号室
+if [ ${up_kikan_month_select} -lt 201212 ]; then
+  if [ $hantei_hito2="00000518" ];then
+   sed -e s/00000518/00000517/g
+  else
+   cat -
+  fi
+else
+  cat -
+fi   |
+#tee /home/hands/E-LIFE/KEIRI/WORK/mikami/denkisuidou_process3 |
+# 909号室
+if [ $hantei_hito2="00000050" ];then
+sed -e s/00000050/00000442/g
+fi   |
+#tee /home/hands/E-LIFE/KEIRI/WORK/mikami/denkisuidou_process4 |
+# 415号室
+if [ $hantei_hito2="00000158" ];then
+sed -e s/00000158/00000504/g
+fi   |
+# 419号室
+if [ $hantei_hito2="00000166" ];then
+sed -e s/00000166/00000318/g
+fi   |
+#-----------------------------------------------------------------------------------------------#
+#-----------------------------------------------------------------------------------------------#
+cat - |
+self 5/6 1/4 > ${tmp}-riyousya
+# 1:居室ID     2:入居者ID 3:施設ID 4:建屋ID 5:フロアID
+# 6:ユニットID
+
+# ---------------------税金上がると単価、基本料金を変更するのでなし------------------------------------
+# 税計算用税率とってくる
+cat /home/hands/E-LIFE/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU |self 1 2 3.1.6 4.1.6 5 6 7  >$tmp-zeiritu_month
+ zeiritsu="$(awk '$5!="9" && $3<="'${up_kikan_month_select}'" && $4>="'${up_kikan_month_select}'"' $tmp-zeiritu_month | self 2)"
+ zeiritsu_keisan="$(echo "${zeiritsu} + 1" | bc)"
+# --------------------------------------------------------------------------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# 電気料金ここから//////////////////////////////////////////////////////////////////////////////////
+
+# 帳票用データ作成
+cat ${tmp}-upload_file                                          |
+# 1:項目ID     2:項目名    3:homeID    4:csv項目ID 5:room種別
+# 6:room項目名 7:csvRoomID 8:階        9:部屋番号  10:HomeID
+# 11:終端指針  12:開始指針 13:使用指針 14:開始日付 15:終端日付
+# 電気料金に絞る
+awk '$1=="3"'                                                   |
+# 必要項目へ並び替え、room項目を部屋番号に変換
+self 6.1.3 11 12 13 14 15                                       |
+sort                                                            |
+# 1:部屋番号 2:終端指針 3:開始指針 4:使用指針 5:開始日付
+# 6:終端日付
+
+# 部屋番号と居住者IDを結びつける
+cjoin2 key=1 ${tmp}-riyousya                                     |
+# 1:部屋番号   2:入居者ID 3:施設ID   4:建屋ID   5:フロアID
+# 6:ユニットID 7:終端指針 8:開始指針 9:使用指針 10:開始日付
+# 11:終端日付
+
+# 必要項目へ並び替え
+self 2 1 7 8 9 10 11                                            |
+LANG=C sort                                                     |
+# 1:入居者ID 2:部屋番号 3:終端指針 4:開始指針 5:使用指針
+# 6:開始日付 7:終端日付
+
+# 居住者IDと居住者名を結びつける
+cjoin2 key=1 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER     |
+self 8 1 2 9 10 11 12 13                                        |
+LANG=C sort -k1                                                 |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:終端指針 5:開始指針
+# 6:使用指針 7:開始日付 8:終端日付
+
+# 部屋ごとの基本料金契約を結びつける。３０Aか４０A
+if [ ${up_kikan_month_select} -gt 201403  ]; then 
+join2 key=1 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/ROOM_AMPERE_KIHONRYOUKIN_TBL    
+# 1:部屋番号  2:アンペア  3:基本料金  4:削除F    5:更新日
+# 6:更新者    7:入居者ID  8:入居者名  9:終端指針 10:開始指針
+# 11:使用指針 12:開始日付 13:終端日付
+else
+join2 key=1 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/ROOM_AMPERE_KIHONRYOUKIN_TBL_OLD
+fi                                                              |
+self 1 7 8 2 3 10 9 11 12 13                                    |
+LANG=C sort -k1                                                 >$tmp-all_denki_kari
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:開始日付 10:終端日付
+
+
+# 電力料金単価を設定
+if [ ${up_kikan_month_select} -gt 201403  ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL |awk 'NR==3' |self 2)
+fi
+if [ ${up_kikan_month_select} -lt 201404 -a ${up_kikan_month_select} -gt 201209 ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD |awk 'NR==3' |self 2)
+fi
+if [ ${up_kikan_month_select} -lt 201210 ]; then
+tanka1=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==1' |self 2)
+tanka2=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==2' |self 2)
+tanka3=$(cat /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/DENKI_TANKA_TBL_OLD2 |awk 'NR==3' |self 2)
+fi
+
+# 電力使用量範囲で分ける
+cat $tmp-all_denki_kari                                         |
+awk '0<=$8 && $8<=120'                                           >$tmp-denki_0_120
+cat $tmp-all_denki_kari                                         |
+awk '120<$8 && $8<=300'                                         >$tmp-denki_120_300
+cat $tmp-all_denki_kari                                         |
+awk '300<$8'                                                    >$tmp-denki_300
+
+# ～120kwhの入居者の計算--------------------------------------------------
+cat $tmp-denki_0_120                                            |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:開始日付 10:終端日付
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8,'$tanka1',$9,$10}'          |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:単価１ 10:開始日付 
+# 11:終端日付
+calc '$8*$9' 9                                                  | 
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:単価１   10:従量金額
+# 11:開始日付 12:終端日付
+
+self 1 2 3 4 6 7 8 5 10  |
+# 小数点以下を切り捨てにする。
+marume -sage 8.0 9.0                 >$tmp-all_denki
+
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+# 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+
+# 120kwh～300kwhの入居者の計算-------------------------------------------
+cat $tmp-denki_120_300                                          |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:開始日付 10:終端日付
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8,'$tanka1*120',$8-120,'$tanka2',$9,$10}' |
+# 1:部屋番号 2:入居者ID  3:入居者名  4:アンペア       5:基本料金
+# 6:開始指針 7:終端指針  8:使用指針  9:第一使用分金額 10:第二使用分指針
+# 11:単価２  12:開始日付 13:終端日付
+calc '$9+$10*$11' 11                                            |
+# 1:部屋番号 2:入居者ID  3:入居者名  4:アンペア       5:基本料金
+# 6:開始指針 7:終端指針  8:使用指針  9:第一使用分金額 10:第二使用分指針
+# 11:単価２  12:従量金額 13:開始日付 14:終端日付
+self 1 2 3 4 6 7 8 5 12    |
+marume -sage 8.0 9.0        >>$tmp-all_denki
+
+# 300kwh～の入居者の計算-------------------------------------------
+cat $tmp-denki_300                                              |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:基本料金
+# 6:開始指針 7:終端指針 8:使用指針 9:開始日付 10:終端日付
+awk '{print $1,$2,$3,$4,$5,$6,$7,$8,'$tanka1*120','$tanka2*180',$8-300,'$tanka3',$9,$10}' |
+# 1:部屋番号        2:入居者ID 3:入居者名  4:アンペア       5:基本料金
+# 6:開始指針        7:終端指針 8:使用指針  9:第一使用分金額 10:第二使用分金額
+# 11:第三使用分指針 12:単価３  13:開始日付 14:終端日付
+calc '$9+$10+$11*$12' 12                                        |
+## 1:部屋番号        2:入居者ID 3:入居者名  4:アンペア       5:基本料金
+## 6:開始指針        7:終端指針 8:使用指針  9:第一使用分金額 10:第二使用分金額
+## 11:第三使用分指針 12:単価３  13:従量金額 14:開始日付      15:終端日付
+self 1 2 3 4 6 7 8 5 13     |
+
+marume -sage 8.0 9.0        >>$tmp-all_denki
+
+cat $tmp-all_denki                                              |                                   
+calc '$8+$9' 9                                                  |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+# 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+LANG=C sort                                                     > ${tmp}-cyouhyou_denki
+# ----------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# ///////////////////////////////////////////////////////////////////////////////
+# ----------
+# 請求用データ
+
+cat $tmp-cyouhyou_denki                                         |
+awk '$2!="_"'                                                   |
+## 1:部屋番号 2:入居者ID 3:入居者名 4:アンペア 5:開始指針
+# 6:終端指針 7:使用指針 8:基本料金 9:従量金額 10:請求金額
+self 1 2 7 10                                                     |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                   |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+calc '$4/$5' 5                                                  |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額 
+# 税抜き金額の小数点以下を切り上げにする。
+marume +age 6.0                                                 |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額
+calc '$4-$6' 6                                                  |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額 7:税額
+awk '{print $1,$2,"'${up_kikan_month_select}'","1",$4,$6,$7,"電気使用量"$3"[kWh]","1","'${cur_time}'","'${userid}'"}' |
+# 1:部屋番号   2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+# 6:税抜き金額 7:税額     8:使用量-kwh 9:削除フラグ 10:更新日
+# 11:更新者
+LANG=C sort                                              |       
+awk '$2!="_" && $2!="0"'                                 >${tmp}-seikyu_denki
+# ----------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+# 電気料金ここまで////////////////////////////////////////////////////////////////////////////////
+
+## 水道料金ここから///////////////////////////////////////////////////////////////////////////////
+# 請求月かどうかを判定する。
+
+#hantei_month="$(mdate month |self NF  |self 1.5.2 )"
+#kongetu="$(mdate month |self NF |self 1.1.6 )"
+#sengetu="$(mdate month1 |self NF |self 1.1.6 )"
+#sensengetu="$(mdate month2 |self NF |self 1.1.6 )"
+#kongetuhajime="$(mdate month |awk '{print $1}' |self 1.1.4 1.5.2 1.7 |awk '{print $1 "/"$2 "/" $3 $4}')"
+#sengetumatu="$(mdate month1 |awk '{print $NF}'|self 1.1.4 1.5.2 1.7 |awk '{print $1 "/"$2 "/" $3 $4}')"
+hantei_month="$(echo ${up_kikan_month_select} | self 1.5.2 )"
+kongetu="$(mdate ${up_kikan_month_select}/+1 )"
+sengetu="$(echo ${up_kikan_month_select} )"
+sensengetu="$(mdate ${up_kikan_month_select}m/-1 |self NF |self 1.1.6 )"
+kongetuhajime="$(mdate ${kongetu}m |awk '{print $1}' |self 1.1.4 1.5.2 1.7 |awk '{print $1 "/"$2 "/" $3 $4}')"
+sengetumatu="$(mdate ${up_kikan_month_select}m |awk '{print $NF}' |self 1.1.4 1.5.2 1.7 |awk '{print $1 "/"$2 "/" $3 $4}')"
+
+# アップロードする月(今月)が偶数月なら請求処理（請求確定処理するのは偶数月のため）をする。偶数月なら先々月の退去者のみ請求処理する。
+if [ "${hantei_month}" == "01" -o "${hantei_month}" == "03" -o  "${hantei_month}" == "05" -o  "${hantei_month}" == "07" -o "${hantei_month}" == "09" -o "${hantei_month}" == "11"  ];then
+
+#---------------------------------------------------------------------------------
+# 帳票用データ作成
+cat ${tmp}-upload_file                                          |
+nkf -wLux                                                       |
+# 1:項目ID     2:項目名    3:homeID    4:csv項目ID 5:room種別
+# 6:room項目名 7:csvRoomID 8:階        9:部屋番号  10:HomeID
+# 11:終端指針  12:開始指針 13:使用指針 14:開始日付 15:終端日付
+# 水道料金に絞る
+awk '$1=="4"'                                                   |
+# 必要項目へ並び替え、room項目を部屋番号に変換
+self 6.1.3 11 12 13 14 15                                       |
+sort                                                            |
+# 1:部屋番号 2:終端指針 3:開始指針 4:使用指針 5:開始日付
+# 6:終端日付
+# 部屋番号と居住者IDを結びつける
+cjoin1 key=1 ${tmp}-riyousya                                     |
+# 1:部屋番号   2:入居者ID 3:施設ID   4:建屋ID   5:フロアID
+# 6:ユニットID 7:終端指針 8:開始指針 9:使用指針 10:開始日付
+# 11:終端日付
+self 2 1 7 8 9 10 11                                            |
+sort                                                            |
+# 1:入居者ID 2:部屋番号 3:終端指針 4:開始指針 5:使用指針
+# 6:開始日付 7:終端日付 
+# 居住者IDと居住者名を結びつける
+cjoin1 key=1 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER          |
+# 1:入居者ID 2:入居者名  3:カナ名    4:予備項目 5:削除F
+# 6:更新日   7:更新者    8:部屋番号  9:終端指針 10:開始指針
+# 11:使用量  12:開始日付 13:終了日付
+self 8 1 2 9 10 11 12 13                                        |
+LANG=C sort -k1                                                  |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:終端指針 5:開始指針
+# 6:使用量   7:開始日付 8:終端日付
+
+# 二ヶ月分計算用に一ヶ月づつ、別に保存する分岐
+tee  /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU."$(echo "${sengetu}")" |
+
+# 先々月のデータを結合する
+loopj -d@ num=1  /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU.${sensengetu} - |
+# 1:部屋番号      2:入居者ID     3:入居者名    4:先々月終端指針 5:先々月開始指針
+# 6:先々月使用量  7:先々月開始日 8:先々月末日  9:入居者名       10:先月終端指針
+# 11:先月開始指針 12:先月使用量  13:先月開始日 14:先月末日(今月初日)
+
+# 水道料金結合用並び
+self 1 9 10 11 12 5 6 13 7 14 15                                  |
+# 1:部屋番号       2:入居者ID     3:入居者名   4:先月終端指針 5:先月開始指針
+# 6:先々月開始指針 7:先々月使用量 8:先月使用量 9:先々月開始日 10:先月開始日
+# 11:先月末日(今月初日)
+# 先月いない人排除
+awk '$3!="@"'                                                   |
+# 計算の為数値に置換
+tr '@' '0'                                                      |
+# ２ヶ月分の使用量計算
+calc '$7+$8' 8                                                  |
+# 1:部屋番号       2:入居者ID     3:入居者名   4:先月終端指針 5:先月開始指針
+# 6:先々月開始指針 7:先々月使用量 8:先月使用量 9:使用量計     10:先々月開始日
+# 11:先月開始日    12:先月末日(今月初日)
+
+# 水道料金結合
+  if [ ${up_kikan_month_select} -gt 201403  ]; then
+  cjoin1 key=9 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL  -
+  # 1:部屋番号       2:入居者ID        3:入居者名      4:先月終端指針 5:先月開始指針
+  # 6:先々月開始指針 7:先々月使用量    8:先月使用量    9:使用量計     10:上水道料金
+  # 11:下水道料金    12:上下水道料金計 13:先々月開始日 14:先月開始日  15:先月末日(今月初日)
+  else
+  cjoin1 key=9 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL_OLD -
+  fi                                                              >$tmp-kari_data
+
+# 帳票表示上の修正の為の処理（途中入居者の開始指針が表示できないため）
+cat $tmp-kari_data                                              |
+# 先月途中入居者を抽出（先々月はデータない）
+awk '$6=="0"'                                                   |
+# 途中入居者の先月開始指針を先々月開始指針と入れ替えて元データに加える。
+self 1/4 6 5 7/NF                                               >>$tmp-kari_data
+# 途中入居者の入れ替えたデータと元のデータが重複するので、元データを抜く
+cat $tmp-kari_data                                              |
+# 途中入居者の元データ以外を出力
+awk '$6!="0"'                                                   |
+LANG=C sort                                                     |
+# 帳票用並び替え
+self 1 2 3 6 4 9 10 11 12                                       >$tmp-cyouhyou_suidou
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+
+#-------------------------------------------------------------------------------------------------------------
+# 請求用データ作成
+cat  $tmp-cyouhyou_suidou                                       |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+nkf -wLux                                                       |
+self 1 2 6 9                                                      |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                   |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+calc '$4/$5' 5                                                  |
+# 税抜き金額の小数点以下を切り上げにする。
+marume +age 6.0                                                 |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額
+# 税込み金額-税抜き金額=税額
+calc '$4-$6' 6                                                  |
+# 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+# 6:税抜金額 7:税額
+awk '{print $1,$2,"'${up_kikan_month_select}'","1",$4,$6,$7,"水道使用量"$3"[ｍ3]","1","'${cur_time}'","'${userid}'"}' |
+# 1:部屋番号   2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+# 6:税抜き金額 7:税額     8:使用量-m3 9:削除フラグ 10:更新日
+# 11:更新者
+LANG=C sort                                                     |
+awk '$2!="_" && $2!="0"'                                         >$tmp-seikyu_suidou
+#--------------------------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+else
+
+# アップロードする月（＝先月）が偶数月なら請求処理（請求確定処理するのは偶数月のため）をしないが、先月の退去者のみ請求処理する。
+
+#--------------------------------------------------------------------------------------------
+# 帳票用データ作成
+cat ${tmp}-upload_file                                          |
+nkf -wLux                                                       |
+# 1:項目ID     2:項目名    3:homeID    4:csv項目ID 5:room種別
+# 6:room項目名 7:csvRoomID 8:階        9:部屋番号  10:HomeID
+# 11:終端指針  12:開始指針 13:使用指針 14:開始日付 15:終端日付
+# 水道料金に絞る
+awk '$1=="4"'                                                   |
+# 必要項目へ並び替え、room項目を部屋番号に変換
+self 6.1.3 11 12 13 14 15                                       |
+sort                                                            |
+# 1:部屋番号 2:終端指針 3:開始指針 4:使用指針 5:開始日付
+# 6:終端日付
+# 部屋番号と居住者IDを結びつける
+cjoin1 key=1 ${tmp}-riyousya                                     |
+# 1:部屋番号   2:入居者ID 3:施設ID   4:建屋ID   5:フロアID
+# 6:ユニットID 7:終端指針 8:開始指針 9:使用指針 10:開始日付
+# 11:終端日付
+self 2 1 7 8 9 10 11                                            |
+sort                                                            |
+# 1:入居者ID 2:部屋番号 3:終端指針 4:開始指針 5:使用指針
+# 6:開始日付 7:終端日付
+# 居住者IDと居住者名を結びつける
+cjoin1 key=1 /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER          |
+# 1:入居者ID 2:入居者名  3:カナ名    4:予備項目 5:削除F
+# 6:更新日   7:更新者    8:部屋番号  9:終端指針 10:開始指針
+# 11:使用量  12:開始日付 13:終了日付
+self 8 1 2 9 10 11 12 13                                        |
+LANG=C sort                                                     |
+# 1:部屋番号 2:入居者ID 3:入居者名 4:終端指針 5:開始指針
+# 6:使用指針 7:開始日付 8:終端日付
+
+# 二ヶ月分計算用に一ヶ月づつ、別に保存する分岐
+tee  /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU."$(echo "${sengetu}")" |
+
+# 途中退去者がいた場合の処理
+awk '$NF!="'${kongetuhajime}'" && $NF!="'${sengetumatu}'"'        |
+# 水道料金結合
+  if [ ${up_kikan_month_select} -gt 201403  ]; then
+  cjoin1 key=6 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL  -
+  # 1:部屋番号       2:入居者ID        3:入居者名      4:先月終端指針 5:先月開始指針
+  # 6:先々月開始指針 7:先々月使用量    8:先月使用量    9:使用量計     10:上水道料金
+  # 11:下水道料金    12:上下水道料金計 13:先々月開始日 14:先月開始日  15:先月末日(今月初日)
+  else
+  cjoin1 key=6 /home/hands/E-LIFE/KEIRI/TBL/DENKI_SUIDOU/0003/YOKOHAMA_SUIDOU_RYOUKIN_TBL_OLD -
+  fi                                                              |
+self 1 2 3 5 4 6 7 8 9                                          >$tmp-cyouhyou_suidou
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+
+# ---------------------------------------------------------------------------------------------
+# 請求データ作成
+   if [ -s $tmp-cyouhyou_suidou ];then 
+   cat $tmp-cyouhyou_suidou                                        |
+# 1:部屋番号 2:入居者ID   3:入居者名   4:先々月開始指針 5:先月終端指針
+# 6:使用量計 7:上水道料金 8:下水道料金 9:上下水道料金計
+   self 1 2 6 9                                                    |
+   # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額
+   awk '{print $1,$2,$3,$4,"'${zeiritsu_keisan}'"}'                |
+   # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+   calc '$4/$5' 5                                                  |
+   # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+   # 6:税抜金額
+   # 税抜き金額の小数点以下を切り上げにする。
+   marume +age 6.0                                                 |
+   # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+   # 6:税抜金額
+   # 税込み金額-税抜き金額=税額
+   calc '$4-$6' 6                                                  |
+   # 1:部屋番号 2:入居者ID 3:使用指針 4:請求額 5:１＋税率
+   # 6:税抜金額 7:税額
+   awk '{print $1,$2,"'${up_kikan_month_select}'","1",$4,$6,$7,"水道使用量"$3"[ｍ3]","1","'${cur_time}'","'${userid}'"}' |
+   # 1:部屋番号   2:入居者ID 3:対象年月   4:税フラグ   5:請求額
+   # 6:税抜き金額 7:税額     8:使用量-kwh 9:削除フラグ 10:更新日
+   # 11:更新者
+   LANG=C sort                                                      |
+   awk '$2!="_" && $2!="0"'                                         >$tmp-seikyu_suidou 
+
+   else
+
+   # 空の場合はパディングデータを入れて、エラーアラートを回避する
+   echo _ _ 請求未対象月です。 0 0 0 0 0 0                       >$tmp-cyouhyou_suidou
+   echo _ _ _ _ _ _ _ _ _ _ _                    >$tmp-seikyu_suidou
+   fi
+fi
+#--------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+## 水道料金ここまで///////////////////////////////////////////////////////////////////////////////
+
+
+# 各ファイルを置いてくる
+#   inputはアップロードファイルを変換したもの
+#   pompaは帳票出力用のかたち
+#   共通ファイルはpompaをみじかくしたもの
+
+#if [ -e $tmp-seikyu_suidou ];then 
+cat << FIN | self 1/NF > ${tmp}-file_okiba
+${tmp}-cyouhyou_denki ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select}/MAIN-DATA/DENKI_CYOUHYOU.${up_Shisetsu_select}.${up_kikan_month_select} 10
+${tmp}-seikyu_denki   ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select}/${up_kikan_month_select}/DENKI.${up_Shisetsu_select}.${up_kikan_month_select} 11
+$tmp-cyouhyou_suidou  ${pompa_dir}/DENKI_SUIDOU/${up_Shisetsu_select}/MAIN-DATA/SUIDOU_CYOUHYOU.${up_Shisetsu_select}.${up_kikan_month_select} 9
+$tmp-seikyu_suidou    ${data_dir}/SEIKYU/SHISETSU/DENKI_SUIDOU/${up_Shisetsu_select}/${up_kikan_month_select}/SUIDOU.${up_Shisetsu_select}.${up_kikan_month_select} 11
+${tmp}-upload_file          ${input_dir}/${today}/DENKI_SUIDOU.${up_Shisetsu_select}.${up_kikan_month_select}.$(basename ${0}).${cur_time} 15
+FIN
+# 1:ファイル名 2:パス 3:列数
+
+# ファイル列チェック
+cat ${tmp}-file_okiba                                           |
+self 1 3                                                        |
+while read File retu_no; do
+  [ "$(retu ${File})" != "${retu_no}" ] && :                    > $tmp-err
+  [ "$(retu ${File} | gyo)" != "1" ] && :                       > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${File} | gyo)" != "0" ] && :   > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 置く
+cat ${tmp}-file_okiba                                           |
+while read File Pass Retu ; do
+  cp -p ${File} ${Pass}
+  [ "${?}" != "0" ] && :                                        > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+
+#------------------------------------------------------------
+
+## HTMLファイルを表示する
+
+cat << FIN > ${tmp}-alert
+<script type="text/javascript">alert("アップロードが完了しました");</script>
+FIN
+
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n"         |
+cat - ${tmp}-alert
+
+# 終了
+rm -f ${tmp}-*
+exit 0

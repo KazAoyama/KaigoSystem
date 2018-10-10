@@ -1,0 +1,473 @@
+#!/bin/bash
+#
+# SHISETSU_MASTER_KOUZA.DISPLAY : 施設マスタ　口座
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+work=/home/hands/E-LIFE/SYSTEM_SETTEI/WORK
+
+# 変数の定義
+namedata=$1
+checkfile=$2
+koushin_data=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE//SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 表示の処理
+
+# -------------------------
+# 表示する施設の情報を取得
+
+# 施設IDから内容を取得
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KOUZA |
+# 1:施設ID   2:領収書表示名称 3:金融機関コード 4:支店コード 5:口座種別
+# 6:口座番号 7:名前           8:削除フラグ     9:更新日時   10:ユーザーID
+awk '$8!="9"' > ${tmp}-SHISETSU_KOUZA
+
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_FACT  |
+tee ${work}/SHISETSU_FACT | cat > $tmp-SHISETSU_FACT
+# 1:施設ID                       2:建屋                  3:委託者番号                          4:委託者名                      5:委託者カナ
+# 6:代表者役職                   7:代表者名              8:（問い合わせ先）施設名称フラグ      9:（問い合わせ先）施設名称      10:（問い合わせ先）施設住所フラグ
+# 11:（問い合わせ先）郵便番号    12:（問い合わせ先）住所 13:（問い合わせ先）施設電話番号フラグ 14:（問い合わせ先）施設電話番号 15:（問い合わせ先）施設FAX番号フラグ
+# 16:（問い合わせ先）施設FAX番号 17:削除フラグ           18:更新日時                           19:ユーザーID
+#awk '$8!="16"' > ${tmp}-SHISETSU_FACT
+
+## 建屋
+#self 2 ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_FACT   |
+#LANG=C sort -u              |
+#awk '{if($1=="01"){tateyaname="シニア"}else{tateyaname="ケア"};print $1,tateyaname}' |
+#awk '{print $0,"'${tateya_select}'"}' |
+#awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,"@"}}'                      
+#self 2                                                                               > $tmp-tateya_select
+
+#cp $tmp-tateya_select /home/hands/work/mikami/tateya
+
+# 委託者番号の取得、施設によってケア棟分がある。
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_FACT  |
+self 2 3  |
+awk '{if($1=="01"){tateyaname="シニア"}else{tateyaname="ケア"};print $0,tateyaname}'  >${tmp}-itaku_no
+# 1:建屋ＩＤ 2:委託者番号 3:建屋名称
+
+# それぞれ値を取得
+ryousyu_now="$(self 2 ${tmp}-SHISETSU_KOUZA)"
+kikan_now="$(self 3 ${tmp}-SHISETSU_KOUZA)"
+shiten_now="$(self 4 ${tmp}-SHISETSU_KOUZA)"
+kouza_syubetu_now="$(self 5 ${tmp}-SHISETSU_KOUZA)"
+kouza_now="$(self 6 ${tmp}-SHISETSU_KOUZA)"
+kouza_name_now="$(self 7 ${tmp}-SHISETSU_KOUZA)"
+itaku_name_now="$(self 4 ${tmp}-SHISETSU_FACT |head -1)"
+itaku_name_kana_now="$(self 5 ${tmp}-SHISETSU_FACT |head -1)"
+daihyou_yaku_now="$(self 6 ${tmp}-SHISETSU_FACT |head -1)"
+daihyou_name_now="$(self 7 ${tmp}-SHISETSU_FACT |head -1)"
+t_meisyou_type_now="$(self 8 ${tmp}-SHISETSU_FACT |head -1)"
+t_adr_type_now="$(self 10 ${tmp}-SHISETSU_FACT |head -1)"
+t_tel_type_now="$(self 13 ${tmp}-SHISETSU_FACT |head -1)"
+t_fax_type_now="$(self 15 ${tmp}-SHISETSU_FACT |head -1)"
+# 施設マスタの取得
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+awk '$8!="9"' > ${tmp}-shisetsu_kihon
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX番号
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザID
+
+# フラグによって表示する問い合わせ先がかわる
+# -
+# 名称
+if [ "${t_meisyou_type_now}" -eq "1" ] ; then
+  t_meisyou_now="$(self 2 ${tmp}-shisetsu_kihon)"
+else
+  t_meisyou_now="$(self 9 ${tmp}-SHISETSU_FACT |head -1)"
+fi
+# 住所
+if [ "${t_adr_type_now}" -eq "1" ] ; then
+  t_post_now="$(self 6 ${tmp}-shisetsu_kihon)"
+  t_adr_now="$(self 7 ${tmp}-shisetsu_kihon)"
+else
+  t_post_now="$(self 11 ${tmp}-SHISETSU_FACT |head -1)"
+  t_adr_now="$(self 12 ${tmp}-SHISETSU_FACT |head -1)"
+fi
+# 電話番号
+if [ "${t_tel_type_now}" -eq "1" ] ; then
+  t_tel_now="$(self 4 ${tmp}-shisetsu_kihon)"
+else
+  t_tel_now="$(self 14 ${tmp}-SHISETSU_FACT |head -1)"
+fi
+# FAX番号
+if [ "${t_fax_type_now}" -eq "1" ] ; then
+  t_fax_now="$(self 5 ${tmp}-shisetsu_kihon)"
+else
+  t_fax_now="$(self 16 ${tmp}-SHISETSU_FACT |head -1)"
+fi
+
+## 空なら初期値設定する
+#[ "${ryousyu_now}" = "_" -o "${ryousyu_now}" = "" ] && ryousyu_now="施設名称など"
+#[ "${kouza_now}" = "_" -o "${kouza_now}" = "" ] && kouza_now="口座番号"
+#[ "${kouza_name_now}" = "_" -o "${kouza_name_now}" = "" ] && kouza_name_now="トウキュウタロウ(全角カナ)"
+#[ "${t_meisyou_now}" = "_" -o "${t_meisyou_now}" = "" ] && t_meisyou_now="問合せ先名称"
+#[ "${t_post_now}" = "_" -o "${t_post_now}" = "" ] && t_post_now="郵便番号"
+#[ "${t_adr_now}" = "_" -o "${t_adr_now}" = "" ] && t_adr_now="問合せ先住所"
+#[ "${t_tel_now}" = "_" -o "${t_tel_now}" = "" ] && t_tel_now="電話番号"
+#[ "${t_fax_now}" = "_" -o "${t_fax_now}" = "" ] && t_fax_now="FAX番号"
+
+
+# 金融機関支店用インデックスとvalueはやみひょう
+cat << FIN > ${tmp}-index
+1 アイウエオ
+2 カキクケコ
+3 サシスセソ
+4 タチツテト
+5 ナニヌネノ
+6 ハヒフヘホ
+7 マミムメモ
+8 ヤユヨ
+9 ラリルレロ
+10 ワヲン
+FIN
+
+# 金融機関コードに指定があったらインデックスの値をかえる
+if [ "${kikan_now}" != "" ] ; then
+# 金融機関カナから行を決定
+  kikan_kana="$(cjoin0 key=1 <(echo "${kikan_now}") ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME | self 2.1.2)"
+  kikan_index="$(grep "${kikan_kana}" ${tmp}-index | self 1)"
+else
+  kikan_index="0"
+fi
+# 支店コードに指定があったらインデックスの値をかえる
+if [ "${kikan_now}" != "" -a "${shiten_now}" != "" ] ; then
+  shiten_kana="$(cjoin0 key=1/2 <(echo "${kikan_now} ${shiten_now}") ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME | self 3.1.2)"
+  shiten_index="$(grep ${shiten_kana} ${tmp}-index | self 1)"
+else
+  shiten_index="0"
+fi
+# -------------------------
+
+# -------------------------
+# disabledの設定
+if [ "${t_meisyou_type_now}" != "2" ] ; then
+  meisyou_disabled="disabled"
+  meisyou_css="#c0c0c0"
+fi
+if [ "${t_adr_type_now}" != "2" ] ; then
+  adr_disabled="disabled"
+  adr_css="#c0c0c0"
+  post_disabled="disabled"
+  post_css="#c0c0c0"
+fi
+if [ "${t_tel_type_now}" != "2" ] ; then
+  tel_disabled="disabled"
+  tel_css="#c0c0c0"
+fi
+if [ "${t_fax_type_now}" != "2" ] ; then
+  fax_disabled="disabled"
+  fax_css="#c0c0c0"
+fi
+# -------------------------
+
+# -------------------------
+# 金融機関テーブルは全て表示
+self 1 3 ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME |
+# 1:金融機関コード 2:金融機関名
+LANG=C sort |
+awk '{if($1=="'${kikan_now}'"){$3="selected"};print}' > ${tmp}-kikan_data
+# -------------------------
+
+# -------------------------
+# 支店テーブルは選択
+if [ "${kikan_now}" != "" -a "${shiten_now}" != "" ] ; then
+  LANG=C sort ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME |
+  cjoin0 key=1 <(echo "${kikan_now}") |
+  delf 1 |
+  LANG=C sort |
+  case "${shiten_index}" in
+    1 )
+      awk '$2~/^ア/||$2~/^イ/||$2~/^ウ/||$2~/^エ/||$2~/^オ/||$2~/^ヴ/{print $1,$3}' -
+    ;;
+    2 )
+      awk '$2~/^カ/||$2~/^キ/||$2~/^ク/||$2~/^ケ/||$2~/^コ/||$2~/^ガ/||$2~/^ギ/||$2~/^グ/||$2~/^ゲ/||$2~/^ゴ/{print $1,$3}' -
+    ;;
+    3 )
+      awk '$2~/^サ/||$2~/^シ/||$2~/^ス/||$2~/^セ/||$2~/^ソ/||$2~/^ザ/||$2~/^ジ/||$2~/^ズ/||$2~/^ゼ/||$2~/^ゾ/{print $1,$3}' -
+    ;;
+    4 )
+      awk '$2~/^タ/||$2~/^チ/||$2~/^ツ/||$2~/^テ/||$2~/^ト/||$2~/^ダ/||$2~/^ヂ/||$2~/^ヅ/||$2~/^デ/||$2~/^ド/{print $1,$3}' -
+    ;;
+    5 )
+      awk '$2~/^ナ/||$2~/^ニ/||$2~/^ヌ/||$2~/^ネ/||$2~/^ノ/{print $1,$3}' -
+    ;;
+    6 )
+      awk '$2~/^ハ/||$2~/^ヒ/||$2~/^フ/||$2~/^ヘ/||$2~/^ホ/||$2~/^バ/||$2~/^ビ/||$2~/^ブ/||$2~/^ベ/||$2~/^ボ/||$2~/^パ/||$2~/^ピ/||$2~/^プ/||$2~/^ペ/||$2~/^ポ/{print $1,$3}' -
+    ;;
+    7 )
+      awk '$2~/^マ/||$2~/^ミ/||$2~/^ム/||$2~/^メ/||$2~/^モ/{print $1,$3}' -
+    ;;
+    8 )
+      awk '$2~/^ヤ/||$2~/^ユ/||$2~/^ヨ/{print $1,$3}' -
+    ;;
+    9 )
+      awk '$2~/^ラ/||$2~/^リ/||$2~/^ル/||$2~/^レ/||$2~/^ロ/{print $1,$3}' -
+    ;;
+    10 )
+      awk '$2~/^ワ/||$2~/^ヲ/||$2~/^ン/{print $1,$3}' -
+    ;;
+    11 )
+      echo "@ @"
+    ;;
+    * )
+      cat - > /dev/null
+      echo "@ 金融機関を指定してください。"
+    ;;
+  esac
+else
+  # 選択されてないときはメッセージ表示
+  echo "@ 金融機関を指定してください。"
+fi |
+awk '{if($1=="'${shiten_now}'"){$3="selected"};print}' > ${tmp}-shiten_data
+# -------------------------
+
+# -------------------------
+# 施設名テーブル
+cjoin0 key=1 <(echo "${shisetsu_key}") ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設ID   2:施設名 3:略称       4:電話番号 5:FAX
+# 6:郵便番号 7:住所   8:削除フラグ 9:更新日時 10:ユーザID
+awk '$8!="9"' |
+self 1/2 |
+# 1:施設ID 2:施設名
+awk '{if($1=="'${shisetsu_key}'"){$3="selected"}
+      else{$3="disabled"}; print}' > ${tmp}-shisetsu_select
+# -------------------------
+
+# -------------------------
+# ファクタリング情報問い合わせ先データタイプ
+cat << FIN > ${tmp}-data_type_moto
+0 なし
+1 施設情報から取得
+2 直接入力
+FIN
+
+# 繰り返し処理用
+cat << FIN > ${tmp}-fact_syrui
+1 ${t_meisyou_type_now} 名称
+2 ${t_adr_type_now} 住所
+3 ${t_tel_type_now} 電話
+4 ${t_fax_type_now} FAX
+FIN
+
+cat ${tmp}-fact_syrui |
+while read No Type Meisyou ; do
+  awk '{if($1=="'${Type}'"){$3="selected"};print}' ${tmp}-data_type_moto > ${tmp}-data_type_${No}
+done
+# -------------------------
+
+# -------------------------
+# 口座種別
+cat << FIN | awk '{if($1=="'${kouza_syubetu_now}'"){$3="selected"};print}' > ${tmp}-kouza_syurui
+0 選択してください
+1 普通
+2 当座
+FIN
+# -------------------------
+
+# MODE=regist時のみ処理
+case "${MODE}" in
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${koushin_data})
+    # メッセージ作成
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${koushin_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+  ;;
+esac
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html_alert
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 共通設定項目
+# DROPDOWN_ACTIVE:メニューのどのドロップダウンが選択されているか
+# LI_SYSTEMSETTEIi:ドロップダウン内のどこが選択されているか
+# KIKAN_ACTIVE:金融機関名インデックスの選択(みため) ＊支店名インデックスは初期に支店を表示しないので選択しない
+# 初期表示ではテキストボックスに入力が無い状態なので空
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $userid
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###shisetsu_key### $shisetsu_key
+###DROPDOWN_ACTIVE9### active
+###KIKAN_ACTIVE${kikan_index}### active
+###SHITEN_ACTIVE${shiten_index}### active
+###HYOUJIMEI### ${ryousyu_now}
+###KOUZA### ${kouza_now}
+###KOUZA_NAME### ${kouza_name_now}
+###ITAKU_NAME### ${itaku_name_now}
+###ITAKU_NAME_KANA### ${itaku_name_kana_now}
+###DAIHYOU_YAKU### ${daihyou_yaku_now}
+###DAIHYOU_NAME### ${daihyou_name_now}
+###MEISYOU### ${t_meisyou_now}
+###POST### ${t_post_now}
+###ADR### ${t_adr_now}
+###TEL### ${t_tel_now}
+###FAX### ${t_fax_now}
+###meisyou_disabled### ${meisyou_disabled} 
+###meisyou_css### ${meisyou_css} 
+###adr_disabled### ${adr_disabled}
+###adr_css### ${adr_css}
+###post_disabled### ${post_disabled}
+###post_css### ${post_css}
+###tel_disabled### ${tel_disabled}
+###tel_css### ${tel_css}
+###fax_disabled### ${fax_disabled}
+###fax_css### ${fax_css}
+###SELECT_SHISETSU### $select_shisetsu
+FIN
+
+###LI_SYSTEMSETTEI3### active
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME
+# 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$7=="SHISETSUJOHO_MASTER.CGI"{print $2,$9}' |
+LANG=C sort > $tmp-dispkengen_all
+# 1:施設ID 2:STATUS
+
+cat $tmp-dispkengen_all |
+if [ -s $tmp-dispkengen_all -a $(self 1 $tmp-dispkengen_all |head -1) = "0000" ] ; then
+  awk '{print $2}' |
+  head -1
+else
+  awk '$1=="'${shisetsu}'"{print $0}' |
+  LANG=C sort |
+  getlast 1 1 |
+  self 2
+fi > $tmp-dispkengen
+
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [ $(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+#----------------------------------
+
+
+
+
+cat ${checkfile} >> $tmp-calsed
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+cat ${html_dir}/SHISETSU_MASTER_KOUZA1.html ${home_dir}/KYOUTSU/HTML/MENUBAR.html ${html_dir}/SHISETSU_MASTER_KOUZA2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+mojihame -l"SHISETSU_SELECT" - ${tmp}-shisetsu_select |
+mojihame -l"KINYUU_KIKAN_TBL" - ${tmp}-kikan_data |
+mojihame -l"KINYUU_KIKAN_SHITEN_TBL" - ${tmp}-shiten_data |
+mojihame -l"###TATEYA_SELECT###" - ${tmp}-itaku_no |
+mojihame -l"data_type_tbl1" - ${tmp}-data_type_1 |
+mojihame -l"data_type_tbl2" - ${tmp}-data_type_2 |
+mojihame -l"data_type_tbl3" - ${tmp}-data_type_3 |
+mojihame -l"data_type_tbl4" - ${tmp}-data_type_4 |
+mojihame -l"Kouza_syurui_tbl" - ${tmp}-kouza_syurui |
+if [ -e $tmp-html_alert ] ; then
+  cat - $tmp-html_alert
+else
+  cat -
+fi
+formhame -d"_" - ${namedata}
+# --------------------------------------------------------------
+rm -f ${tmp}-*
+exit 0

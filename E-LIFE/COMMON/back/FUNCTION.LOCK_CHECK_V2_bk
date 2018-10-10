@@ -1,0 +1,95 @@
+#!/bin/bash -xv
+#
+# FUNCTION.LOCK_CHECK_V2
+# lockfileチェックCGI
+#
+# $1:table_list
+#
+# Written by R.suzuki 2015/09/17
+
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+#-------------------------------------------------------------
+# パラメーターの取得
+[ -z "$1" ] && exit 1
+table_list="$1"
+
+[ ! -s "$table_list" ] && exit 1
+
+#リトライ回数上限の取得（指定されていたら）
+retry_max=1
+if [ "$2" != "" -a "$2" != "_" ] ; then
+ retry_max="$2"
+fi
+
+#リトライ間隔の取得（指定されていたら）
+retry_interval=3
+if [ "$3" != ""  -a "$3" != "_" ] ; then
+ retry_interval="$3"
+fi
+
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 対象テーブルのlockfileが全てない状態をまって、lockfileを作成
+repeat_cnt=0
+:> $tmp-locked_table
+while true ;do
+
+   # テーブルリストにあるテーブルのlockfileが全てないかチェック
+  if [ "$(ls $(cat $table_list | awk '{print "'$tmplock_dir'/"$1"/"$2".lock"}' | LANG=C sort -u | tr "\n" " ") | wc -l)" == "0" ]; then
+    cat $table_list |
+    while read table base key ;do
+
+      # tableに対応するディレクトリを作成
+      mkdir -p $tmplock_dir/$table
+
+      #テーブル名(ロックファイルパス)
+      lock_file_path=$tmplock_dir/$table/$base.lock
+
+      # もしlockfile作成に失敗したらエラーフラグを立てる
+      lockfile -1 -r 1 $lock_file_path
+      [ $? -ne 0 ] && :> $tmp-err
+      [ -e $tmp-err ] && break;
+
+      # エラー時に本シェルが作成したlockfileのみを削除できるようにテーブル名を出力
+      echo $lock_file_path >> $tmp-locked_table
+    : ;done
+
+    # lockfileを作り終えたら終了
+    break;
+  fi
+  # リピート上限を超えたらエラーフラグを立てる
+  repeat_cnt="$(plus $repeat_cnt 1)"
+#  [ "$repeat_cnt" -gt 1 ] && :> $tmp-err
+  [ "$repeat_cnt" -gt $retry_max ] && :> $tmp-err
+
+
+  # エラーフラグが立っていたら終了
+  [ -e $tmp-err ] && break;
+
+#  sleep 3
+  sleep $retry_interval
+
+: ;done
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# エラー処理
+if [ -e $tmp-err ]; then
+
+  # 作成したlockfileは削除
+  cat $tmp-locked_table |
+  while read locked ;do
+    rm -f "$locked"
+  : ;done
+
+  rm -f $tmp-*
+  exit 1
+fi
+#-------------------------------------------------------------
+
+# 終了
+rm -f $tmp-*
+exit 0

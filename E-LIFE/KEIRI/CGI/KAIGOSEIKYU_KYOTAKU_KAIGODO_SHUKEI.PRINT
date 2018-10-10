@@ -1,0 +1,154 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU_KAIGODO_SHUKEI.PRINT : 事業所別利用状況一覧EXCEL出力
+#
+# Usage : KAIGOSEIKYU_KYOTAKU_KAIGODO_SHUKEI.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 介護請求明細書データ呼出
+taisho_nengetsu=$(mdate ${seikyu_nengetsu}m/-1)
+mdate -e ${taisho_nengetsu}m/-2     |
+yarr                            > $tmp-nengetsu_list
+cp $tmp-nengetsu_list ${work}/nengetsu
+mdate -e ${taisho_nengetsu}m/-5         |
+yarr                            > $tmp-month_list
+cp $tmp-month_list ${work}/month
+
+for month in $(mdate -e ${this_month}m/-3);do
+#for month in $(cat $tmp-month_list);do
+  for nengetsu in $(cat $tmp-nengetsu_list);do
+    cat ${pompa_dir}/KOKUHO/${shisetsu}/${month}/${nengetsu}.KYOTAKUSEIKYU_MEISAISHO_8124  |
+    # 1:利用者ID          2:登録時間            3:識別番号                  4:事業所番号      5:事業所区分(ここでは指定事業所を表す1)
+    # 6:提供年月          7:保険者番号          8:単価                      9:被保険者番号    10:_
+    # 11:_                12:被保険者生年月日   13:性別                     14:要介護度区分   15:認定有効期間開始
+    # 16:認定有効期間終了 17:サービス計画届出日 18:サービス計画費明細行番号 19:サービスコード 20:単位数
+    # 21:回数             22:サービス単位数     23:サービス単位数合計       24:請求金額合計   25:ケアマネ番号
+    awk '$18=="99"'
+  done
+done                             |
+self 6 1 14                      |
+LANG=C sort -u -k1,1 -k2,2       > $tmp-base_data
+# 1:提供年月 2:利用者ID 3:要介護度区分
+cp $tmp-base_data ${work}/base
+for MONTH in $(cat $tmp-base_data | self 1 | LANG=C sort -u);do
+  cat $tmp-base_data                       |
+  # 1:提供年月 2:利用者ID 3:要介護度区分
+  awk '$1=="'${MONTH}'"'                   > $tmp-base_second
+  GOUKEI=$(gyo $tmp-base_second)
+  KAIGO1=$(awk '$3==21' $tmp-base_second | gyo)
+  KAIGO2=$(awk '$3==22' $tmp-base_second | gyo)
+  KAIGO3=$(awk '$3==23' $tmp-base_second | gyo)
+  KAIGO4=$(awk '$3==24' $tmp-base_second | gyo)
+  KAIGO5=$(awk '$3==25' $tmp-base_second | gyo)
+  SANKARAGO=$(awk '$3==23 || $3==24 || $3==25' $tmp-base_second | gyo)
+
+  echo "${MONTH}" "${GOUKEI}" "${KAIGO1}" "${KAIGO2}" "${KAIGO3}" "${KAIGO4}" "${KAIGO5}" "$SANKARAGO" |
+tee ${work}/desune |
+  lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$8/$2*100'                                                   |
+  marume 9.1
+  # 1:年月 2:合計 3:要介護1 4:要介護2 5:要介護3 6:要介護4 7:要介護5 8:要介護3～5 9:割合
+done              |
+tee ${work}/kaigo |
+LANG=C sort -k1,1n               |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月",$2,$3,$4,$5,$6,$7,$8,$9}'       > $tmp-meisai
+
+# 3ヶ月平均
+cat $tmp-meisai                  |
+# 1:年月 2:合計 3:要介護1 4:要介護2 5:要介護3 6:要介護4 7:要介護5 8:要介護3～5 9:割合
+self 2 8                         |
+# 1:合計 2:要介護3～5
+sm2 0 0 1 2                      |
+lcalc '$2/$1*100'                |
+marume 1.1                       > $tmp-heikin
+
+# マスタ準備
+
+# 事業所情報
+cat ${hometbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER                       |
+join1 key=1 <(echo ${shisetsu})                                                  |
+self 2                                                                           > $tmp-jigyosho_joho
+
+# 対象年月
+echo ${seikyu_nengetsu}          |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月"}' > $tmp-hyoji_nengetsu
+
+# 年月データの整形
+echo ${hani_from} ${hani_to}                       |
+awk '{print substr($1,1,4)"年"substr($1,5,2)"月～"substr($2,1,4)"年"substr($2,5,2)"月"}' > $tmp-month_hyoji
+
+TEMPLA=${temp_dir}/KAIGODOBETSU_SHUKEI_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 h2 $tmp-jigyosho_joho           \
+                    1 c2 $tmp-hyoji_nengetsu          \
+                    1 b6 $tmp-meisai                  \
+                    1 i9 $tmp-heikin                  > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

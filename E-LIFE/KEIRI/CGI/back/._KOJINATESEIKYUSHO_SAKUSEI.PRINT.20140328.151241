@@ -1,0 +1,734 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.PRINT : 請求
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.PRINT namefile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ---------------------------------------
+# 変数
+
+namefile=${1}
+eval $(name-source ${namefile})
+
+# かりに
+cp -p ${namefile} /home/hands/work/otsubo/name
+tmp=/home/hands/work/otsubo/print
+rm -f ${tmp}-*
+
+# mode
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+# 処理年月
+syori_nengetsu="${year}${month}"
+# ---------------------------------------
+
+# ---------------------------------------
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU/ ] && mkdir ${input_dir}/${today}/SEIKYU/
+# ---------------------------------------
+
+# ---------------------------------------
+# error
+
+function error_exit {
+  cat $tmp-lock |
+  while read name;do
+    rm -f ${name}.LOCK
+  done
+cat << FIN > ${tmp}-alert
+  <html>
+    <head>
+      <script type="text/javascript" language="Javascript">
+        alert('${1}');
+      </script>
+    </head>
+  </html>
+FIN
+cat ${tmp}-alert
+rm ${tmp}-*
+exit 1
+}
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル作成
+
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# ---------------------------------------
+
+# ---------------------------------------
+# 確定ファイルがなかったらなにもできない
+
+LANG=C sort -k1,1 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!="9"' - |
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+cjoin0 key=2 <(echo "${year}${month}") > ${tmp}-kakutei_file
+if [ ! -s ${tmp}-kakutei_file ] ; then
+  error_exit "仮確定か当月確定をしていないため印刷できません"
+fi
+# ---------------------------------------
+
+## ---------------------------------------
+## 処理月当月のヘッダでスタータス1があるとエラー
+#
+## ないとは思うが、処理月当月でステータスが1(計算の後は必ず請求選択するのでまずありえない)があったらエラーで落とす
+#cjoin0 key=1 <(echo "${year}${month}") ${seikyu_dir}/${hensu_shisetsu}/HEAD/SEIKYU_HEAD |
+#LANG=C sort -k1,2 -k25,25 |
+#getlast 1 2 |
+#awk '$24!="9"' |
+#cjoin0 key=3 <(echo "1") - > ${tmp}-err_head
+#[ -s ${tmp}-err_head ] && error_exit "請求選択がされていないものがあるため確定できません"
+## ---------------------------------------
+
+# 処理内容
+# -
+# チェックが入ったnameから出力する入居者IDと年月を取得
+# このリストに従い下記処理を行う
+#
+# 支払を合算しない(支払合算相手IDなし)
+#   繰越あり(ステータス4)
+#     請求確定月と請求先が一致するものをまとめる
+#     請求確定月と処理月が一致しないものは明細の内訳2に入れる
+# 
+#   繰越なし(ステータス5,6)
+#     請求確定月と請求先が一致するものをまとめる
+#     
+#   共通
+#     連名テーブルを作成し合算先にされているひとは連名表記をする？
+# -
+# 支払を合算する(支払合算相手IDあり)
+#   絞込みをしておく
+#   出力する内容は合算相手のファイルと同じ
+#   請求書設定フラグで連名にするかどうか決定
+#
+
+# ---------------------------------------
+# 請求書に仮表記するかどうか
+is_kakutei="$(self 3 ${tmp}-kakutei_file)"
+if [ "${is_kakutei}" = "2" ] ; then
+  karihyouki=""
+else
+  karihyouki="(仮確定)"
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# 名称マスタ系用意する
+
+# 入居者名
+awk '$19!="9"' ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1/3 |
+LANG=C sort > ${tmp}-RIYOUSHA_KIHON
+# 1:入居者ID 2:入居者名カナ 3:入居者名カナ
+
+# 月額利用料項目名
+awk '$8!="9"' ${home_tbl_dir}/RIYOURYOU_MASTER/RIYOURYOU_MASTER |
+self 1/3 |
+# 1:施設ID 2:利用料ID 3:利用料名
+LANG=C sort > ${tmp}-RIYOURYOU_MASTER
+
+# 有料サービス利用料
+awk '$10!="9"'  ${home_tbl_dir}/SEIKYU/SERVICE_MASTER |
+self 1 3 5 |
+# 1:施設ID 2:サービスID 3:サービス名
+LANG=C sort > ${tmp}-SERVICE_MASTER
+
+# 施設名称
+awk '$8!="9"' ${home_tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2 |
+LANG=C sort > ${tmp}-SHISETSU_KIHON
+
+# 署名
+s_name="$(cjoin0 key=1 <(echo "${shisetsu}") ${tmp}-SHISETSU_KIHON | self 2)"
+awk '$7!="9"' ${home_tbl_dir}/SEIKYU_SHOMEI/SEIKYU_SHOMEI |
+cjoin0 key=1 <(echo "${shisetsu}") - |
+self 1/6 |
+cat - <(echo "${s_name}") |
+yarr |
+# 1:施設ID  2:会社名 3:郵便番号 4:住所 5:電話番号
+# 6:FAX番号 7:施設名
+self 1/2 NF 3/NF-1 |
+sed 's/ _ / @ /g' - |
+sed 's/ _/ @/g' - |
+awk '{if($4!="@"){$4="〒"$4;};print}' - |
+awk '{if($6!="@"){$6="TEL　"$6;};print}' - |
+awk '{if($7!="@"){$7="FAX　"$7;};print}' - > ${tmp}-SEIKYU_SHOMEI
+# 1:施設ID   2:会社名  3:施設名 4:郵便番号 5:住所
+# 6:電話番号 7:FAX番号
+
+# 名称をつけるルール
+# -
+# 行分類フラグ：10
+#   数字：月額利用料
+#   shokuji：食事実績
+#   kesshoku：欠食
+# 行分類フラグ：20
+#   denwa：電話
+#   tatekae：立替金
+#   service${数字}：有料サービス利用料
+#   event：イベント
+# -
+# ---------------------------------------
+
+# ---------------------------------------
+# わたってきたnameからチェックされた年月を取得しヘッダをとってくる
+
+# disabledかけてるものについては値が送信されないはず(請求処理時の繰越と合算、繰越処理時の合算)
+
+awk '$1~/taisho_p/{print $1}' ${namefile} |
+# 1:name 2:value
+sed 's/taisho_p//g' - |
+tr "_" " " |
+self 2 1 |
+LANG=C sort > ${tmp}-check_list
+# 1:請求年月 2:入居者ID
+
+[ ! -s ${tmp}-check_list ] && error_exit "印刷する人を選択してください"
+
+#かりに
+#LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${shisetsu}/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25 /home/hands/work/otsubo/SEIKYU_HEAD |
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+getlast 1 2 |
+awk '$24!="9"' - |
+join0 key=1/2 ${tmp}-check_list - > ${tmp}-head_kihon
+
+# 一応念のためステータスのチェック
+awk '$3!="4"&&$3!="5"&&$3!="6"' ${tmp}-head_kihon > ${tmp}-err_status
+[ -s ${tmp}-err_status ] && error_exit "出力できないステータスがあります。"
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理を開始
+
+# 支払合算相手IDが入っている人は別処理するのでよける
+cjoin0 +ng key=9 <(echo "_") ${tmp}-head_kihon > ${tmp}-normal_head_kihon 2> ${tmp}-gassan_head_kihon1
+
+# 合算で繰越は、合算相手に集約されるので除外だがあとで更新時間を変更するのでとっておく
+cjoin0 +ng key=3 <(echo "4") ${tmp}-gassan_head_kihon1 > ${tmp}-gassan_kurikoshi 2> ${tmp}-gassan_head_kihon2
+
+# ------------------------
+# 合算相手を設定していない(請求先＝入居者ID)
+
+# 請求確定月と請求先が同じものを処理する(繰越があると複数ファイルひっかかる)
+self 14 2 1 2 ${tmp}-normal_head_kihon > ${tmp}-syori_list
+# 1:請求確定月 2:入居者ID 3:処理月 4:入居者ID
+
+# 請求確定月と入居者IDごとに処理をする
+self 1 2 ${tmp}-syori_list |
+# 1:請求確定月 2:入居者ID
+LANG=C sort -u |
+while read kakutei_nengetsu ID ; do
+  # ==================================================
+  # 明細をとりまとめる
+
+  # 出力するファイル名を取得する
+  cjoin0 key=1/2 <(echo "${kakutei_nengetsu} ${ID}") ${tmp}-syori_list |
+  # 1:請求確定月 2:入居者ID 3:処理月 4:入居者ID
+  delf 1/2 |
+  # 1:処理月 2:入居者ID
+  LANG=C sort |
+  join0 key=1/2 - ${tmp}-normal_head_kihon |
+  # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+  # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+  # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+  # 16:予備             17:予備             18:予備           19:予備          20:予備
+  # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+  # 26:更新者
+  self 1/2 10 |
+  # 1:処理月 2:入居者ID 3:明細ファイル名
+  # -
+  # 繰り返し処理でファイル展開
+  while read nengetsu ID file ; do
+#    cat ${seikyu_dir}/${shisetsu}/${file}
+#かりに
+cat ~/work/otsubo/${file}
+  done |
+  awk '$25!="9"' |
+  # 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+  # 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+  # 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+  # 16:予備     17:予備      18:予備        19:予備           20:予備
+  # 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+  # 26:更新時間 27:更新者
+  self 3 5 8/13 > ${tmp}-meisai_kari
+  # 1:行分類フラグ 2:項目ID 3:非課税フラグ 4:金額税抜き 5:金額税込み
+  # 6:税額         7:内訳1  8:内訳2
+  # -
+  cjoin0 +ng key=1 <(echo "15 25 30" | tarr) ${tmp}-meisai_kari > ${tmp}-goukei_only 2> ${tmp}-meisai_only
+  # -
+  # 合計行(15,25,30を集計しなおす)
+  self 1/3 7/8 4/6 ${tmp}-goukei_only |
+  # 1:行分類フラグ 2:項目ID     3:非課税フラグ 4:内訳1 5:内訳2
+  # 6:金額税抜き   7:金額税込み 8:税額
+  sm4 1 1 2 5 6 8 |
+  # 合計行のみとりだす
+  cjoin0 key=2 <(echo "@") - |
+  tr "_" " " |
+  unsco |
+  self 1/3 6/8 4/5 |
+  # 1:行分類フラグ 2:項目ID 3:非課税フラグ 4:金額税抜き 5:金額税込み
+  # 6:税額         7:内訳1  8:内訳2
+  awk '{print $0,"_"}' - |
+  # 1:行分類フラグ 2:項目ID 3:非課税フラグ 4:金額税抜き 5:金額税込み
+  # 6:税額         7:内訳1  8:内訳2        9:項目名
+  self 1/2 NF 3/NF-1 > ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${ID} #合計行完成!!
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  
+  # 明細行の名称を作成する
+  # -
+  # 行分類フラグ10と20で分ける
+  awk '$1=="10"' ${tmp}-meisai_only > ${tmp}-meisai_only_10
+  awk '$1=="20"' ${tmp}-meisai_only > ${tmp}-meisai_only_20
+  # -
+  # 10の処理
+  #   数字：月額利用料
+  #   shokuji：食事実績
+  #   keshoku：欠食
+  awk '$2!="shokuji"&&$2!="keshoku"{print $0,"'${shisetsu}'"}' ${tmp}-meisai_only_10 |
+  # 1:行分類フラグ 2:項目ID 3:非課税フラグ 4:金額税抜き 5:金額税込み
+  # 6:税額         7:内訳1  8:内訳2        9:施設ID
+  self 1 NF 2 3/NF-1 |
+  # 1:行分類フラグ 2:施設ID 3:項目ID 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  LANG=C sort -k2,3 |
+  join2 key=2/3 ${tmp}-RIYOURYOU_MASTER - |
+  # 1:行分類フラグ 2:施設ID     3:項目ID 4:項目名 5:非課税フラグ
+  # 6:金額税抜き   7:金額税込み 8:税額   9:内訳1  10:内訳2
+  delf 2 > ${tmp}-meisai_only_10_kari
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  awk '$2=="shokuji"&&$2=="keshoku"{print $0,"'${shisetsu}'"}' ${tmp}-meisai_only_10 |
+  LANG=C sort -k2,2 |
+  join2 key=2 ${home_tbl_dir}/CONFIG/SEIKYU_KOUMOKUMEI > ${tmp}-meisai_only_10_kari2
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  cat ${tmp}-meisai_only_10_kari ${tmp}-meisai_only_10_kari2 > ${tmp}-meisai_only_10_kansei_${kakutei_nengetsu}_${ID} #明細1完成!!
+
+  # 20の処理
+  #   denwa：電話
+  #   tatekae：立替金
+  #   service${数字}：有料サービス利用料
+  #   event：イベント
+  awk '$2~/^service/{print $0,"'${shisetsu}'"}' ${tmp}-meisai_only_20 |
+  # 1:行分類フラグ 2:項目ID 3:非課税フラグ 4:金額税抜き 5:金額税込み
+  # 6:税額         7:内訳1  8:内訳2        9:施設ID
+  fsed 's/service//2' - |
+  self 1 NF 2/NF-1 |
+  # 1:行分類フラグ 2:施設ID 3:項目ID 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  LANG=C sort -k2,3 |
+  join2 key=2/3 ${tmp}-SERVICE_MASTER - |
+  # 1:行分類フラグ 2:施設ID     3:項目ID 4:項目名 5:非課税フラグ
+  # 6:金額税抜き   7:金額税込み 8:税額   9:内訳1  10:内訳2
+  delf 2 > ${tmp}-meisai_only_20kari
+  # 1:行分類フラグ 3:項目ID 4:項目名 5:非課税フラグ
+  # 6:金額税抜き   7:金額税込み 8:税額   9:内訳1  10:内訳2
+  awk '$2!~/^service/' ${tmp}-meisai_only_20 |
+  LANG=C sort -k2,2 |
+  join2 key=2 ${home_tbl_dir}/CONFIG/SEIKYU_KOUMOKUMEI - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  LANG=C sort > ${tmp}-meisai_only_20kari2
+  cat ${tmp}-meisai_only_20kari2 ${tmp}-meisai_only_20kari > ${tmp}-meisai_only_20_kansei_${kakutei_nengetsu}_${ID} #明細2完成!!
+  # ==================================================
+  # ==================================================
+  # ここからpdf用htmlファイル作成にはいる
+
+  # mojihameファイル作成
+  # なまえ系
+  cjoin0 key=1 <(echo "${ID}") ${tmp}-RIYOUSHA_KIHON > ${tmp}-riyousha_name
+  # 部屋系
+  cjoin0 key=2 <(echo "${ID}") ${tmp}-normal_head_kihon | self 8 > ${tmp}-riyousha_heya
+  # 施設
+  cjoin0 key=1 <(echo "${shisetsu}") ${tmp}-SHISETSU_KIHON | self 2 > ${tmp}-riyousha_shisetsu
+
+  # 施設明細ととのえる
+  LANG=C sort ${tmp}-meisai_only_10_kansei_${kakutei_nengetsu}_${ID} |
+  awk '{if($4=="2"){$4="＊"}else{$4="@"};
+        print}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  sed 's/ _ / @ /g' |
+  sed 's/ _$/ @/g' |
+  awk '{if($8!="@" && $9!="@"){utiwake=$8"("$9")";}
+   else if($8=="@" && $9!="@"){utiwake=$9;}
+   else if($8!="@" && $9=="@"){utiwake=$8}
+        else{utiwake="@";};
+        print $0,utiwake}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2        10:確定内訳
+  self 3/4 6 10 |
+  comma 3 > ${tmp}-meisai_shisetsu
+  # 1:項目名 2:非課税フラグ 3:金額税込み 4:確定内訳
+  
+  # 個別明細ととのえる
+  LANG=C sort ${tmp}-meisai_only_20_kansei_${kakutei_nengetsu}_${ID} |
+  awk '{if($4=="2"){$4="＊"}else{$4="@"};
+        print}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  sed 's/ _ / @ /g' |
+  awk '{if($8!="@" && $9!="@"){utiwake=$8"("$9")";}
+   else if($8=="@" && $9!="@"){utiwake=$9;}
+   else if($8!="@" && $9=="@"){utiwake=$8}
+        else{utiwake="@";};
+        print $0,utiwake}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2        10:確定内訳
+  self 3/4 6 10 |
+  comma 3 > ${tmp}-meisai_kobetsu
+  # 1:項目名 2:非課税フラグ 3:金額税込み 4:確定内訳
+  
+  # 合計整える
+  cat ${tmp}-meisai_only_20_kansei_${kakutei_nengetsu}_${ID} ${tmp}-meisai_only_10_kansei_${kakutei_nengetsu}_${ID} |
+  self 4 5 |
+  # 1:非課税フラグ 2:金額税抜き
+  LANG=C sort |
+  sm2 1 1 2 2 |
+  # 1=課税対象合計 2=非課税対象合計
+  delf 1 |
+  yarr > ${tmp}-kazei_hikazei
+  # 1:課税対象合計 2:非課税対象合計
+  cjoin0 key=1 <(echo "30") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${ID} |
+  self 6/7 |
+  # 1:金額税込み 2:税額
+  ycat ${tmp}-kazei_hikazei - |
+  # 1:課税対象合計 2:非課税対象合計 3:金額税込み 4:税額
+  self 1 4 2 3 |
+  comma 1/4 > ${tmp}-zentai_goukei
+  # 1:課税対象合計 2:税額 3:非課税対象合計 4:金額税込み
+
+
+#########################################################################もし改ページしたいなら明細行数とって、もじはめのふぁいるはめするかんじで
+ 
+cat << FIN > ${tmp}-calsed
+###DOMAIN### http://e-life.hands-lab.com
+###SAKUSEIBI### ${text_sakuseibi}
+###KANA1### $(self 3 ${tmp}-riyousha_name)
+###KANA2###
+###RIYOSHAMEI1### $(self 2 ${tmp}-riyousha_name | awk '{if($1!=""){$1=$1"　様";};print}' -)
+###RIYOSHAMEI2###
+###SEIKYU_ALL### $(cjoin0 key=1 <(echo "30") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${ID} | self 6 | comma 1)
+###ROOM### $(cat ${tmp}-riyousha_heya)
+###ROOM2###
+###SEIKYU_SHISETSU### $(cat ${tmp}-riyousha_shisetsu)
+###SHISETSU_GOUKEI### $(cjoin0 key=1 <(echo "15") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${ID} | self 6 | comma 1 > ${tmp}-goukei_value ; [ ! -s ${tmp}-goukei_value ] && echo "0" || cat ${tmp}-goukei_value)
+###KOBETSU_GOUKEI### $(cjoin0 key=1 <(echo "25") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${ID} | self 6 | comma 1 > ${tmp}-goukei_value ; [ ! -s ${tmp}-goukei_value ] && echo "0" || cat ${tmp}-goukei_value)
+###KIGEN### ${kigen}
+###KARI### ${karihyouki}
+FIN
+
+  # はめる
+  cat ${html_dir}/SHISETSU_SEIKYU_KOJINSEIKYU.html |
+  calsed -f ${tmp}-calsed - |
+  mojihame -l"###SHISETSU_RIYOU###" - ${tmp}-meisai_shisetsu |
+  mojihame -l"###KOBETSU_RIYOURYOU###" - ${tmp}-meisai_kobetsu |
+  mojihame -l"ZENTAI_GOUKEI" - ${tmp}-zentai_goukei |
+  mojihame -l"SHOMEI" - ${tmp}-SEIKYU_SHOMEI > ${tmp}-html_kansei_${kakutei_nengetsu}_${ID}
+  # ==================================================
+done
+# ------------------------
+
+# ------------------------
+# 合算相手を設定している
+
+# ${tmp}-gassan_head_kihon2
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+
+# 合算相手IDがキーとなる
+# (合算相手の請求書ファイルは出来上がっているため呼び出すのみ)
+self 14 2 9 11 ${tmp}-gassan_head_kihon2 |
+LANG=C sort -u > ${tmp}-syori_list2
+# 1:請求確定月 2:入居者ID 3:支払合算相手ID 4:請求書設定フラグ
+
+# 出来上がってるファイルをよびだして、pdf用htmlファイル作成
+# "ここからpdf用htmlファイル作成にはいる"をそのまま同じ処理
+cat ${tmp}-syori_list2 |
+while read kakutei_nengetsu ID gassanID flg ; do
+  # mojihameファイル作成
+  # なまえ系
+  cjoin0 key=1 <(echo "${ID}") ${tmp}-RIYOUSHA_KIHON > ${tmp}-riyousha_name
+  cjoin0 key=1 <(echo "${gassanID}") ${tmp}-RIYOUSHA_KIHON > ${tmp}-gassanaite_name
+  # 部屋系
+  cjoin0 key=2 <(echo "${ID}") ${tmp}-normal_head_kihon | self 8 > ${tmp}-riyousha_heya
+  cjoin0 key=2 <(echo "${gassanID}") ${tmp}-gassan_head_kihon2 | self 8 > ${tmp}-gassanaite_heya
+  # 施設
+  cjoin0 key=1 <(echo "${shisetsu}") ${tmp}-SHISETSU_KIHON | self 2 > ${tmp}-riyousha_shisetsu
+
+# 連名フラグによってもじはめ変数設定
+# 0：なし 1：連名 2：請求先入居者名義
+case "${flg}" in
+  # -------------------------
+  # 連名
+  1 )
+    room1="$(cat ${tmp}-riyousha_heya)"
+    room2="$(cat ${tmp}-gassanaite_heya)"
+    kana1="$(self 3 ${tmp}-riyousha_name)"
+    kana2="$(self 3 ${tmp}-gassanaite_name)"
+    riyoushamei1="$(self 2 ${tmp}-riyousha_name | awk '{if($1!=""){$1=$1"　様";};print}' -)"
+    riyoushamei2="$(self 2 ${tmp}-gassanaite_name | awk '{if($1!=""){$1=$1"　様";};print}' -)"
+  ;;
+  # -------------------------
+  # -------------------------
+  # 請求先名義
+  2 )
+    room1="$(cat ${tmp}-gassanaite_heya)"
+    room2=""
+    kana1="$(self 3 ${tmp}-gassanaite_name)"
+    kana2=""
+    riyoushamei1="$(self 2 ${tmp}-gassanaite_name | awk '{if($1!=""){$1=$1"　様";};print}' -)"
+    riyoushamei2=""
+  # -------------------------
+  ;;
+esac
+
+
+  # 施設明細ととのえる
+  LANG=C sort ${tmp}-meisai_only_10_kansei_${kakutei_nengetsu}_${gassanID} |
+  awk '{if($4=="2"){$4="＊"}else{$4="@"};
+        print}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  sed 's/ _ / @ /g' |
+  awk '{if($8!="@" && $9!="@"){utiwake=$8"("$9")";}
+   else if($8=="@" && $9!="@"){utiwake=$9;}
+   else if($8!="@" && $9=="@"){utiwake=$8}
+        else{utiwake="@";};
+        print $0,utiwake}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2        10:確定内訳
+  self 3/4 6 10 |
+  comma 3 > ${tmp}-meisai_shisetsu
+  # 1:項目名 2:非課税フラグ 3:金額税込み 4:確定内訳
+
+  # 個別明細ととのえる
+  LANG=C sort ${tmp}-meisai_only_20_kansei_${kakutei_nengetsu}_${gassanID} |
+  awk '{if($4=="2"){$4="＊"}else{$4="@"};
+        print}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2
+  sed 's/ _ / @ /g' |
+  awk '{if($8!="@" && $9!="@"){utiwake=$8"("$9")";}
+   else if($8=="@" && $9!="@"){utiwake=$9;}
+   else if($8!="@" && $9=="@"){utiwake=$8}
+        else{utiwake="@";};
+        print $0,utiwake}' - |
+  # 1:行分類フラグ 2:項目ID 3:項目名 4:非課税フラグ 5:金額税抜き
+  # 6:金額税込み   7:税額   8:内訳1  9:内訳2        10:確定内訳
+  self 3/4 6 10 |
+  comma 3 > ${tmp}-meisai_kobetsu
+  # 1:項目名 2:非課税フラグ 3:金額税込み 4:確定内訳
+
+  # 合計整える
+  cat ${tmp}-meisai_only_20_kansei_${kakutei_nengetsu}_${gassanID} ${tmp}-meisai_only_10_kansei_${kakutei_nengetsu}_${gassanID} |
+  self 4 5 |
+  # 1:非課税フラグ 2:金額税抜き
+  LANG=C sort |
+  sm2 1 1 2 2 |
+  # 1=課税対象合計 2=非課税対象合計
+  delf 1 |
+  yarr > ${tmp}-kazei_hikazei
+  # 1:課税対象合計 2:非課税対象合計
+  cjoin0 key=1 <(echo "30") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${gassanID} |
+  self 6/7 |
+  # 1:金額税込み 2:税額
+  ycat ${tmp}-kazei_hikazei - |
+  # 1:課税対象合計 2:非課税対象合計 3:金額税込み 4:税額
+  self 1 4 2 3 |
+  comma 1/4 > ${tmp}-zentai_goukei
+  # 1:課税対象合計 2:税額 3:非課税対象合計 4:金額税込み
+
+
+#########################################################################もし改ページしたいなら明細行数とって、もじはめのふぁいるはめするかんじで
+
+cat << FIN > ${tmp}-calsed
+###DOMAIN### http://e-life.hands-lab.com
+###SAKUSEIBI### ${text_sakuseibi}
+###KANA1### ${kana1}
+###KANA2### ${kana2}
+###RIYOSHAMEI1### ${riyoushamei1}
+###RIYOSHAMEI2### ${riyoushamei2}
+###SEIKYU_ALL### $(cjoin0 key=1 <(echo "30") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${gassanID} | self 6 | comma 1)
+###ROOM### ${room1}
+###ROOM2### ${room2}
+###SEIKYU_SHISETSU### $(cat ${tmp}-riyousha_shisetsu)
+###SHISETSU_GOUKEI### $(cjoin0 key=1 <(echo "15") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${gassanID} | self 6 | comma 1 > ${tmp}-goukei_value ; [ ! -s ${tmp}-goukei_value ] && echo "0" || cat ${tmp}-goukei_value)
+###KOBETSU_GOUKEI### $(cjoin0 key=1 <(echo "25") ${tmp}-goukei_only_kansei_${kakutei_nengetsu}_${gassanID} | self 6 | comma 1 > ${tmp}-goukei_value ; [ ! -s ${tmp}-goukei_value ] && echo "0" || cat ${tmp}-goukei_value)
+###KIGEN### ${kigen}
+###KARI### ${karihyouki}
+FIN
+
+  # はめる
+  cat ${html_dir}/SHISETSU_SEIKYU_KOJINSEIKYU.html |
+  calsed -f ${tmp}-calsed - |
+  mojihame -l"###SHISETSU_RIYOU###" - ${tmp}-meisai_shisetsu |
+  mojihame -l"###KOBETSU_RIYOURYOU###" - ${tmp}-meisai_kobetsu |
+  mojihame -l"ZENTAI_GOUKEI" - ${tmp}-zentai_goukei |
+  mojihame -l"SHOMEI" - ${tmp}-SEIKYU_SHOMEI > ${tmp}-html_kansei_${kakutei_nengetsu}_${ID}
+done
+# ------------------------
+# ---------------------------------------
+
+# ---------------------------------------
+# ヘッダの更新時間変更
+
+# ${tmp}-normal_head_kihon ${tmp}-gassan_head_kihon1
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+
+# MODEによって更新するフィールドがかわる
+if [ "${is_kakutei}" = "2" ] ; then
+  koushin_f="13"
+else
+  koushin_f="12"
+fi
+
+# input
+cat ${tmp}-normal_head_kihon ${tmp}-gassan_head_kihon1 |
+awk '{$'${koushin_f}'='${current_time}'; $25='${current_time}'; $26='${userid}'; print}' - |
+LANG=C sort > ${tmp}-head_input
+# L4
+cat ${tmp}-koushin_head ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25 > ${tmp}-L4_head
+# ---------------------------------------
+
+# ---------------------------------------
+# チェック・更新
+
+cat << FIN > ${tmp}-koushin_file_input
+${tmp}-head_input ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+FIN
+
+cat << FIN > ${tmp}-koushin_file_L4
+${tmp}-L4_head ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD 26
+FIN
+
+# チェック
+self 1 3 ${tmp}-koushin_file_input |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+self 1 3 ${tmp}-koushin_file_L4 |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 更新
+cat ${tmp}-koushin_file_input ${tmp}-koushin_file_L4 |
+while read File okiba retu ; do
+  cp -p ${File} ${okiba}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# ---------------------------------------
+
+# ---------------------------------------
+# HTMLファイルをソート後PDFに変換する
+
+# 出力したものは下記リスト
+# ${tmp}-head_kihon
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+self 2 8 ${tmp}-head_kihon |
+# 1:入居者ID 2:居室番号
+LANG=C sort |
+join2 key=1 ${tmp}-RIYOUSHA_KIHON - |
+# 1:入居者ID 2:入居者名 3:入居者カナ 4:居室番号
+# -
+# ソート
+case "${shutsuryokujun}" in
+  sort_shimei )
+    LANG=C sort -k3,3
+  ;;
+  sort_room )
+    LANG=C sort -k4,4
+  ;;
+esac |
+self 1 |
+# リストに従いファイルをcat
+while read ID ; do
+  cat ${tmp}-html_kansei_*_${ID}
+done > ${tmp}-html_kansei.html
+${home_dir}/E-LIFE/TOOL/wkhtmltopdf-amd64 ${tmp}-html_kansei.html ${app_dir}/DOWNLOAD/${current_time}.SEIKYU.pdf
+
+# 出力
+cat << FIN > ${tmp}-html.html
+  <html>
+    <head>
+      <script type="text/javascript" language="Javascript">
+        window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.SEIKYU.pdf","pdfprint");
+        window.self.close();
+      </script>
+    </head>
+  </html>
+FIN
+echo -e "Content-Type: text/html; charset=UTF-8; \n\n" |
+cat - ${tmp}-html.html
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル削除
+
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# ---------------------------------------
+
+
+#rm -f ${tmp}-*
+exit 0
+

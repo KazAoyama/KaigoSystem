@@ -1,0 +1,158 @@
+#!/bin/bash
+#
+# SELECT_CHECKLIST.DISPLAY : チェックリスト選択表示
+#
+# Usage : SELECT_CHECKLIST.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+# 利用者ID
+echo "${Riyoushaid}" > $tmp-riyoushaid
+echo "${Riyoushaid}" "${hdSakuseiDate}" > $tmp-careplandate
+
+# 本日の日付
+curday=$(mdate today | self 1)
+
+errorflg="0"
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+      : > $tmp-null
+  ;;
+
+  # 更新
+  regist)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message="更新完了"
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+      errorflg="1"
+    fi
+  ;;
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ "${MODE}" = "regist" ] ; then
+if [ ! -z "${message}" ] ; then
+if [ "${errorflg}" = "0" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+      window.close();
+    </script>
+FIN
+else
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+fi
+fi
+#--------------------------------------------------------------
+
+# ケアプランアセスメントデータ
+# 1:利用者ID 2:ケアプラン作成日 3:アセスメント作成日
+: > $tmp-checklistdate
+if [ -s ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_CHECKLIST ] ; then
+   cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_CHECKLIST      |
+   LANG=C sort -k1,2                                        |
+   join0 key=1/2 $tmp-careplandate                          |
+   self 3                                      > $tmp-checklistdate
+fi
+
+
+: > $tmp-checklist_list
+
+if [ -s ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CHECKLIST ] ; then
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CHECKLIST   |
+join0 key=1 $tmp-riyoushaid         |
+# 1:利用者ID 2:チェックリスト作成日
+self 1 2                          |
+LANG=C sort -k1,2                 |
+uniq                              |
+if [ "$(gyo $tmp-checklistdate)" = "1" ] ; then
+   awk '{print $2,substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2),"selected"}'
+else
+   awk '{print $2,substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2),"　"}'
+fi |
+LANG=C sort -k1,1                   > $tmp-checklist_list
+fi
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${tmp}-listdata)
+#--------------------------------------------------------
+
+# 日付の設定
+[ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] && hdKeikakuSakuseiDate=$(mdate today | self 1)
+
+dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!=""{print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###KEIKAKUSAKUSEIDATE### $dispKeikakuSakuseiDate
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/SELECT_CHECKLIST.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###CHECKLISTDATE### - ${tmp}-checklist_list |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,158 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.SEARCH
+# 個人情報詳細(口座)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/13
+
+#--------------------------------------------------------------
+# ログ
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+KAIGOHOKENID="$(nameread  "KAIGOHOKENID" $namedata)"
+
+USERID="$(nameread  "USERID" $namedata)"
+SHISETSUID="$(nameread  "SHISETSUID" $namedata)"
+RIYOUSHAID="$(nameread  "RIYOUSHAID" $namedata)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${tbl_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+
+
+### モードによる表示の分岐
+#case "${MODE}" in
+  # 初期表示
+#  search)
+
+###########
+# 利用者情報の取得
+###########
+
+# 元号の準備
+awk '$(NF-2)!="9"{print $1,$2}' ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU > $tmp-gengou
+
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON          |
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+awk '$1=="'${RIYOUSHAID}'"{print $4,$5,$6,$7,$8}' |
+awk '{if($1=="1"){print $0,"男"}
+      else{print $0,"女"}
+     }'                    |
+delf 1                     |
+cjoin1 key=1 $tmp-gengou - |
+self NF 2/NF-1             > $tmp-riyousha
+# 1:性別 2:和暦：元号 3:和暦：誕生年 4:和暦：誕生月 5:和暦：誕生日
+
+###########
+# 介護保険情報の取得
+###########
+# initの場合は既に介護保険情報があるか確認し、あれば保険者番号などを取得
+if [ "${MODE}" = "init" ] ; then
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KAIGOHOKEN |
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print "kaigohoken",$0}'  |
+LANG=C sort -u |
+tail -1        > $tmp-kaigohoken
+else
+
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KAIGOHOKEN |
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度              4:保険者番号                                        5:保険者名
+# 6:被保険者番号          7:性別                  8:生年月日：和暦元号  9:生年月日：和暦誕生年                              10:生年月日：和暦誕生月
+# 11:生年月日：和暦誕生日 12:郵便番号             13:住所               14:認定年月：和暦元号                               15:認定年月：和暦年
+# 16:認定年月：和暦月     17:認定年月：和暦日     18:認定年月：西暦     19:有効期間FROM：和暦元号                           20:有効期間FROM：和暦年
+# 21:有効期間FROM：和暦月 22:有効期間FROM：和暦日 23:有効期間FROM：西暦 24:有効期間TO：和暦元号                             25:有効期間TO：和暦年
+# 26:有効期間TO：和暦月   27:有効期間TO：和暦日   28:有効期間TO：西暦   29:居宅介護支援者又は介護予防事業者及びその事業所名 30:認定審査会の意見及びサービスの種類指定
+# 31:備考
+
+# 利用者IDと介護保険IDが一致し、有効フラグが9:削除ではないなもの
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KAIGOHOKENID}'"&&$(NF-2)!="9"{print "kaigohoken",$0}'  |
+ycat $tmp-riyousha - |
+# 1:性別                                    2:和暦：元号            3:和暦：誕生年          4:和暦：誕生月        5:和暦：誕生日
+# 6:kaigohoken                              7:利用者(入居者)ID      8:介護保険ＩＤ          9:介護度              10:保険者番号
+# 11:保険者名                               12:被保険者番号         13:性別                 14:生年月日：和暦元号 15:生年月日：和暦誕生年
+# 16:生年月日：和暦誕生月                   17:生年月日：和暦誕生日 18:郵便番号             19:住所               20:認定年月：和暦元号
+# 21:認定年月：和暦年                       22:認定年月：和暦月     23:認定年月：和暦日     24:認定年月：西暦     25:有効期間FROM：和暦元号
+# 26:有効期間FROM：和暦年                   27:有効期間FROM：和暦月 28:有効期間FROM：和暦日 29:有効期間FROM：西暦 30:有効期間TO：和暦元号
+# 31:有効期間TO：和暦年                     32:有効期間TO：和暦月   33:有効期間TO：和暦日   34:有効期間TO：西暦   35:居宅介護支援者又は介護予防事業者及びその事業所名
+# 36:認定審査会の意見及びサービスの種類指定 37:備考
+self 6/12 1/5 18/NF      > $tmp-kaigohoken
+fi
+
+echo "search_result ok" > $tmp-result
+
+#  ;;
+
+#--------------------------------------------------------------
+if [ -s $tmp-kaigohoken ] ; then
+  cat $tmp-result $tmp-kaigohoken
+else
+  cat $tmp-result
+fi
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

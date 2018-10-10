@@ -1,0 +1,193 @@
+#!/bin/bash
+#
+# HOUMONKAIGO_CAREPLAN_KIGEN.EXCEL : ケアプラン再作成一覧EXCEL出力
+#
+# Usage : HOUMONKAIGO_CAREPLAN_KIGEN.EXCEL namefile datafile
+#
+# Written by J.mikmai(hands lab.inc)
+
+# 設定ファイル読込
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#------------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+cookie-name                    |
+LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------------
+# 変数設定
+tmp=/var/tmp/${$}
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/HOUMONKAIGO"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------------
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+#--------------------------------------------------------------
+# 紐付く事業所
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER_HONBAN |
+awk '$1~/'${shisetsu}'/'                                                    |
+# 1:グループ事業所ID 2:事業所ID 3:サービス事業タイプ
+self 2                                                                      |
+LANG=C sort -u                                                              > $tmp-jigyousyo_list
+
+# ログインしているグループ事業所IDから対象の入居者IDを抽出
+cat ${data_dir}/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS                     |
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日 5:削除フラグ
+# 6:更新時間 7:更新者
+awk '$1~/'${shisetsu}'/'                                                    |
+self 2                                                                      |
+# 1:入居者ID
+LANG=C sort -k1,1 -u                                                        > $tmp-gaitou_nyuukyosya_list
+
+# 該当の利用者に絞る
+cat $tmp-gaitou_nyuukyosya_list |
+while read riyousya ; do
+  cat ${pompa_dir}/HOUMONKAIGO/${riyousya}/HOUMONKAIGO_KEIKAKU
+  # 1:利用者ID   2:作成年月日(西暦) 3:作成年月日(和暦) 4:計画書タイプ 5:計画作成者氏名
+  # 6:利用者氏名 7:性別             8:生年月日         9:要介護度     10:住所
+  # 11:電話番号  12:本人希望        13:家族希望        14:課題        15:訪問介護>事業者名
+  # 16:説明日    17:説明者          18:有効フラグ      19:処理日      20:ユーザID
+done                            > $tmp-shisetu_riyousya
+
+# 11ヶ月前の日付
+MONTH_AGO=$(date +"%Y%m%d" --date "11 months ago")
+
+
+
+cat $tmp-shisetu_riyousya |
+# 最新のデータを抽出
+LANG=C sort -k1,1 -k2,2nr |
+getfirst 1 1              |
+# 1:利用者ID   2:作成年月日(西暦) 3:作成年月日(和暦) 4:計画書タイプ 5:計画作成者氏名
+# 6:利用者氏名 7:性別             8:生年月日         9:要介護度     10:住所
+# 11:電話番号  12:本人希望        13:家族希望        14:課題        15:訪問介護>事業者名
+# 16:説明日    17:説明者          18:有効フラグ      19:処理日      20:ユーザID
+awk '$2<="'${MONTH_AGO}'"'
+
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 抽出期間///////////////////////////////////////////////////////////
+lastyearmonth=$(mdate ${this_month}m/-11)
+gesho=$(mdate ${lastyearmonth}m |tateyoko |head -1)
+echo 平成 $gesho  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-gesho
+getumatu=$(mdate ${lastyearmonth}m |tateyoko |tail -1)
+echo 平成 $getumatu  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-getumatu
+
+cat ${tmp}-getumatu >>${tmp}-gesho
+cat ${tmp}-gesho |
+tateyoko |
+awk '{print $1"～"$2}'  >${tmp}-kikan
+
+# 対象者抽出///////////////////////////////////////////////////////
+# 作成日を抽出
+mdate ${lastyearmonth}m |
+tateyoko |
+join1 key=5 - $pompa_dir/HOUMONKAIGO_KIGEN/HOUMONKAIGO_DUMMY_DATA |
+tee $tmp-kari   |
+sed s/_/　/g |
+self 1 2 3 4  5.1.4 5.5.2 5.7 |
+awk '{print $1,$2,$3,$4,"平成"$5-1988"年"$6"月"$7"日"}' >${tmp}-dummy_data
+# 有効期限（３ヶ月後）を抽出
+for day in $(cat $tmp-kari |self 5);do
+  date --date "${day} + 3month" +"%F";
+done                                  |
+self 1.1.4 1.6.2 1.9 |
+awk '{print "～ ""平成"$1-1988"年"$2"月"$3"日"}'  >${tmp}-kigen
+ 
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo "000056" >${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# ダミー領域、あとで書き直す部分//////////////////////////////////
+userid="000056"
+echo "グランクレール青葉台二丁目" >${tmp}-shisetu_name
+#//////////////////////////////////////////////////////////////////
+
+TEMPLA=${temp_dir}/HOUMONKAIGO_CAREPLAN_KIGEN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-shisetu_name                 \
+                    1 h4 ${tmp}-print_day                    \
+                    1 b5 ${tmp}-kikan                        \
+                    1 a9 ${tmp}-dummy_data                   \
+                    1 f9 ${tmp}-kigen                        > ${download_dir}/${userid}_$$.download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+#echo "${userid}_$$.download.xls"
+rm -f ${tmp}-*
+exit 0
+

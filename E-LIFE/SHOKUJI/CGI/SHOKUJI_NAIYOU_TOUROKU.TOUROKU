@@ -1,0 +1,451 @@
+#!/bin/bash
+#
+# SHOKUJI_NAIYOU_TOUROKU.TOUROKU
+# 食事内容登録
+#
+# Written by E.Okuda 20140114
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+today=$(date +%Y%m%d)
+yday=$(mdate ${today}/-1)
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHOKUJI"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/SHOKUJI/KANRI"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+  Shisetsu=$(nameread     "shisetsu"            $namedata)
+  Tateya=$(nameread       "Tateya"              $namedata)
+  USERID=$(nameread       "USERID"              $namedata)
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル
+
+# 食事形態マスタ
+# 食事主食マスタ
+# 食事副食マスタ
+#--------------------------------------------------------------
+############
+# 形態
+############
+cat ${namedata} |
+awk '$1~/Keitai*/{gsub("Keitai","",$1);print $0}' |
+awk '$2!="_"{print $0}'  > $tmp-keitai_data
+# マスタの用意
+awk '$(NF-2)!="9"' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI >$tmp-keitai_master
+
+if [ -s $tmp-keitai_data ] ; then
+  cat $tmp-keitai_data |
+#1:id  2:名前 
+  LANG=C sort |
+  if [ -s $tmp-keitai_master ]; then
+    join2 +"_" key=1 $tmp-keitai_master - |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:削除フラグ
+# 6:更新日     7:更新者     8:食事形態"新"名称
+    delf NF-3 NF-2 NF-1 |
+    # 旧名称と新名称に違いはあるものだけ更新データとしてファイルへ格納
+    awk '$4!=$5{print $0}'   > $tmp-keitai_data2
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:食事形態"新"名称
+
+    cat $tmp-keitai_data |
+#1:id  2:名前
+    LANG=C sort |
+    join1 +ng key=1 - $tmp-keitai_master  >$tmp-ok 2>$tmp-keitai_data2_ng
+    cat $tmp-keitai_data2_ng |
+    awk '{print $1,$2,$3,$4,"_"}'      >> $tmp-keitai_data2
+  else
+    awk '{print $1,"_","_","_",$2}'  > $tmp-keitai_data2
+# 1:食事形態id 2:_ 3:_ 4:_ 5:食事形態"新"名称
+     
+  fi
+
+    :> $tmp-keitai_data3
+  if [ -s $tmp-keitai_data2 ] ; then
+
+    # 更新する新データ旧データの作成
+    awk '$4!="_"{print $1,$2,"'${yday}'",$4,"9","'${cur_time}'","'${USERID}'"}' $tmp-keitai_data2  >> $tmp-keitai_data3
+    awk '$4!="_"&&$5!="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-keitai_data2 >> $tmp-keitai_data3
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称 5:削除フラグ
+# 6:更新日時   7:UserID
+
+    # 新しいデータの準備
+    awk '$4=="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-keitai_data2 |
+    LANG=C sort -k1,1  |
+    delf 1             > $tmp-keitai_data2_new
+#  1:登録年月日  2:(削除)変更年月日 3:食事形態新名称 4:削除フラグ 5:更新日時 6:UserID
+
+    # 新しいデータがあったらid付与
+    if [ -s $tmp-keitai_data2_new ] ; then
+      # 今回取得するID数
+      last_no=$(gyo $tmp-keitai_data2_new)
+
+      mkdir -p ${kanri_dir}/${Shisetsu}/${Tateya}
+      touch ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID
+      [ -s ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID ] || echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID
+
+      # 現状の最終番号
+      now_last_no=$(cat ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID)
+      # 今回の発番後に、数字が限度を超えないかチェック
+      new_last_no=$(expr ${now_last_no} + ${last_no})
+
+      # 超えてたらリセット
+      [ ${new_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID
+
+      get_no ${last_no} ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI_ID > $tmp-id_all
+
+      # 新しいデータとくっつける
+      ycat $tmp-id_all $tmp-keitai_data2_new  |
+      cat $tmp-keitai_data3 -                 > $tmp-keitai_result_input
+    else
+      cat $tmp-keitai_data3                  > $tmp-keitai_result_input
+    fi
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称
+  else
+      cat $tmp-keitai_data3                  > $tmp-keitai_result_input
+  fi
+else
+  : > $tmp-keitai_result_input
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+################
+# 主食
+################
+cat ${namedata} |
+awk '$1~/Shushoku*/{gsub("Shushoku","",$1);print $0}' |
+awk '$2!="_"{print $0}' > $tmp-shushoku_data
+
+# マスタの準備
+awk '$(NF-2)!="9"' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU > $tmp-shushoku_master
+
+if [ -s $tmp-shushoku_data ] ; then
+  cat $tmp-shushoku_data |
+#1: 2: 3:
+  LANG=C sort |
+  if [ -s $tmp-shushoku_master ]; then
+    join2 +"_" key=1 $tmp-shushoku_master - |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:削除フラグ
+# 6:更新日     7:更新者     8:食事形態"新"名称
+    delf NF-3 NF-2 NF-1 |
+    # 旧名称と新名称に違いはあるものだけ更新データとしてファイルへ格納
+    awk '$4!=$5{print $0}'   > $tmp-shushoku_data2
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:食事形態"新"名称
+    cat $tmp-shushoku_data |
+#1:id  2:名前
+    LANG=C sort |
+    join1 +ng key=1 - $tmp-shushoku_master  >$tmp-ok 2>$tmp-shushoku_data2_ng
+    cat $tmp-shushoku_data2_ng |
+    awk '{print $1,$2,$3,$4,"_"}'      >> $tmp-shushoku_data2
+  else
+    awk '{print $1,"_","_","_",$2}'  > $tmp-shushoku_data2
+# 1:食事形態id 2:_ 3:_ 4:_ 5:食事形態"新"名称
+
+  fi
+#cp $tmp-* /home/hands/work/okuda
+
+    :> $tmp-shushoku_data3
+  if [ -s $tmp-shushoku_data2 ] ; then
+
+    # 更新する新データ旧データの作成
+    awk '$4!="_"{print $1,$2,"'${yday}'",$4,"9","'${cur_time}'","'${USERID}'"}' $tmp-shushoku_data2  >> $tmp-shushoku_data3
+    awk '$4!="_"&&$5!="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-shushoku_data2 >> $tmp-shushoku_data3
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称 5:削除フラグ
+# 6:更新日時   7:UserID
+
+    # 新しいデータの準備
+    awk '$4=="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-shushoku_data2 |
+    LANG=C sort -k1,1  |
+    delf 1             > $tmp-shushoku_data2_new
+#  1:登録年月日  2:(削除)変更年月日 3:食事形態新名称 4:削除フラグ 5:更新日時 6:UserID
+
+    # 新しいデータがあったらid付与
+    if [ -s $tmp-shushoku_data2_new ] ; then
+      # 今回取得するID数
+      s_last_no=$(gyo $tmp-shushoku_data2_new)
+
+      mkdir -p ${kanri_dir}/${Shisetsu}/${Tateya}
+      touch ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID
+      [ -s ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID ] || echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID
+
+      # 現状の最終番号
+      s_now_last_no=$(cat ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID)
+      # 今回の発番後に、数字が限度を超えないかチェック
+      s_new_last_no=$(expr ${s_now_last_no} + ${s_last_no})
+
+      # 超えてたらリセット
+      [ ${s_new_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID
+
+      get_no ${s_last_no} ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU_ID > $tmp-s_id_all
+
+      # 新しいデータとくっつける
+      ycat $tmp-s_id_all $tmp-shushoku_data2_new  |
+      cat $tmp-shushoku_data3 -                 > $tmp-shushoku_result_input
+    else
+      cat $tmp-shushoku_data3                  > $tmp-shushoku_result_input
+    fi
+  else
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称
+      cat $tmp-shushoku_data3                  > $tmp-shushoku_result_input
+  fi
+else
+    : > $tmp-shushoku_result_input
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+################
+# 副食
+################
+
+cat ${namedata} |
+awk '$1~/Fukushoku*/{gsub("Fukushoku","",$1);print $0}' |
+awk '$2!="_"{print $0}' > $tmp-fukushoku_data
+
+awk '$(NF-2)!="9"' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU > $tmp-fukushoku_master
+if [ -s $tmp-fukushoku_data ] ; then
+  cat $tmp-fukushoku_data |
+#1: 2: 3:
+  LANG=C sort |
+  if [ -s $tmp-fukushoku_master ]; then
+    join2 +"_" key=1 $tmp-fukushoku_master - |
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:削除フラグ
+# 6:更新日     7:更新者     8:食事形態"新"名称
+    delf NF-3 NF-2 NF-1 |
+    # 旧名称と新名称に違いはあるものだけ更新データとしてファイルへ格納
+    awk '$4!=$5{print $0}'   > $tmp-fukushoku_data2
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日 4:食事形態"旧"名称 5:食事形態"新"名称
+
+    cat $tmp-fukushoku_data |
+#1:id  2:名前
+    LANG=C sort |
+    join1 +ng key=1 - $tmp-fukushoku_master  >$tmp-ok 2>$tmp-fukushoku_data2_ng
+    cat $tmp-fukushoku_data2_ng |
+    awk '{print $1,$2,$3,$4,"_"}'      >> $tmp-fukushoku_data2
+  else
+    awk '{print $1,"_","_","_",$2}'  > $tmp-fukushoku_data2
+# 1:食事形態id 2:_ 3:_ 4:_ 5:食事形態"新"名称
+
+  fi
+
+    :> $tmp-fukushoku_data3
+  if [ -s $tmp-fukushoku_data2 ] ; then
+    # 更新する新データ旧データの作成
+    awk '$4!="_"{print $1,$2,"'${yday}'",$4,"9","'${cur_time}'","'${USERID}'"}' $tmp-fukushoku_data2  >> $tmp-fukushoku_data3
+    awk '$4!="_"&&$5!="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-fukushoku_data2 >> $tmp-fukushoku_data3
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称 5:削除フラグ
+# 6:更新日時   7:UserID
+
+    # 新しいデータの準備
+    awk '$4=="_"{print $1,"'${today}'","_",$5,"1","'${cur_time}'","'${USERID}'"}' $tmp-fukushoku_data2 |
+    LANG=C sort -k1,1  |
+    delf 1             > $tmp-fukushoku_data2_new
+#  1:登録年月日  2:(削除)変更年月日 3:食事形態新名称 4:削除フラグ 5:更新日時 6:UserID
+
+    # 新しいデータがあったらid付与
+    if [ -s $tmp-fukushoku_data2_new ] ; then
+      # 今回取得するID数
+      f_last_no=$(gyo $tmp-fukushoku_data2_new)
+
+      mkdir -p ${kanri_dir}/${Shisetsu}/${Tateya}
+      touch ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID
+      [ -s ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID ] || echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID
+
+      # 現状の最終番号
+      f_now_last_no=$(cat ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID)
+      # 今回の発番後に、数字が限度を超えないかチェック
+      f_new_last_no=$(expr ${f_now_last_no} + ${f_last_no})
+      # 超えてたらリセット
+      [ ${f_new_last_no} -gt 999 ] && echo "001" > ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID
+
+      get_no ${f_last_no} ${kanri_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU_ID > $tmp-f_id_all
+
+      # 新しいデータとくっつける
+      ycat $tmp-f_id_all $tmp-fukushoku_data2_new  |
+      cat $tmp-fukushoku_data3 -                 > $tmp-fukushoku_result_input
+    else
+      cat $tmp-fukushoku_data3                  > $tmp-fukushoku_result_input
+    fi
+  else
+# 1:食事形態id 2:登録年月日 3:(削除)変更年月日4:食事形態名称
+      cat $tmp-fukushoku_data3                  > $tmp-fukushoku_result_input
+  fi
+else
+  : > $tmp-fukushoku_result_input
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#cp $tmp-* /home/hands/work/okuda
+[ ! -s $tmp-keitai_result_input -a ! -s $tmp-shushoku_result_input -a ! -s $tmp-fukushoku_result_input ] && error_exit "更新データがありません。"
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+: > $tmp-target-table
+#cat <<- FIN | LANG=C sort -u > $tmp-target-table
+#${Shisetsu}/${Tateya}/SHOKUJI_MENU SHOKUJI_MENU
+#FIN
+[ -s $tmp-keitai_result_input ] && echo "${Shisetsu}/${Tateya}/SHOKUJI_KEITAI SHOKUJI_KEITAI" >> $tmp-target-table
+[ -s $tmp-shushoku_result_input ] && echo "${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU SHOKUJI_SHUSHOKU"  >> $tmp-target-table
+[ -s $tmp-fukushoku_result_input ] && echo "${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU SHOKUJI_FUKUSHOKU" >> $tmp-target-table
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+: > $tmp-koushin_pompa
+#cat <<- FIN > $tmp-koushin_pompa
+#shokuji_menu SHOKUJI_MENU 1 16 17 ${pompa_dir}/${Shisetsu}/${Tateya} ${input_dir}/${Shisetsu}/${Tateya}
+#FIN
+[ -s $tmp-keitai_result_input ] && echo "keitai_result SHOKUJI_KEITAI 2 6 7 ${pompa_dir}/${Shisetsu}/${Tateya} ${input_dir}/${Shisetsu}/${Tateya}" >> $tmp-koushin_pompa
+[ -s $tmp-shushoku_result_input ] && echo "shushoku_result SHOKUJI_SHUSHOKU 2 6 7 ${pompa_dir}/${Shisetsu}/${Tateya} ${input_dir}/${Shisetsu}/${Tateya}"  >> $tmp-koushin_pompa
+[ -s $tmp-fukushoku_result_input ] && echo "fukushoku_result SHOKUJI_FUKUSHOKU 2 6 7 ${pompa_dir}/${Shisetsu}/${Tateya} ${input_dir}/${Shisetsu}/${Tateya}"   >> $tmp-koushin_pompa
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#    error_unlock "ロック処理失敗"
+# 20150910mod
+# ロック処理で失敗したときにアンロック（ロックファイルを削除）すると、他ユーザによるロックを解除してしまうのでerror_exitに変更。
+# ロック成功後、ロック解除までの間にエラーが起きてシェルをexitする場合はerror_unlockで確実にロックファイルを削除する。
+    error_exit "ロック処理失敗"
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/SHOKUJI_NAIYOU_TOUROKU/${Shisetsu}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $lock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok" "${shokuji_id}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

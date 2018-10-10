@@ -1,0 +1,1916 @@
+#!/bin/bash
+#
+# SCHEDULE_NYUKYOSHA_TOUROKU.TOUROKU : 居宅訪問サービス事業所登録
+#
+# Usage : SCHEDULE_NYUKYOSHA_TOUROKU.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+chkSakujo="1"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# イベント名
+[ -z "${EventName}" -o "${EventName}" = "_" ] && error_exit "イベント名を入力してください"
+# 利用者名
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者を選択してください"
+# 開催日
+[ -z "${EventDate}" -o "${EventDate}" = "_" ] && error_exit "日付を入力してください"
+
+
+# ゲスト外泊やセットしない場合は00:00をセット
+[ -z "$EventStart" -o "$EventStart" = "_" ] && EventStart="00:00"
+
+if [ "${EventType}" == "00012" ] ; then
+  if [ -z "$EventEnd" -o "$EventEnd" = "_" ] ; then
+# ケータリングで時間(至)が入っていない場合はデフォルト開始時間の15分後にセット
+    echo "$EventStart" |
+    sed 's/:/ /g' |
+# 分に変換
+    lcalc '$1*60,$2' |
+# 15分後にセット
+    lcalc '$1+$2+15' |
+# 24時を超えない
+    awk '{if($1>1440){$1="1439"};print $0}' |
+    lcalc '$1/60,$1%60' |
+    marume -sage 1.0 |
+    maezero 1.2 2.2  |
+    sed 's/ /:/g'    > $tmp-eventend_time
+    EventEnd=$(cat $tmp-eventend_time)
+  fi
+else
+  # ゲスト外泊やセットしない場合は23:59をセット
+  [ -z "$EventEnd" -o "$EventEnd" = "_" ] && EventEnd="23:59"
+fi
+
+# 開催日
+calcDate=$(echo "$EventDate" | sed 's/\///g')
+
+# 新規の場合はスケジュールＩＤをクリア
+[ "$MODE" = "regist" ] && ScheduleID="_"
+
+################################################
+# チェック群
+################################################
+
+# 請求確定後かどうかチェック
+# 請求確定ファイルを取得
+if [ -s ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu ] ; then
+   cat ${data_dir}/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.$shisetsu  |
+   awk '$1=="'$shisetsu'"&&$(NF-2)!="9"' |
+   self 2                           |
+   getlast 1 1                      |
+   awk '{print $1"31","'$calcDate'"}'   |
+   # 確定日付が対象年月日より大きい場合は確定済み
+   awk '$1>=$2'                     > $tmp-kakutei_nengetsu
+   [ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "請求確定確認エラー"
+   if [ "$(gyo $tmp-kakutei_nengetsu)" != "0" ] ; then
+       error_exit "請求が確定済みのため、変更できません"
+   fi
+fi
+
+# 部屋予約チェックを行うためにENDDATEのPOMPAを取得する。
+:> $tmp-schedule_enddate_reserve
+if [ -s ${apdata_dir}/SCHEDULE/SCHEDULE_ENDDATE ] ; then
+  awk '$1=="'$shisetsu'"&&$(NF-2)!="9"' ${apdata_dir}/SCHEDULE/SCHEDULE_ENDDATE |
+  LANG=C sort -k1,2 |
+  self 1 2 3 5 > $tmp-schedule_enddate_reserve
+fi
+[ $(gyo $tmp-schedule_enddate_reserve) -eq 0 ] && echo "_" "_" "_" "_" > $tmp-schedule_enddate_reserve
+
+cp $tmp-schedule_enddate_reserve $work_dir/schedule_enddate_reserve
+
+if [ "${chkSakujo}" != "9" ] ; then
+# 部屋重複予約チェック
+if [ -s ${apdata_dir}/SCHEDULE/SCHEDULE_RESERVATION ] ; then
+   if [ "${EventReserve}" != "00000" -a ${EventReserve} != "_" -a ! -z ${EventReserve} ] ; then
+     :> $tmp-double_booking
+
+     [ "${EventType}" != "00012" -a "${EventType}" != "00015" ] && EventEndDate=$EventDate
+
+     checkStartDate=$(echo $EventDate | sed 's/\///g')
+     checkEndDate=$(echo $EventEndDate | sed 's/\///g')
+
+     awk '$(NF-2)!=9' ${apdata_dir}/SCHEDULE/SCHEDULE_RESERVATION  |
+     #awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&$5=="'$EventDate'"&&($6>="'$EventStart'"&&$6<="'$EventEnd'")'                         > $tmp-double_booking
+     LANG=C sort -k1,2 |
+     join2 +"_" key=1/2 $tmp-schedule_enddate_reserve |
+     self 1 2 5/NF 3 4 > $tmp-schedule_check_motodata
+
+     cp $tmp-schedule_check_motodata $work_dir/schedule_check_motodata
+
+     # ケータリングデータは分解
+     awk '$(NF-1)=="00012"' $tmp-schedule_check_motodata |
+     awk '{if($NF=="_"){$NF=$5};print $0}' |
+     sed 's/\///g' |
+     tee $tmp-schedule_check_catering_work1 |
+     self 0 5 |
+     mdate 20 21 |
+     mdate -e 22 +21 |
+     delf 5/21   |
+     tarr num=4  |
+     LANG=C sort -k1,4 > $tmp-check_multiple_hiduke
+
+     cp $tmp-check_multiple_hiduke $work_dir/check_multiple_hiduke
+
+     cp $tmp-schedule_check_catering_work1 $work_dir/schedule_check_catering_work1
+
+     cat $tmp-schedule_check_catering_work1 |
+     LANG=C sort -k1,4 |
+     join1 key=1/4 - $tmp-check_multiple_hiduke |
+     self 1/4 NF 6/NF-1 > $tmp-schedule_check_catering
+
+     cp $tmp-schedule_check_catering $work_dir/schedule_check_catering
+
+     # インプットがケータリング以外
+     if [ "${EventType}" != "00012" ] ; then
+       # ケータリング以外
+       awk '$(NF-1)!="00012"' $tmp-schedule_check_motodata |
+       awk '{if($NF=="_"){$NF=$5};print $0}' |
+       awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&(($5$6<"'$EventEndDate''$EventEnd'"&&"'$EventEndDate''$EventEnd'"<=$NF$7)||($5$6<="'$EventDate''$EventStart'"&&"'$EventDate''$EventStart'"<$NF$7)||("'$EventDate''$EventStart'"<=$5$6&&"'$EventEndDate''$EventEnd'">=$NF$7))'                         >> $tmp-double_booking
+     #awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&$5=="'$EventDate'"&&($6<"'$EventStart'"&&"'$EventStart'"<$7||$6<"'$EventEnd'"&&"'$EventEnd'"<$7)'                         > $tmp-double_booking
+
+       # ケータリング
+       cat $tmp-schedule_check_catering |
+       awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&(($5$6<"'$checkEndDate''$EventEnd'"&&"'$checkEndDate''$EventEnd'"<=$5$7)||($5$6<="'$checkStartDate''$EventStart'"&&"'$checkStartDate''$EventStart'"<$5$7)||("'$checkStartDate''$EventStart'"<=$5$6&&"'$checkEndDate''$EventEnd'">=$5$7))'                         >> $tmp-double_booking
+     fi
+
+     # inputがケータリング
+     if [ "${EventType}" == "00012" ] ; then
+       echo $checkEndDate $checkStartDate |
+       mdate 1 2 |
+       mdate -e 3 +2 |
+       delf 1 2  |
+       tateyoko > $tmp-input_hiduke_check
+
+       cat $tmp-input_hiduke_check |
+       while read inputCheckDate ; do
+          # ケータリング以外のデータ
+          awk '$(NF-1)!="00012"' $tmp-schedule_check_motodata |
+          awk '{if($NF=="_"){$NF=$5};print $0}' |
+          sed 's/\///g'  |
+          awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&(($5$6<"'$inputCheckDate''$EventEnd'"&&"'$inputCheckDate''$EventEnd'"<=$NF$7)||($5$6<="'$inputCheckDate''$EventStart'"&&"'$inputCheckDate''$EventStart'"<$NF$7)||("'$inputCheckDate''$EventStart'"<=$5$6&&"'$inputCheckDate''$EventEnd'">=$NF$7))'                         >> $tmp-double_booking
+
+          # ケータリング
+          cat $tmp-schedule_check_catering |
+          awk '$2!="'${ScheduleID}'"&&$3=="'${EventReserve}'"&&(($5$6<"'$inputCheckDate''$EventEnd'"&&"'$inputCheckDate''$EventEnd'"<=$5$7)||($5$6<="'$inputCheckDate''$EventStart'"&&"'$inputCheckDate''$EventStart'"<$5$7)||("'$inputCheckDate''$EventStart'"<=$5$6&&"'$inputCheckDate''$EventEnd'">=$5$7))'                         >> $tmp-double_booking
+       : ;done
+
+     fi
+
+     if [ "$(gyo $tmp-double_booking)" != "0" ] ; then
+       error_exit "選択されたお部屋は既に予約されています。"
+     fi
+   fi
+fi
+fi
+
+# 課税非課税区分
+: > $tmp-kazei_master
+if [ -s ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU ] ; then
+  cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU     |
+  awk '$3<='$calcDate'&&('$calcDate'<=$4||$4=="_"){print $2}' |
+  tail -1 > $tmp-kazei_master
+fi
+zeiritsu=$(cat $tmp-kazei_master)
+
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 事業所ＩＤがない場合（登録）ならデータIDをふる
+### 管理IDの発番
+# 今回取得するID数
+if [ -z "${ScheduleID}" -o "${ScheduleID}" = "_" ] ; then
+last_no="1"
+# 現状の最終番号
+now_last_no=$(cat ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID)
+# 今回の発番後に、数字が限度を超えないかチェック
+new_last_no=$(expr ${now_last_no} + ${last_no})
+
+# ディレクトリ作成
+mkdir -p ${kanri_dir}/SCHEDULE/$shisetsu
+
+[ -e ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID ] || echo "000001" > ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID
+# 超えてたらリセット
+[ ${new_last_no} -gt 999999 ] && echo "000001" > ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID
+get_no ${last_no} ${kanri_dir}/SCHEDULE/$shisetsu/EVENT_ID > $tmp-id_all
+
+# この場合取得するのは一つなのでそのまま変数に
+ScheduleID=$(cat $tmp-id_all)
+fi
+#---------------------------------------------------------------
+
+# 費用発生しない場合は０をセット
+[ -z "$EventFee" -o "$EventFee" = "_" ] && EventFee="0"
+[ -z "$CateringTypeMorning" ] && CateringTypeMorning="_"
+[ -z "$CateringTypeNoon" ] && CateringTypeNoon="_"
+[ -z "$CateringTypeNight" ] && CateringTypeNight="_"
+# データ作成
+# スケジュール詳細基本データ
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+echo "$shisetsu" "$ScheduleID" "$EventType" "$EventName" "$EventDate" \
+"$EventStart" "$EventEnd" "$EventYoyaku" "$EventPlace" "$EventFee" \
+"$EventTantousha1" "$EventTantousha2" "$EventSupplement" "$EventTateya" "${EventKazeiKbn}" \
+"${chkSakujo}" "${sdaytime}" "${userid}"  > $tmp-schedule_detail_base_input
+
+cp $tmp-schedule_detail_base_input $tmp-schedule_detail_base2_input
+cp $tmp-schedule_detail_base_input $work_dir/schedule_detail_base_input
+
+# ゲスト宿泊時の帰宅日データ
+# 1:施設                 2:スケジュールID       3:スケジュールタイプ   4:スケジュール名 5:開催日
+# 6:ケータリングタイプ朝 7:ケータリングタイプ昼 8:ケータリングタイプ夜 9:予備４         10:予備５
+# 11:有効フラグ          12:処理時間            13:ユーザID
+:> $tmp-schedule_detail_enddate_input
+if [ "$EventType" = "00015" -o "$EventType" = "00012" ]; then
+echo "$shisetsu" "$ScheduleID" "$EventType" "$EventName" "$EventEndDate" \
+"${CateringTypeMorning}" "${CateringTypeNoon}" "${CateringTypeNight}" "_" "_" \
+"${chkSakujo}" "${sdaytime}" "${userid}"  > $tmp-schedule_detail_enddate_input
+fi
+
+cp $tmp-schedule_detail_enddate_input $tmp-schedule_detail_enddate2_input
+
+# 部屋予約データ作成
+if [ "${EventReserve}" != "00000" -a ${EventReserve} != "_" -a ! -z ${EventReserve} ];then
+  # マスタ取得
+  cat ${home_dir}/TBL/FACILITY_MASTER/FACILITY_MASTER |
+  # 施設ケアの項目のみ取得する
+  awk '$1=="'${shisetsu}'" && $(NF-2)!="9" && $2=="'${EventReserve}'"'           |
+  self 2 3                                            > ${tmp}-facility_master
+  EventReserve_name=$(self 2 $tmp-facility_master)
+
+  awk '{$3="'${EventReserve}'";$4="'${EventReserve_name}'";print}' $tmp-schedule_detail_base_input
+else
+  :
+fi                                                    > $tmp-schedule_Reserve_input
+
+cp $tmp-schedule_Reserve_input $tmp-schedule_Reserve2_input
+
+: > $tmp-guest_input
+# ゲスト参加者データ
+seq $GaibuNum  |
+while read gaibunum ; do
+    yukoflg=$chkSakujo
+    gnum=$((gaibunum-1))
+    guestname=$(nameread GuestName$gnum $namedata | head -1)
+    guestkankeisha=$(nameread KankeiRiyoushamei$gnum $namedata | head -1)
+    guestkankeishaid=$(nameread KankeiRiyoushaid$gnum $namedata | head -1)
+    guestbiko=$(nameread GuestBiko$gnum $namedata | head -1)
+    guestfee=$(nameread GuestFee$gnum $namedata | head -1)
+    guestseibetsu=$(nameread slGuestSeibetsu$gnum $namedata | head -1)
+    input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $guestfee 9)
+    [ "${input_res}" != "OK" ] && error_exit "金額入力に誤りがあります。"
+# 1:施設            2:スケジュールID 3:ゲスト名 4:関係入居者 5:関係入居者ID
+# 6:備考            7:費用           8:性別     9:有効フラグ 10:処理時間
+# 11:ログインユーザ
+    if [ -z "$guestname" -o "$guestname" = "_" ] ; then
+       yukoflg="9"
+    fi
+    echo "$shisetsu" "$ScheduleID" "$guestname" "$guestkankeisha" "$guestkankeishaid" \
+"$guestbiko" "$guestfee" "$guestseibetsu" "${yukoflg}" "${sdaytime}" "${userid}" >> $tmp-guest_input
+
+done
+
+cp $tmp-guest_input $tmp-guest2_input
+
+cp $tmp-guest_input $work_dir/guest_input
+
+: > $tmp-riyousha_input
+
+# 利用者データ
+# 入居者ID
+#echo ${dataCsvEventRiyoushaId}           |
+#sed 's/,/ /g'      > $tmp-riyoushaid
+
+# 利用者チェック
+#echo ${dataCsvEventRiyoushaCheck}           |
+#sed 's/,/ /g'      > $tmp-riyoushacheck
+
+# 利用者備考
+#echo ${dataCsvEventRiyoushaBiko}           |
+#sed 's/,/ /g'      > $tmp-riyoushabiko
+
+# 利用者費用
+#echo ${dataCsvEventRiyoushaFee}           |
+#sed 's/,/ /g'      > $tmp-riyoushafee
+
+# 数値チェック
+#echo ${dataCsvEventRiyoushaFee}           |
+#sed 's/,//g'       > $tmp-fee-check
+
+#feecheck=$(cat $tmp-fee-check)
+#input_res=$(/home/hands/E-LIFE/KYOUTSU/CGI/INPUT_CHECK.CGI $feecheck 9)
+#[ "${input_res}" != "OK" ] && error_exit "金額入力に誤りがあります。"
+
+
+#cat $tmp-riyoushaid $tmp-riyoushacheck $tmp-riyoushabiko $tmp-riyoushafee |
+#tateyoko         |
+
+echo "${Riyoushaid}" "1" "_" "${EventFee}" |
+# 1:施設   2:スケジュールID 3:利用者ID 4:利用チェック 5:備考
+# 6:費用 7:有効フラグ     8:処理時間 9:ユーザID
+awk '{print "'${shisetsu}'","'$ScheduleID'",$0,"'${chkSakujo}'","'${sdaytime}'","'${userid}'"}'  |
+awk '$4=="1"||$5!="_"' > $tmp-riyousha_input
+
+cp $tmp-riyousha_input $work_dir/riyousha_input
+
+cp $tmp-riyousha_input $tmp-riyousha2_input
+
+# 請求データ作成
+cat $tmp-riyousha_input                      |
+# 1:課税区分 2:税率           3:開催日付  4:建屋         5:イベント名
+# 6:施設     7:スケジュールID 8:利用者ID  9:利用チェック 10:備考
+# 11:費用    12:有効フラグ    13:処理時間 14:ユーザID
+awk '$4=="1"{print "'${EventKazeiKbn}'","'${zeiritsu}'","'${calcDate}'","0'${EventTateya}'","'${EventName}'",$0}'        |
+# 1:課税区分 2:税率           3:開催日付  4:建屋         5:イベント名
+# 6:施設     7:スケジュールID 8:利用者ID  9:利用チェック 10:備考
+# 11:費用    12:有効フラグ    13:処理時間 14:ユーザID    15:税込み価格
+awk '{if($1=="0"){$2="0";$15=$11}else{$15=$11+$11*$2};print $0}'       |
+marume 15.0                                                         |
+# 1:施設       2:スケジュールID 3:利用者ID  4:建屋ID    5:開催日付
+# 6:イベント名 7:課税区分       8:税率      9:費用      10:税込み価格
+# 11:備考      12:有効フラグ    13:処理時間 14:ユーザID
+self 6 7 8 4 3 5 1 2 11 15 10 12 13 14                                    |
+# 価格が0のものは請求にあげない -> 解除
+#awk '$10>0'                                                         |
+LANG=C sort -k1,5                                        > $tmp-schedule_seikyu
+
+cp $tmp-schedule_seikyu $tmp-schedule_seikyu_input
+cp $tmp-schedule_seikyu $tmp-schedule_seikyu2_input
+
+cp $tmp-schedule_seikyu $work_dir/schedule_seikyu
+
+# 請求データ作成
+cat $tmp-guest_input                      |
+awk '$10!="_"'                            |
+# 1:課税区分        2:税率           3:開催日付 4:建屋        5:イベント名
+# 6:施設            7:スケジュールID 8:ゲスト名 9:関係入居者  10:関係入居者ID
+# 11:備考           12:費用          13:性別    14:有効フラグ 15:処理時間
+# 16:ログインユーザ
+awk '{print "'${EventKazeiKbn}'","'${zeiritsu}'","'${calcDate}'","0'${EventTateya}'","'${EventName}'",$0}'        |
+# 1:課税区分        2:税率           3:開催日付 4:建屋        5:イベント名
+# 6:施設            7:スケジュールID 8:ゲスト名 9:関係入居者  10:関係入居者ID
+# 11:備考           12:費用          13:性別    14:有効フラグ 15:処理時間
+# 16:ログインユーザ 17:税込価格
+awk '{if($1=="0"){$2="0";$17=$12}else{$17=$12+$12*$2};print $0}'       |
+marume 17.0                                                         |
+# 1:施設       2:スケジュールID 3:関係入居者ID 4:建屋      5:開催日付
+# 6:イベント名 7:ゲスト名       8:課税区分     9:税率      10:費用
+# 11:税込価格  12:備考          13:有効フラグ  14:処理時間 15:ログインユーザ
+self 6 7 10 4 3 5 8 1 2 12 17 11 14 15 16                           |
+# 価格が0のものは請求にあげない -> 解除
+#awk '$11>0'                                                         |
+LANG=C sort -k1,5                                        > $tmp-schedule_guest_seikyu
+
+cp $tmp-schedule_guest_seikyu $tmp-schedule_guest_seikyu_input
+cp $tmp-schedule_guest_seikyu $tmp-schedule_guest_seikyu2_input
+
+cp $tmp-schedule_guest_seikyu $work_dir/schedule_guest_seikyu
+
+seikyumonth=$(echo $calcDate | awk '{print substr($1,1,6)}')
+
+
+# レストラン予約注文
+# まずは空ファイルを作成しておく
+:> $tmp-shokuji_jisseki_input
+:> $tmp-shokuji_jisseki_seikyu_input
+:> $tmp-restaurant_yoyaku_input
+
+# とりあえず、現状はセンター南のみ
+if [ "$shisetsu" = "0003" ] ; then
+
+# 一応注文数が０だったら"_"にしとく
+[ "${NyukyoshaOrderNum}" = "0" ] && NyukyoshaOrderNum="_"
+[ "${GuestOrderNum}" = "0" ] && GuestOrderNum="_"
+
+echo "$EventDate" |
+# 1:年 2:月 3:日
+sed 's/\// /g' > $tmp-restauran_yoyakubi
+restaurant_yoyakubi=$(awk '{print $1$2$3}' $tmp-restauran_yoyakubi | tail -1)
+restaurant_yoyakutsuki=$(awk '{print $1$2}' $tmp-restauran_yoyakubi | tail -1)
+
+# 修正の場合、キャンセルを外す、もしくはキャンセルにする場合のために食事実績ＩＤを取得
+if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_RESTAURANT_ORDER ] ; then
+  cat ${pompa_dir}/SCHEDULE/SCHEDULE_RESTAURANT_ORDER |
+  awk '$1=="'$shisetsu'"&&$2=="'$ScheduleID'"{print $8,$9}' > $tmp-restaurant_shokuji_jisseki_id
+  if [ $(gyo $tmp-restaurant_shokuji_jisseki_id) -eq 0 ] ; then
+     shokuji_jisseki_id1="_"
+     shokuji_jisseki_id2="_"
+  else
+     shokuji_jisseki_id1=$(self 1 $tmp-restaurant_shokuji_jisseki_id)
+     shokuji_jisseki_id2=$(self 2 $tmp-restaurant_shokuji_jisseki_id)
+  fi
+fi
+
+# キャンセルになった時に食事実績と連動させる必要あり。
+[ -z "$shokuji_jisseki_id1" -o "$shokuji_jisseki_id1" = "_" ] && shokuji_jisseki_id1="_"
+[ -z "$shokuji_jisseki_id2" -o "$shokuji_jisseki_id2" = "_" ] && shokuji_jisseki_id2="_"
+
+# 1 食事実績IDが入っている場合　食事実績を変更する必要あり
+# 2 キャンセル日が入っている場合(当日～３日前)、食事実績、請求食事の有効フラグを１
+# 3 キャンセル日が消された場合、もしくはキャンセル日が４日以上前の場合、食事実績、請求食事の有効フラグを９
+# 4 この時に本人とゲストが入っている場合は２レコード修正必要あり
+# 5 食事実績IDが入っていない場合
+# 6 キャンセル日が入っている場合（当日～３日前）、食事実績、請求食事追加
+# 7 この時に本人とゲストが入っている場合は２レコード追加必要あり
+# 8 キャンセル日が入っていない、もしくはキャンセル日が４日以上前の場合、何もしない。
+
+# 食事請求
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+# 26:削除フラグ 27:更新時間              28:更新者
+
+# キャンセル日付が入力されている
+if [ -n "${OrderCancel}" -a "${OrderCancel}" != "_" ] ; then
+  echo "${OrderCancel}" |
+# 1:年 2:月 3:日
+  sed 's/\// /g' > $tmp-order_cancel_date
+  order_cancelbi=$(awk '{print $1$2$3}' $tmp-order_cancel_date | tail -1)
+  cancel_diff=$(mdate ${restaurant_yoyakubi} ${order_cancelbi})
+  # 当日以降キャンセル
+  if [ ${cancel_diff} -le 0 ] ; then
+     cancel_percent=100
+  # ３日までのキャンセル
+  elif [ ${cancel_diff} -lt 4 ] ; then
+     cancel_percent=50
+  # ４日以上 2 8
+  else
+     cancel_percent=0
+  fi
+
+  
+  # キャンセル請求対象かどうか
+  if [ ${cancel_percent} -gt 0 ] ; then
+   
+    # INPUTファイルを作成
+    cat ${apdata_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+    awk '$1=="'${shisetsu}'"&&$6=="'${Riyoushaid}'"&&$7<="'${order_cancelbi}'"&&"'${order_cancelbi}'"<=$8{print $2,$5}' |
+    tail -1 > $tmp-cancel_riyousha_kyoshitsu
+    cancel_riyousha_kyoshitsu=$(self 2 $tmp-cancel_riyousha_kyoshitsu)
+    cancel_riyousha_tateya=$(self 1 $tmp-cancel_riyousha_kyoshitsu)
+    NyukyoshaYoyaku="0"
+    GuestYoyaku="0"
+   
+    # キャンセル請求期間と過去の実績があるかどうか 1 3
+    if [ ${cancel_percent} -eq 0 -a "$shokuji_jisseki_id1" != "_" ] ; then
+       restaurant_shokuji_flg="9"
+    else
+       restaurant_shokuji_flg="1"
+    fi
+   
+    # 入居者の注文数はいっている場合は食事実績ID１に食事実績IDをセット 4
+    if [ -n "${NyukyoshaOrderNum}" -a "${NyukyoshaOrderNum}" != "0" -a "${NyukyoshaOrderNum}" != "_" ]; then
+      if [ "$shokuji_jisseki_id1" == "_" ] ; then
+         # 新規データならばIDをふる(食事ID)
+         ### 管理IDの発番
+         # 食事ID
+         mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+         touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+         [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+         # 現状の最終番号
+         now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+         # 今回の発番後に、数字が限度を超えないかチェック
+         new_last_no=$(expr ${now_last_no} + 1)
+   
+         # 超えてたらリセット
+         [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+   
+         get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+         shokuji_jisseki_id1=$(cat $tmp-id)
+      fi
+# 1:利用者ID 2:施設ID                 3:建屋   4:居室   5:入居者ゲストフラグ
+# 6:日付     7:食事（朝昼夜おやつ他） 8:注文数 9:食事ID 10:食事メニューID
+      #echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "${cancel_riyousha_kyoshitsu}" "1" \
+      echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "_" "1" \
+"${restaurant_yoyakubi}" "${ShokujiTiming}" "${NyukyoshaOrderNum}" "${shokuji_jisseki_id1}" "${restaurantMenu}" > $tmp-restaurant_nyukyosha_work
+       NyukyoshaYoyaku="1"
+    fi
+    if [ -n "${GuestOrderNum}" -a "${GuestOrderNum}" != "0" -a "${GuestOrderNum}" != "_" ]; then
+      if [ "${NyukyoshaYoyaku}" = "0" ] ; then
+# 入居者の注文数入っていない場合は食事実績ID１に食事実績IDをセット 4
+        if [ "$shokuji_jisseki_id1" == "_" ] ; then
+         # 新規データならばIDをふる(食事ID)
+         ### 管理IDの発番
+         # 食事ID
+           mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+           touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+           [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+           # 現状の最終番号
+           now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+           # 今回の発番後に、数字が限度を超えないかチェック
+           new_last_no=$(expr ${now_last_no} + 1)
+    
+           # 超えてたらリセット
+           [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+    
+           get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+           shokuji_jisseki_id1=$(cat $tmp-id)
+        fi
+# 1:利用者ID 2:施設ID                 3:建屋   4:居室   5:入居者ゲストフラグ
+# 6:日付     7:食事（朝昼夜おやつ他） 8:注文数 9:食事ID 10:食事メニューID
+        #echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "${cancel_riyousha_kyoshitsu}" "2" \
+        echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "_" "2" \
+"${restaurant_yoyakubi}" "${ShokujiTiming}" "${GuestOrderNum}" "${shokuji_jisseki_id1}" "${restaurantMenu}" > $tmp-restaurant_guest_work
+      else
+# 入居者の注文数入っている場合は食事実績ID２に食事実績IDをセット
+        if [ "$shokuji_jisseki_id2" == "_" ] ; then
+           # 新規データならばIDをふる(食事ID)
+           ### 管理IDの発番
+           # 食事ID
+           mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+           touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+           [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+           # 現状の最終番号
+           now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+           # 今回の発番後に、数字が限度を超えないかチェック
+           new_last_no=$(expr ${now_last_no} + 1)
+      
+           # 超えてたらリセット
+           [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+           get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+           shokuji_jisseki_id2=$(cat $tmp-id)
+        fi
+# 1:利用者ID 2:施設ID                 3:建屋   4:居室   5:入居者ゲストフラグ
+# 6:日付     7:食事（朝昼夜おやつ他） 8:注文数 9:食事ID 10:食事メニューID
+        #echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "${cancel_riyousha_kyoshitsu}" "2" \
+        echo "${Riyoushaid}" "${shisetsu}" "${cancel_riyousha_tateya}" "_" "2" \
+"${restaurant_yoyakubi}" "${ShokujiTiming}" "${GuestOrderNum}" "${shokuji_jisseki_id2}" "${restaurantMenu}" > $tmp-restaurant_guest_work
+      fi
+      GuestYoyaku="1"
+    fi
+
+# 食事実績
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室          5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニュー  10:食事メニュー名
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:メニュー色ID 15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5    20:削除フラグ
+# 21:更新日     22:更新者
+
+    cat $tmp-restaurant_nyukyosha_work |
+    join1 key=10 <(self 1/21 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:利用者ID                             2:施設ID                 3:建屋            4:居室          5:入居者ゲストフラグ
+# 6:日付                                 7:食事（朝昼夜おやつ他） 8:注文数          9:食事ID        10:食事メニューID
+# 11:メニュー名                          12:食事種類              13:施設ID         14:建屋ID       15:入居者価格
+# 16:ゲスト1価格                         17:ゲスト2価格           18:スタッフ価格   19:朝食         20:昼食
+# 21:夕食                                22:おやつ                23:期間From(西暦) 24:期間To(和暦) 25:色
+# 26:予備項目1（2014/9/3より表示順番号） 27:予備項目2(喫食率対象) 28:予備項目3      29:予備項目4    30:予備項目5
+    self 1/7 9/12 15 8 25 |
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色
+    awk '{print $0,"_","_","_","_","_","'${restaurant_shokuji_flg}'","'${sdaytime}'","'${userid}'"}' > $tmp-nyukyosha_shokuji_jisseki_work
+
+    cat $tmp-restaurant_guest_work |
+    join1 key=10 <(self 1/21 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU) |
+# 1:利用者ID                             2:施設ID                 3:建屋            4:居室          5:入居者ゲストフラグ
+# 6:日付                                 7:食事（朝昼夜おやつ他） 8:注文数          9:食事ID        10:食事メニューID
+# 11:メニュー名                          12:食事種類              13:施設ID         14:建屋ID       15:入居者価格
+# 16:ゲスト1価格                         17:ゲスト2価格           18:スタッフ価格   19:朝食         20:昼食
+# 21:夕食                                22:おやつ                23:期間From(西暦) 24:期間To(和暦) 25:色
+# 26:予備項目1（2014/9/3より表示順番号） 27:予備項目2(喫食率対象) 28:予備項目3      29:予備項目4    30:予備項目5
+    self 1/7 9/12 16 8 25 |
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色
+    awk '{print $0,"_","_","_","_","_","'${restaurant_shokuji_flg}'","'${sdaytime}'","'${userid}'"}' > $tmp-nyukyosha_guest_jisseki_work
+
+############################ 
+# キャンセル対象食事実績データ
+############################
+    cat $tmp-nyukyosha_shokuji_jisseki_work $tmp-nyukyosha_guest_jisseki_work > $tmp-shokuji_jisseki_input
+
+    : > $tmp-zeiritsu
+    for i in $(mdate ${restaurant_yoyakutsuki}m) ; do
+  # 消費税率を取得
+      cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU        |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+#  awk '$3<="'${i}'"&&$4>="'${i}'"{print "'${i}'",$2}'  >> $tmp-zeiritsu
+### 20140908 変更
+      awk '$3<="'${i}'"&&$4>="'${i}'"{print "'${i}'",$2+"1"}'  >> $tmp-zeiritsu
+# 1:日付  2:税率
+    done
+
+    cp ${tmp}-zeiritsu $work_dir/zeiritsu_restaurant
+
+    # 単価が0円のもの(税計算しないもの)
+    cat $tmp-shokuji_jisseki_input |
+    awk '$12=="0"{print $0}'     > $tmp-shokuji_jisseki_0
+
+    # 単価が0円のもの(税計算しないもの)
+    cat $tmp-shokuji_jisseki_input |
+    awk '$12!="0"{print $0}'     > $tmp-shokuji_jisseki_tankaari
+
+    : >$tmp-shokuji_jisseki_seikyutaishou_input
+    if [ -s $tmp-shokuji_jisseki_tankaari ] ; then
+      cat $tmp-shokuji_jisseki_tankaari |
+      lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12 * '$cancel_percent' / 100,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22' |
+      marume -sage 12.0 |
+      tee $work_dir/seikyu_jisseki_tochu1 |
+      LANG=C sort -k6,6           |
+      join2 key=6 $tmp-zeiritsu - > $tmp-shokuji_jisseki_tankaari_zeiari
+# 1:利用者(入居者)ID 2:施設ID      3:建屋                   4:居室       5:入居者ゲストフラグ
+# 6:日付             7:税率        8:食事（朝昼夜おやつ他） 9:食事ID     10:食事メニュー
+# 11:食事メニュー名  12:食事種類ID 13:単価(税抜き)          14:数量      15:メニュー色ID
+# 16:予備項目1       17:予備項目2  18:予備項目3             19:予備項目4 20:予備項目5
+# 21:削除フラグ      22:更新日     23:更新者
+      cat $tmp-shokuji_jisseki_tankaari_zeiari |
+      lcalc '$13 * $7 '            |
+      marume -sage 1.0            |
+      ycat $tmp-shokuji_jisseki_tankaari_zeiari - |
+### 20140908 変更
+      awk '{print $0,$13}'        |
+      marume -sage 25.0           |
+      awk '{if($(NF-1)>$NF){print $0,"1",$(NF-1)-$NF}else{print $0,"1","0"}}'     |
+      delf NF-2                   |
+      tee $work_dir/seikyu_jisseki_tochu2 |
+# 1:利用者(入居者)ID 2:施設ID      3:建屋                   4:居室        5:入居者ゲストフラグ
+# 6:日付             7:税率        8:食事（朝昼夜おやつ他） 9:食事ID      10:食事メニュー
+# 11:食事メニュー名  12:食事種類ID 13:単価(税抜き)          14:数量       15:メニュー色ID
+# 16:予備項目1       17:予備項目2  18:予備項目3             19:予備項目4  20:予備項目5
+# 21:削除フラグ      22:更新日     23:更新者                24:税込み価格 25:税区分
+# 26:税
+### 20140908 変更
+      self 1/6 8/12 NF-1 7 13 NF NF-2 14 NF-5/NF-3  >> $tmp-shokuji_jisseki_seikyutaishou_tochuu
+# 1:利用者(入居者)ID 2:施設ID                 3:建屋   4:居室           5:入居者ゲストフラグ
+# 6:日付             7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニューID 10:食事メニュー名称
+# 11:食事種類I       12:税区分                13:税率  14:単価(税抜き)  15:税額
+# 16:税込み金額      17:数量                  18:削除  19:更新日        20:更新者
+
+      # 合計金額を計算する
+      cat $tmp-shokuji_jisseki_seikyutaishou_tochuu    |
+#    lcalc '$14 * $17','$15 *$17','$16*$17'           |
+#   合計金額の税抜き合計金額は合計金額（税込み）から割り戻す
+#   合計金額の税額は合計金額（税込）－合計金額（税抜）で計算する。
+# 1:税込み合計金額 2:税率
+      lcalc '$16 * $17','$13'           |
+# 1:税抜き合計金額 2:税込み合計金額
+      lcalc '$1/$2','$1'               |
+      marume -sage 1.0                  |
+# 1:税抜き合計金額 2:税額 3:税込み合計金額
+      lcalc '$1','$2-$1','$2'                          |
+      awk '{if($2<0){$2="0"};print $0}'                 |
+      ycat $tmp-shokuji_jisseki_seikyutaishou_tochuu - |
+      self 1/17 NF-2/NF 18/NF-3             |
+    ### 20140908変更
+      marume -sage 18.0 19.0                |
+      awk '{print $0,"_","_","_","_","_",$(NF-2),$(NF-1),$NF}'  |
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:削除フラグ 22:更新時間              23:更新者         24:予備項目1            25:予備項目2
+# 26:予備項目3  27:予備項目4             28:予備項目5      29:削除フラグ           30:更新時間
+# 31:更新者
+      self 1/20 24/NF             >> $tmp-shokuji_jisseki_seikyu_input
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+# 26:削除フラグ 27:更新時間              28:更新者
+    fi
+
+    if [ -s $tmp-shokuji_jisseki_0 ] ; then
+      cat $tmp-shokuji_jisseki_0 |
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室          5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニュー  10:食事メニュー名
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:メニュー色ID 15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5    20:削除フラグ
+# 21:更新日     22:更新者
+      awk '{print $0,"1","0",$12,"0","0",$13,"0","0","0","_","_","_","_","_",$(NF-2),$(NF-1),$NF}'   |
+      self 1/11 23/NF  >> $tmp-shokuji_jisseki_seikyu_input
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+# 26:削除フラグ 27:更新時間              28:更新者
+
+    fi
+
+    ## 20140908 追記　 税込価格の計算があっていなかったら請求用データにあわせる
+    if [ -s $tmp-shokuji_jisseki_seikyutaishou_input ] ; then
+       cat $tmp-shokuji_jisseki_input |
+       LANG=C sort -k1,8              > $tmp-shokuji_jisseki_input_hikakuyou
+       cat $tmp-shokuji_jisseki_seikyutaishou_input |
+       self 1/8 16   |
+       LANG=C sort   |
+       join2 key=1/8 - $tmp-shokuji_jisseki_input_hikakuyou |
+       tee $tmp-shokuji_jisseki_zeikomikakaku_kakunin       |
+# 1:利用者ID          2:施設ID                 3:建屋          4:居室         5:入居者ゲストフラグ
+# 6:日付              7:食事（朝昼夜おやつ他） 8:食事ID        9:単価(税込み) 10:食事メニューID
+# 11:食事メニュー名称 12:食事種類ID            13:単価(税抜き) 14:数量        15:色ID
+# 16:単価(税込み)     17:予備項目2             18:予備項目3    19:予備項目4   20:予備項目5
+       awk '$9!=$16' > $tmp-zeikomikakaku_new
+      
+       if [ -s $tmp-zeikomikakaku_new ] ; then
+         cat $tmp-zeikomikakaku_new  |
+         awk '{print $0,$(NF-1)+1}'                 |
+         self 1/8 10/15 9 17/NF-3 NF NF-1           |
+         cat - $tmp-shokuji_jisseki_input_hikakuyou |
+         LANG=C sort -k1,8 -k21,21                  |
+         getlast 1 8                      > $tmp-shokuji_jisseki_input
+       else
+         :
+       fi
+    else
+      :
+    fi
+  else
+# キャンセル対象外（期間）
+# キャンセルを解除する場合
+    if [ -n "${shokuji_jisseki_id1}" ] ; then
+       # 食事実績データ
+       cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI |
+       awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id1}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_input
+       # 食事請求データ
+       cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+       awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id1}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_seikyu_input
+    fi
+    if [ -n "${shokuji_jisseki_id2}" ] ; then
+       cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI |
+       awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id2}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_input
+       cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+       awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id2}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_seikyu_input
+    fi
+  fi
+else
+# キャンセルを解除する場合
+  if [ -n "${shokuji_jisseki_id1}" ] ; then
+     # 食事実績データ
+     cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI |
+     awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id1}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_input
+     # 食事請求データ
+     cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+     awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id1}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_seikyu_input
+  fi
+  if [ -n "${shokuji_jisseki_id2}" ] ; then
+     cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI |
+     awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id2}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_input
+     cat ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA |
+     awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${shokuji_jisseki_id2}'"{$(NF-2)="9";print $0}' >> $tmp-shokuji_jisseki_seikyu_input
+  fi
+fi
+
+cp $tmp-shokuji_jisseki_input $tmp-shokuji_jisseki2_input
+cp $tmp-shokuji_jisseki_seikyu_input $tmp-shokuji_jisseki_seikyu2_input
+cp $tmp-shokuji_jisseki_seikyu_input $tmp-shokuji_jisseki_seikyu3_input
+
+yoyakuSakujo=${chkSakujo}
+# キャンセル日が入ったら予約注文のレコード削除
+[ -z "$OrderCancel" -o "$OrderCancel" = "_" ] && OrderCancel="_" || yoyakuSakujo="9"
+# 1:施設         2:スケジュールID 3:開催日      4:メニューID  5:入居者注文数
+# 6:ゲスト注文数 7:キャンセル日付 8:食事実績ID1 9:食事実績ID2 10:利用者ID
+# 11:食事        12:有効フラグ    13:処理時間   14:ユーザID
+# レストラン予約以外はINPUT作らない
+if [ -z "${restaurantMenu}" -o "${restaurantMenu}" = "_" ] ; then
+  cat ${pompa_dir}/SCHEDULE/SCHEDULE_RESTAURANT_ORDER |
+  awk '$1=="'$shisetsu'"&&$2=="'$ScheduleID'"{$(NF-2)="9";print $0}' > $tmp-restaurant_yoyaku_input
+else
+echo "$shisetsu" "$ScheduleID" "${restaurant_yoyakubi}" "${restaurantMenu}" \
+"${NyukyoshaOrderNum}" "${GuestOrderNum}" "${OrderCancel}" "${shokuji_jisseki_id1}" "${shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${ShokujiTiming}" "${yoyakuSakujo}" "${sdaytime}" "${userid}"  > $tmp-restaurant_yoyaku_input
+fi
+cp $tmp-restaurant_yoyaku_input $tmp-restaurant_yoyaku2_input
+fi
+
+
+# ケータリング／ルームサービス対応
+# スケジュールタイプがケータリングかどうか
+if [ "${EventType}" == "00012" ] ; then
+   :> $tmp-catering_yoyaku_input
+   # ケータリング予定最初日から最終日を取得する
+   [ -z "${EventDate}" -o "${EventDate}" = "_" ] && error_exit "日付(自)を入力してください"
+   [ -z "${EventEndDate}" -o "${EventEndDate}" = "_" ] && error_exit "日付(至)を入力してください"
+   [ -z "${CateringCancel}" ] && CateringCancel="_"
+   cateringmonth=$(echo "${EventDate}" | sed 's/\// /g' | awk '{print $1$2}')
+   monthcheckdate=$(echo "${cateringmonth}31")
+   cateringStartDate=$(echo "${EventDate}" | sed 's/\///g')
+   cateringEndDate=$(echo "${EventEndDate}" | sed 's/\///g')
+   # 月をまたいで処理できると、先月の予約を変更しないと、今月のケータリングの予約を消せない可能性があり、
+   # 請求処理上、それは不可能なので、月またぎはエラーとする。
+   [ $monthcheckdate -lt $cateringEndDate ] && error_exit "月をまたいでのケータリング予約は出来ません"
+   mdate -e ${cateringStartDate}/+$(mdate ${cateringEndDate} ${cateringStartDate}) |
+   tarr > $tmp-catering_taishou_date
+   
+   # ルームサービス対応
+   room_service_flg="0"
+   # 念のため全角にする
+   checkEventName=$(echo "${EventName}" | zen)
+   if [ "${checkEventName}" = "ルームサービス" ] ; then
+      room_service_flg="1"
+   fi
+
+   # エラーメッセージ
+   catering_err_msg=""
+
+   # 既存のケータリング・ルームサービスデータのうち、同じスケジュールＩＤのものはまずは削除する。
+   # 更新の場合は後の処理で新しくレコード追加
+   # 削除の場合は、そのまま削除
+   if [ -s ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER ] ; then
+      awk '$(NF-2)!="9"&&$1=="'$shisetsu'"&&$2=="'$ScheduleID'"' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER > $tmp-catering_yoyaku_moto_data
+      awk '$1=="'$shisetsu'"&&$2=="'$ScheduleID'"{$(NF-2)="9";print $0}' ${pompa_dir}/SCHEDULE/SCHEDULE_CATERING_ORDER > $tmp-catering_yoyaku_input
+   fi
+
+   # 今月の食事実績データを取得する
+   if [ -s ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${cateringmonth}/RIYOUSHA_SHOKUJI_JISSEKI ] ; then
+      awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$(NF-2)!="9"{print $0}' ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${cateringmonth}/RIYOUSHA_SHOKUJI_JISSEKI > $tmp-shokuji_jisseki_kizon
+   fi
+   # 今月の食事実績請求データを取得する
+   if [ -s ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${cateringmonth}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA ] ; then
+      awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$(NF-2)!="9"{print $0}' ${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${cateringmonth}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA > $tmp-shokuji_jisseki_seikyu_kizon
+   fi
+
+   cp -p $tmp-shokuji_jisseki_kizon $work_dir/shokuji_jisseki_kizon
+
+
+   # 施設利用者ステータスより入居者情報を取得
+   cat ${apdata_dir}/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+   awk '$1=="'${shisetsu}'"&&$6=="'${Riyoushaid}'"&&$7<="'${cateringStartDate}'"&&"'${cateringStartDate}'"<=$8{print $2,$5}' |
+   tail -1 > $tmp-catering_riyousha_kyoshitsu
+
+   catering_kyoshitsu=$(self 2 $tmp-catering_riyousha_kyoshitsu)
+   catering_tateya=$(self 1 $tmp-catering_riyousha_kyoshitsu)
+
+# 食事メニューマスタ
+# 1:食事ID 2:食事名 3:食事種類 4:入居者価格 5:ゲスト価格
+# 6:色
+   self 1/3 6 7 24 ${home_dir}/SHOKUJI/POMPA/${shisetsu}/SHOKUJI_MENU > $tmp-menu_master 
+
+   :> $tmp-shokuji_jisseki_input
+   :> $tmp-shokuji_jisseki_seikyu_input
+
+   cat $tmp-catering_taishou_date |
+   while read catering_date ;do
+# 1:施設         2:スケジュールID 3:ケータリング予約日    4:枝番        5:メニューID
+# 6:入居者注文数 7:ゲスト注文数   8:キャンセル日付        9:食事実績ID1 10:食事実績ID2
+# 11:利用者ID    12:食事          13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:ユーザID
+# 4つのメニューのうち、メニューが選択されている場合はデータ作成
+     if [ -n "${cateringMenu1}" -a "${cateringMenu1}" != "_" ] ; then
+        # メニュー情報を取得
+        echo "${cateringMenu1}" |
+        join1 key=1 $tmp-menu_master > $tmp-menu_info1
+        catering_menu_name1=$(self 2 $tmp-menu_info1)
+        catering_menu_shokushu1=$(self 3 $tmp-menu_info1)
+        catering_menu_nyukyosha_price1=$(self 4 $tmp-menu_info1)
+        catering_menu_guest_price1=$(self 5 $tmp-menu_info1)
+        catering_menu_color1=$(self 6 $tmp-menu_info1)
+
+        # 食事実績ＩＤを使い捨てにせず、施設、スケジュールＩＤ、日付、枝番をキーにして食事実績ＩＤを既存データより取得する。
+        if [ -s $tmp-catering_yoyaku_moto_data ] ; then
+           awk '$3=="'${catering_date}'"&&$4=="1"{print $9,$10}' $tmp-catering_yoyaku_moto_data > $tmp-catering_shokuji_id1
+           catering_shokuji_jisseki_id1=$(self 1 $tmp-catering_shokuji_id1)
+           catering_shokuji_jisseki_id2=$(self 2 $tmp-catering_shokuji_id1)
+           # 該当の食事実績データ、請求データは一旦削除する。
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           fi
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           fi
+           #########食事実績############
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色1           15:予備1
+# 16:予備2    17:予備3                 18:予備4  19:予備5         20:有効フラグ
+# 21:処理時間 22:担当ユーザＩＤ
+           # キャンセル日付入力、もしくは削除フラグがたった場合は新規のレコードを作らない　結果、削除となる
+           if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+             if [  -n "${NyukyoshaCateringNum1}" -a "${NyukyoshaCateringNum1}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu1}" "${catering_menu_name1}" "${catering_menu_shokushu1}" "${catering_menu_nyukyosha_price1}" "${NyukyoshaCateringNum1}" "${catering_menu_color1}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+             if [  -n "${GuestCateringNum1}" -a "${GuestCateringNum1}" != "_" -a "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu1}" "${catering_menu_name1}" "${catering_menu_shokushu1}" "${catering_menu_guest_price1}" "${GuestCateringNum1}" "${catering_menu_color1}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+           fi
+        else
+          if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+           # 入居者注文がある場合
+           if [ -n "${NyukyoshaCateringNum1}" -a "${NyukyoshaCateringNum1}" != "_" ] ; then
+              mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+              touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              # 現状の最終番号
+              now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+              # 今回の発番後に、数字が限度を超えないかチェック
+              new_last_no=$(expr ${now_last_no} + 1)
+      
+              # 超えてたらリセット
+              [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+              get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+              catering_shokuji_jisseki_id1=$(cat $tmp-id)
+
+              echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu1}" "${catering_menu_name1}" "${catering_menu_shokushu1}" "${catering_menu_nyukyosha_price1}" "${NyukyoshaCateringNum1}" "${catering_menu_color1}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              # さらにゲスト注文がある場合
+              if [ -n "${GuestCateringNum1}" -a "${GuestCateringNum1}" != "_" ] ; then
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+      
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id2=$(cat $tmp-id)
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu1}" "${catering_menu_name1}" "${catering_menu_shokushu1}" "${catering_menu_guest_price1}" "${GuestCateringNum1}" "${catering_menu_color1}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_shokuji_jisseki_id2="_"
+              fi
+           else
+              # ゲスト注文のみがある場合
+              if [ -n "${GuestCateringNum1}" -a "${GuestCateringNum1}" != "_" ] ; then
+                 mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+                 touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id1=$(cat $tmp-id)
+                 catering_shokuji_jisseki_id2="_"
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu1}" "${catering_menu_name1}" "${catering_menu_shokushu1}" "${catering_menu_guest_price1}" "${GuestCateringNum1}" "${catering_menu_color1}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_err_msg="注文数を入力してください。"
+              fi
+           fi
+          fi
+        fi
+#########ケータリング・ルームサービステーブル##############
+# 1:施設            2:スケジュールID  3:日付                  4:枝番        5:メニュー
+# 6:入居者注文数    7:ゲスト注文数    8:キャンセル日付        9:実績ID1     10:実績ID2
+# 11:利用者ID       12:食事タイミング 13:ルームサービスフラグ 14:有効フラグ 15:処理時間
+# 16:担当ユーザＩＤ
+if [ "${chkSakujo}" != "9" ] ; then
+echo "$shisetsu" "$ScheduleID" "${catering_date}" "1" "${cateringMenu1}" "${NyukyoshaCateringNum1}" \
+"${GuestCateringNum1}" "${CateringCancel}" "${catering_shokuji_jisseki_id1}" "${catering_shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${CateringShokujiTiming}" "${room_service_flg}" "1" "${sdaytime}" "${userid}" >> $tmp-catering_yoyaku_input
+fi
+
+     fi
+     if [ -n "${cateringMenu2}" -a "${cateringMenu2}" != "_" ] ; then
+        # メニュー情報を取得
+        echo "${cateringMenu2}" |
+        join1 key=1 $tmp-menu_master > $tmp-menu_info2
+        catering_menu_name2=$(self 2 $tmp-menu_info2)
+        catering_menu_shokushu2=$(self 3 $tmp-menu_info2)
+        catering_menu_nyukyosha_price2=$(self 4 $tmp-menu_info2)
+        catering_menu_guest_price2=$(self 5 $tmp-menu_info2)
+        catering_menu_color2=$(self 6 $tmp-menu_info2)
+
+        # 食事実績ＩＤを使い捨てにせず、施設、スケジュールＩＤ、日付、枝番をキーにして食事実績ＩＤを既存データより取得する。
+        if [ -s $tmp-catering_yoyaku_moto_data ] ; then
+           awk '$3=="'${catering_date}'"&&$4=="2"{print $9,$10}' $tmp-catering_yoyaku_moto_data > $tmp-catering_shokuji_id2
+           catering_shokuji_jisseki_id1=$(self 1 $tmp-catering_shokuji_id2)
+           catering_shokuji_jisseki_id2=$(self 2 $tmp-catering_shokuji_id2)
+
+           # 該当の食事実績データ、請求データは一旦削除する。
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           fi
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           fi
+           #########食事実績############
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色1           15:予備1
+# 16:予備2    17:予備3                 18:予備4  19:予備5         20:有効フラグ
+# 21:処理時間 22:担当ユーザＩＤ
+           if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+             if [  -n "${NyukyoshaCateringNum2}" -a "${NyukyoshaCateringNum2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu2}" "${catering_menu_name2}" "${catering_menu_shokushu2}" "${catering_menu_nyukyosha_price2}" "${NyukyoshaCateringNum2}" "${catering_menu_color2}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+             if [  -n "${GuestCateringNum2}" -a "${GuestCateringNum2}" != "_" -a "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu2}" "${catering_menu_name2}" "${catering_menu_shokushu2}" "${catering_menu_guest_price2}" "${GuestCateringNum2}" "${catering_menu_color2}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+           fi
+        else
+          if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+           # 入居者注文がある場合
+           if [ -n "${NyukyoshaCateringNum2}" -a "${NyukyoshaCateringNum2}" != "_" ] ; then
+              mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+              touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              # 現状の最終番号
+              now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+              # 今回の発番後に、数字が限度を超えないかチェック
+              new_last_no=$(expr ${now_last_no} + 1)
+      
+              # 超えてたらリセット
+              [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+              get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+              catering_shokuji_jisseki_id1=$(cat $tmp-id)
+              echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu2}" "${catering_menu_name2}" "${catering_menu_shokushu2}" "${catering_menu_nyukyosha_price2}" "${NyukyoshaCateringNum2}" "${catering_menu_color2}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+
+              # さらにゲスト注文がある場合
+              if [ -n "${GuestCateringNum2}" -a "${GuestCateringNum2}" != "_" ] ; then
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+      
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id2=$(cat $tmp-id)
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu2}" "${catering_menu_name2}" "${catering_menu_shokushu2}" "${catering_menu_guest_price2}" "${GuestCateringNum2}" "${catering_menu_color2}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_shokuji_jisseki_id2="_"
+              fi
+           else
+              # ゲスト注文のみがある場合
+              if [ -n "${GuestCateringNum2}" -a "${GuestCateringNum2}" != "_" ] ; then
+                 mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+                 touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id1=$(cat $tmp-id)
+                 catering_shokuji_jisseki_id2="_"
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu2}" "${catering_menu_name2}" "${catering_menu_shokushu2}" "${catering_menu_guest_price2}" "${GuestCateringNum2}" "${catering_menu_color2}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_err_msg="注文数を入力してください。"
+              fi
+           fi
+          fi
+        fi 
+if [ "${chkSakujo}" != "9" ] ; then
+echo "$shisetsu" "$ScheduleID" "${catering_date}" "2" "${cateringMenu2}" "${NyukyoshaCateringNum2}" \
+"${GuestCateringNum2}" "${CateringCancel}" "${catering_shokuji_jisseki_id1}" "${catering_shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${CateringShokujiTiming}" "${room_service_flg}" "1" "${sdaytime}" "${userid}" >> $tmp-catering_yoyaku_input
+fi
+     fi
+     if [ -n "${cateringMenu3}" -a "${cateringMenu3}" != "_" ] ; then
+        # メニュー情報を取得
+        echo "${cateringMenu3}" |
+        join1 key=1 $tmp-menu_master > $tmp-menu_info3
+        catering_menu_name3=$(self 2 $tmp-menu_info3)
+        catering_menu_shokushu3=$(self 3 $tmp-menu_info3)
+        catering_menu_nyukyosha_price3=$(self 4 $tmp-menu_info3)
+        catering_menu_guest_price3=$(self 5 $tmp-menu_info3)
+        catering_menu_color3=$(self 6 $tmp-menu_info3)
+
+        # 食事実績ＩＤを使い捨てにせず、施設、スケジュールＩＤ、日付、枝番をキーにして食事実績ＩＤを既存データより取得する。
+        if [ -s $tmp-catering_yoyaku_moto_data ] ; then
+           awk '$3=="'${catering_date}'"&&$4=="3"{print $9,$10}' $tmp-catering_yoyaku_moto_data > $tmp-catering_shokuji_id3
+           catering_shokuji_jisseki_id1=$(self 1 $tmp-catering_shokuji_id3)
+           catering_shokuji_jisseki_id2=$(self 2 $tmp-catering_shokuji_id3)
+
+           # 該当の食事実績データ、請求データは一旦削除する。
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           fi
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           fi
+
+           #########食事実績############
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色1           15:予備1
+# 16:予備2    17:予備3                 18:予備4  19:予備5         20:有効フラグ
+# 21:処理時間 22:担当ユーザＩＤ
+           if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+             if [  -n "${NyukyoshaCateringNum3}" -a "${NyukyoshaCateringNum3}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu3}" "${catering_menu_name3}" "${catering_menu_shokushu3}" "${catering_menu_nyukyosha_price3}" "${NyukyoshaCateringNum3}" "${catering_menu_color3}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+             if [  -n "${GuestCateringNum3}" -a "${GuestCateringNum3}" != "_" -a "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu3}" "${catering_menu_name3}" "${catering_menu_shokushu3}" "${catering_menu_guest_price3}" "${GuestCateringNum3}" "${catering_menu_color3}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+           fi
+        else
+          if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+           # 入居者注文がある場合
+           if [ -n "${NyukyoshaCateringNum3}" -a "${NyukyoshaCateringNum3}" != "_" ] ; then
+              mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+              touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              # 現状の最終番号
+              now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+              # 今回の発番後に、数字が限度を超えないかチェック
+              new_last_no=$(expr ${now_last_no} + 1)
+      
+              # 超えてたらリセット
+              [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+              get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+              catering_shokuji_jisseki_id1=$(cat $tmp-id)
+              echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu3}" "${catering_menu_name3}" "${catering_menu_shokushu3}" "${catering_menu_nyukyosha_price3}" "${NyukyoshaCateringNum3}" "${catering_menu_color3}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+
+              # さらにゲスト注文がある場合
+              if [ -n "${GuestCateringNum3}" -a "${GuestCateringNum3}" != "_" ] ; then
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+      
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id2=$(cat $tmp-id)
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu3}" "${catering_menu_name3}" "${catering_menu_shokushu3}" "${catering_menu_guest_price3}" "${GuestCateringNum3}" "${catering_menu_color3}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_shokuji_jisseki_id2="_"
+              fi
+           else
+              # ゲスト注文のみがある場合
+              if [ -n "${GuestCateringNum3}" -a "${GuestCateringNum3}" != "_" ] ; then
+                 mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+                 touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id1=$(cat $tmp-id)
+                 catering_shokuji_jisseki_id2="_"
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu3}" "${catering_menu_name3}" "${catering_menu_shokushu3}" "${catering_menu_guest_price3}" "${GuestCateringNum3}" "${catering_menu_color3}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_err_msg="注文数を入力してください。"
+              fi
+           fi
+          fi
+        fi
+if [ "${chkSakujo}" != "9" ] ; then
+echo "$shisetsu" "$ScheduleID" "${catering_date}" "3" "${cateringMenu3}" "${NyukyoshaCateringNum3}" \
+"${GuestCateringNum3}" "${CateringCancel}" "${catering_shokuji_jisseki_id1}" "${catering_shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${CateringShokujiTiming}" "${room_service_flg}" "1" "${sdaytime}" "${userid}" >> $tmp-catering_yoyaku_input
+fi
+     fi
+     if [ -n "${cateringMenu4}" -a "${cateringMenu4}" != "_" ] ; then
+        # メニュー情報を取得
+        echo "${cateringMenu4}" |
+        join1 key=1 $tmp-menu_master > $tmp-menu_info4
+        catering_menu_name4=$(self 2 $tmp-menu_info4)
+        catering_menu_shokushu4=$(self 3 $tmp-menu_info4)
+        catering_menu_nyukyosha_price4=$(self 4 $tmp-menu_info4)
+        catering_menu_guest_price4=$(self 5 $tmp-menu_info4)
+        catering_menu_color4=$(self 6 $tmp-menu_info4)
+
+        # 食事実績ＩＤを使い捨てにせず、施設、スケジュールＩＤ、日付、枝番をキーにして食事実績ＩＤを既存データより取得する。
+        if [ -s $tmp-catering_yoyaku_moto_data ] ; then
+           awk '$3=="'${catering_date}'"&&$4=="4"{print $9,$10}' $tmp-catering_yoyaku_moto_data > $tmp-catering_shokuji_id4
+           catering_shokuji_jisseki_id1=$(self 1 $tmp-catering_shokuji_id4)
+           catering_shokuji_jisseki_id2=$(self 2 $tmp-catering_shokuji_id4)
+
+           # 該当の食事実績データ、請求データは一旦削除する。
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           fi
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           fi
+
+           #########食事実績############
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色1           15:予備1
+# 16:予備2    17:予備3                 18:予備4  19:予備5         20:有効フラグ
+# 21:処理時間 22:担当ユーザＩＤ
+           if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+             if [  -n "${NyukyoshaCateringNum4}" -a "${NyukyoshaCateringNum4}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu4}" "${catering_menu_name4}" "${catering_menu_shokushu4}" "${catering_menu_nyukyosha_price4}" "${NyukyoshaCateringNum4}" "${catering_menu_color4}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+             if [  -n "${GuestCateringNum4}" -a "${GuestCateringNum4}" != "_" -a "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu4}" "${catering_menu_name4}" "${catering_menu_shokushu4}" "${catering_menu_guest_price4}" "${GuestCateringNum4}" "${catering_menu_color4}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+           fi
+        else
+          if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+           # 入居者注文がある場合
+           if [ -n "${NyukyoshaCateringNum4}" -a "${NyukyoshaCateringNum4}" != "_" ] ; then
+              mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+              touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              # 現状の最終番号
+              now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+              # 今回の発番後に、数字が限度を超えないかチェック
+              new_last_no=$(expr ${now_last_no} + 1)
+      
+              # 超えてたらリセット
+              [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+              get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+              catering_shokuji_jisseki_id1=$(cat $tmp-id)
+              echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu4}" "${catering_menu_name4}" "${catering_menu_shokushu4}" "${catering_menu_nyukyosha_price4}" "${NyukyoshaCateringNum4}" "${catering_menu_color4}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+
+              # さらにゲスト注文がある場合
+              if [ -n "${GuestCateringNum4}" -a "${GuestCateringNum4}" != "_" ] ; then
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+      
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id2=$(cat $tmp-id)
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu4}" "${catering_menu_name4}" "${catering_menu_shokushu4}" "${catering_menu_guest_price4}" "${GuestCateringNum4}" "${catering_menu_color4}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_shokuji_jisseki_id2="_"
+              fi
+           else
+              # ゲスト注文のみがある場合
+              if [ -n "${GuestCateringNum4}" -a "${GuestCateringNum4}" != "_" ] ; then
+                 mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+                 touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id1=$(cat $tmp-id)
+                 catering_shokuji_jisseki_id2="_"
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu4}" "${catering_menu_name4}" "${catering_menu_shokushu4}" "${catering_menu_guest_price4}" "${GuestCateringNum4}" "${catering_menu_color4}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_err_msg="注文数を入力してください。"
+              fi
+           fi
+          fi
+        fi
+if [ "${chkSakujo}" != "9" ] ; then
+echo "$shisetsu" "$ScheduleID" "${catering_date}" "4" "${cateringMenu4}" "${NyukyoshaCateringNum4}" \
+"${GuestCateringNum4}" "${CateringCancel}" "${catering_shokuji_jisseki_id1}" "${catering_shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${CateringShokujiTiming}" "${room_service_flg}" "1" "${sdaytime}" "${userid}" >> $tmp-catering_yoyaku_input
+fi
+     fi
+     if [ -n "${cateringMenu5}" -a "${cateringMenu5}" != "_" ] ; then
+        # メニュー情報を取得
+        echo "${cateringMenu5}" |
+        join1 key=1 $tmp-menu_master > $tmp-menu_info5
+        catering_menu_name5=$(self 2 $tmp-menu_info5)
+        catering_menu_shokushu5=$(self 3 $tmp-menu_info5)
+        catering_menu_nyukyosha_price5=$(self 4 $tmp-menu_info5)
+        catering_menu_guest_price5=$(self 5 $tmp-menu_info5)
+        catering_menu_color5=$(self 6 $tmp-menu_info5)
+
+        # 食事実績ＩＤを使い捨てにせず、施設、スケジュールＩＤ、日付、枝番をキーにして食事実績ＩＤを既存データより取得する。
+        if [ -s $tmp-catering_yoyaku_moto_data ] ; then
+           awk '$3=="'${catering_date}'"&&$4=="5"{print $9,$10}' $tmp-catering_yoyaku_moto_data > $tmp-catering_shokuji_id5
+           catering_shokuji_jisseki_id1=$(self 1 $tmp-catering_shokuji_id5)
+           catering_shokuji_jisseki_id2=$(self 2 $tmp-catering_shokuji_id5)
+
+           # 該当の食事実績データ、請求データは一旦削除する。
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_kizon >> $tmp-shokuji_jisseki_input
+           fi
+           awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id1}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           if [ "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+             awk '$1=="'${Riyoushaid}'"&&$2=="'${shisetsu}'"&&$8=="'${catering_shokuji_jisseki_id2}'"{$(NF-2)="9";$(NF-1)="'${sdaytime}'";print $0}' $tmp-shokuji_jisseki_seikyu_kizon >> $tmp-shokuji_jisseki_seikyu_input
+           fi
+
+           #########食事実績############
+# 1:利用者ID  2:施設ID                 3:建屋    4:居室           5:入居者ゲストフラグ
+# 6:日付      7:食事（朝昼夜おやつ他） 8:食事ID  9:食事メニューID 10:メニュー名
+# 11:食事種類 12:入居者価格            13:注文数 14:色1           15:予備1
+# 16:予備2    17:予備3                 18:予備4  19:予備5         20:有効フラグ
+# 21:処理時間 22:担当ユーザＩＤ
+           if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+             if [  -n "${NyukyoshaCateringNum4}" -a "${NyukyoshaCateringNum4}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu5}" "${catering_menu_name5}" "${catering_menu_shokushu5}" "${catering_menu_nyukyosha_price5}" "${NyukyoshaCateringNum5}" "${catering_menu_color5}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+             if [  -n "${GuestCateringNum4}" -a "${GuestCateringNum4}" != "_" -a "${catering_shokuji_jisseki_id2}" != "_" ] ; then
+               echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu5}" "${catering_menu_name5}" "${catering_menu_shokushu5}" "${catering_menu_guest_price5}" "${GuestCateringNum5}" "${catering_menu_color5}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+             fi
+           fi
+        else
+          if [ "${chkSakujo}" != "9" -a "${CateringCancel}" = "_" ] ; then
+           # 入居者注文がある場合
+           if [ -n "${NyukyoshaCateringNum5}" -a "${NyukyoshaCateringNum5}" != "_" ] ; then
+              mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+              touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+              # 現状の最終番号
+              now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+              # 今回の発番後に、数字が限度を超えないかチェック
+              new_last_no=$(expr ${now_last_no} + 1)
+      
+              # 超えてたらリセット
+              [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+              get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+              catering_shokuji_jisseki_id1=$(cat $tmp-id)
+              echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "1" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu5}" "${catering_menu_name5}" "${catering_menu_shokushu5}" "${catering_menu_nyukyosha_price5}" "${NyukyoshaCateringNum5}" "${catering_menu_color5}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+
+              # さらにゲスト注文がある場合
+              if [ -n "${GuestCateringNum4}" -a "${GuestCateringNum4}" != "_" ] ; then
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+      
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+      
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id2=$(cat $tmp-id)
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id2}" "${cateringMenu5}" "${catering_menu_name5}" "${catering_menu_shokushu5}" "${catering_menu_guest_price5}" "${GuestCateringNum5}" "${catering_menu_color5}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_shokuji_jisseki_id2="_"
+              fi
+           else
+              # ゲスト注文のみがある場合
+              if [ -n "${GuestCateringNum5}" -a "${GuestCateringNum5}" != "_" ] ; then
+                 mkdir -p ${data_dir}/SHOKUJI/${shisetsu}
+                 touch ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 [ -s ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID ] || echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+                 # 現状の最終番号
+                 now_last_no=$(cat ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID)
+                 # 今回の発番後に、数字が限度を超えないかチェック
+                 new_last_no=$(expr ${now_last_no} + 1)
+
+                 # 超えてたらリセット
+                 [ ${new_last_no} -gt "99999999" ] && echo "00000001" > ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID
+
+                 get_no 1 ${data_dir}/SHOKUJI/${shisetsu}/SHOKUJI_ID > $tmp-id
+                 catering_shokuji_jisseki_id1=$(cat $tmp-id)
+                 catering_shokuji_jisseki_id2="_"
+                 echo "${Riyoushaid}" "${shisetsu}" "${catering_tateya}" "_" "2" "${catering_date}" "${CateringShokujiTiming}" "${catering_shokuji_jisseki_id1}" "${cateringMenu5}" "${catering_menu_name5}" "${catering_menu_shokushu5}" "${catering_menu_guest_price5}" "${GuestCateringNum5}" "${catering_menu_color5}" "_" "_" "_" "_" "_" "1" "${sdaytime}" "${userid}" >> $tmp-shokuji_jisseki_input
+              else
+                 catering_err_msg="注文数を入力してください。"
+              fi
+           fi
+          fi
+        fi
+if [ "${chkSakujo}" != "9" ] ; then
+echo "$shisetsu" "$ScheduleID" "${catering_date}" "5" "${cateringMenu5}" "${NyukyoshaCateringNum5}" \
+"${GuestCateringNum5}" "${CateringCancel}" "${catering_shokuji_jisseki_id1}" "${catering_shokuji_jisseki_id2}" \
+"${Riyoushaid}" "${CateringShokujiTiming}" "${room_service_flg}" "1" "${sdaytime}" "${userid}" >> $tmp-catering_yoyaku_input
+fi
+     fi
+   done
+
+   cp -p $tmp-shokuji_jisseki_input $work_dir/catering_shokuji_jisseki
+
+   # 新規の場合は有効フラグ１が１レコード、削除の場合は有効フラグ９が１レコード
+   # 更新の場合は有効フラグ１が１レコード、有効フラグ９が１レコード、そのため
+   # この場合は有効フラグ１を優先させるため、有効フラグもキーにいれてgetlast
+   LANG=C sort -k1,8 -k21,21 -k20r,20r $tmp-shokuji_jisseki_input |
+   getlast 1 8 > $tmp-shokuji_jisseki_input_work
+   mv $tmp-shokuji_jisseki_input_work $tmp-shokuji_jisseki_input
+
+   #######################################################################
+   #################ケータリング食事請求データ作成########################
+   # 税率マスタ
+   : > $tmp-zeiritsu
+   for i in $(mdate ${cateringmonth}m) ; do
+  # 消費税率を取得
+     cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/ZEIRITSU        |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+#  awk '$3<="'${i}'"&&$4>="'${i}'"{print "'${i}'",$2}'  >> $tmp-zeiritsu
+### 20140908 変更
+     awk '$3<="'${i}'"&&$4>="'${i}'"{print "'${i}'",$2+"1"}'  >> $tmp-zeiritsu
+# 1:日付  2:税率
+   done
+
+   # 単価が0円のもの(税計算しないもの)
+   cat $tmp-shokuji_jisseki_input |
+   awk '$12=="0"{print $0}'     > $tmp-shokuji_jisseki_0
+
+   # 単価が0円のもの(税計算しないもの)
+   cat $tmp-shokuji_jisseki_input |
+   awk '$12!="0"{print $0}'     > $tmp-shokuji_jisseki_tankaari
+
+   : >$tmp-shokuji_jisseki_seikyutaishou_input
+   if [ -s $tmp-shokuji_jisseki_tankaari ] ; then
+      cat $tmp-shokuji_jisseki_tankaari |
+      lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22' |
+      marume -sage 12.0 |
+      tee $work_dir/seikyu_jisseki_catering_tochu1 |
+      LANG=C sort -k6,6           |
+      join2 key=6 $tmp-zeiritsu - > $tmp-shokuji_jisseki_tankaari_zeiari
+# 1:利用者(入居者)ID 2:施設ID      3:建屋                   4:居室       5:入居者ゲストフラグ
+# 6:日付             7:税率        8:食事（朝昼夜おやつ他） 9:食事ID     10:食事メニュー
+# 11:食事メニュー名  12:食事種類ID 13:単価(税抜き)          14:数量      15:メニュー色ID
+# 16:予備項目1       17:予備項目2  18:予備項目3             19:予備項目4 20:予備項目5
+# 21:削除フラグ      22:更新日     23:更新者
+      cat $tmp-shokuji_jisseki_tankaari_zeiari |
+      lcalc '$13 * $7 '            |
+      marume -sage 1.0            |
+      ycat $tmp-shokuji_jisseki_tankaari_zeiari - |
+### 20140908 変更
+      awk '{print $0,$13}'        |
+      marume -sage 25.0           |
+      awk '{if($(NF-1)>$NF){print $0,"1",$(NF-1)-$NF}else{print $0,"1","0"}}'     |
+      delf NF-2                   |
+      tee $work_dir/seikyu_jisseki_catering_tochu2 |
+# 1:利用者(入居者)ID 2:施設ID      3:建屋                   4:居室        5:入居者ゲストフラグ
+# 6:日付             7:税率        8:食事（朝昼夜おやつ他） 9:食事ID      10:食事メニュー
+# 11:食事メニュー名  12:食事種類ID 13:単価(税抜き)          14:数量       15:メニュー色ID
+# 16:予備項目1       17:予備項目2  18:予備項目3             19:予備項目4  20:予備項目5
+# 21:削除フラグ      22:更新日     23:更新者                24:税込み価格 25:税区分
+# 26:税
+### 20140908 変更
+      self 1/6 8/12 NF-1 7 13 NF NF-2 14 NF-5/NF-3  >> $tmp-shokuji_jisseki_seikyutaishou_tochuu
+# 1:利用者(入居者)ID 2:施設ID                 3:建屋   4:居室           5:入居者ゲストフラグ
+# 6:日付             7:食事（朝昼夜おやつ他） 8:食事ID 9:食事メニューID 10:食事メニュー名称
+# 11:食事種類I       12:税区分                13:税率  14:単価(税抜き)  15:税額
+# 16:税込み金額      17:数量                  18:削除  19:更新日        20:更新者
+
+      # 合計金額を計算する
+      cat $tmp-shokuji_jisseki_seikyutaishou_tochuu    |
+#    lcalc '$14 * $17','$15 *$17','$16*$17'           |
+#   合計金額の税抜き合計金額は合計金額（税込み）から割り戻す
+#   合計金額の税額は合計金額（税込）－合計金額（税抜）で計算する。
+# 1:税込み合計金額 2:税率
+      lcalc '$16 * $17','$13'           |
+# 1:税抜き合計金額 2:税込み合計金額
+      lcalc '$1/$2','$1'               |
+      marume -sage 1.0                  |
+# 1:税抜き合計金額 2:税額 3:税込み合計金額
+      lcalc '$1','$2-$1','$2'                          |
+      awk '{if($2<0){$2="0"};print $0}'                 |
+      ycat $tmp-shokuji_jisseki_seikyutaishou_tochuu - |
+      self 1/17 NF-2/NF 18/NF-3             |
+    ### 20140908変更
+      marume -sage 18.0 19.0                |
+      awk '{print $0,"_","_","_","_","_",$(NF-2),$(NF-1),$NF}'  |
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:削除フラグ 22:更新時間              23:更新者         24:予備項目1            25:予備項目2
+# 26:予備項目3  27:予備項目4             28:予備項目5      29:削除フラグ           30:更新時間
+# 31:更新者
+      self 1/20 24/NF             >> $tmp-shokuji_jisseki_seikyu_input
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+# 26:削除フラグ 27:更新時間              28:更新者
+    fi
+
+    if [ -s $tmp-shokuji_jisseki_0 ] ; then
+      cat $tmp-shokuji_jisseki_0 |
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室          5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニュー  10:食事メニュー名
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:メニュー色ID 15:予備項目1
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5    20:削除フラグ
+# 21:更新日     22:更新者
+      awk '{print $0,"1","0",$12,"0","0",$13,"0","0","0","_","_","_","_","_",$(NF-2),$(NF-1),$NF}'   |
+      self 1/11 23/NF  >> $tmp-shokuji_jisseki_seikyu_input
+# 1:利用者ID    2:施設ID                 3:建屋            4:居室                  5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID          9:食事メニューID        10:食事メニュー名称
+# 11:食事種類ID 12:税区分                13:税率           14:単価(税抜き)         15:税額
+# 16:税込価格   17:数量                  18:合計金額(税抜) 19:合計税金額(税額のみ) 20:合計金額(税込)
+# 21:予備項目1  22:予備項目2             23:予備項目3      24:予備項目4            25:予備項目5
+# 26:削除フラグ 27:更新時間              28:更新者
+
+    fi
+
+   # 新規の場合は有効フラグ１が１レコード、削除の場合は有効フラグ９が１レコード
+   # 更新の場合は有効フラグ１が１レコード、有効フラグ９が１レコード、そのため
+   # この場合は有効フラグ１を優先させるため、有効フラグもキーにいれてgetlast
+   LANG=C sort -k1,8 -k27,27 -k26r,26r $tmp-shokuji_jisseki_seikyu_input |
+   getlast 1 8 > $tmp-shokuji_jisseki_seikyu_input_work
+   mv $tmp-shokuji_jisseki_seikyu_input_work $tmp-shokuji_jisseki_seikyu_input    
+
+    cp -p $tmp-shokuji_jisseki_seikyu_input $tmp-shokuji_jisseki_seikyu2_input
+
+    ## 20140908 追記　 税込価格の計算があっていなかったら請求用データにあわせる
+    if [ -s $tmp-shokuji_jisseki_seikyutaishou_input ] ; then
+       cat $tmp-shokuji_jisseki_input |
+       LANG=C sort -k1,8              > $tmp-shokuji_jisseki_input_hikakuyou
+       cat $tmp-shokuji_jisseki_seikyutaishou_input |
+       self 1/8 16   |
+       LANG=C sort   |
+       join2 key=1/8 - $tmp-shokuji_jisseki_input_hikakuyou |
+       tee $tmp-shokuji_jisseki_zeikomikakaku_kakunin       |
+# 1:利用者ID          2:施設ID                 3:建屋          4:居室         5:入居者ゲストフラグ
+# 6:日付              7:食事（朝昼夜おやつ他） 8:食事ID        9:単価(税込み) 10:食事メニューID
+# 11:食事メニュー名称 12:食事種類ID            13:単価(税抜き) 14:数量        15:色ID
+# 16:単価(税込み)     17:予備項目2             18:予備項目3    19:予備項目4   20:予備項目5
+       awk '$9!=$16' > $tmp-zeikomikakaku_new
+      
+       if [ -s $tmp-zeikomikakaku_new ] ; then
+         cat $tmp-zeikomikakaku_new  |
+         awk '{print $0,$(NF-1)+1}'                 |
+         self 1/8 10/15 9 17/NF-3 NF NF-1           |
+         cat - $tmp-shokuji_jisseki_input_hikakuyou |
+         LANG=C sort -k1,8 -k21,21                  |
+         getlast 1 8                      > $tmp-shokuji_jisseki_input
+       else
+         :
+       fi
+    else
+      :
+    fi
+fi
+
+[ -n "$catering_err_msg" ] && error_exit "$catering_err_msg"
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+SCHEDULE/${shisetsu}/SCHEDULE_SHOUSAI SCHEDULE_SHOUSAI
+SCHEDULE/${shisetsu}/SCHEDULE_ENDDATE SCHEDULE_ENDDATE
+SCHEDULE/${shisetsu}/SCHEDULE_RESERVATION SCHEDULE_RESERVATION
+SCHEDULE/${shisetsu}/SCHEDULE_SANKASHA SCHEDULE_SANKASHA
+SCHEDULE/${shisetsu}/SCHEDULE_GUEST SCHEDULE_GUEST
+SCHEDULE/${shisetsu}/SCHEDULE_RIYOUSHA_SEIKYU SCHEDULE_RIYOUSHA_SEIKYU
+SCHEDULE/${shisetsu}/SCHEDULE_GUEST_SEIKYU SCHEDULE_GUEST_SEIKYU
+FIN
+
+# とりあえず、現状はセンター南のみ
+if [ "$shisetsu" = "0003" ] ; then
+cat <<- FINN | LANG=C sort -u >> $tmp-target-table
+SCHEDULE/${shisetsu}/SCHEDULE_RESTAURANT_ORDER SCHEDULE_RESTAURANT_ORDER
+FINN
+fi
+
+# ケータリングのスケジュールタイプが選択された場合のみ
+if [ "${EventType}" == "00012" ] ; then
+cat <<- FINNNN | LANG=C sort -u >> $tmp-target-table
+SCHEDULE/${shisetsu}/SCHEDULE_CATERING_ORDER SCHEDULE_CATERING_ORDER
+FINNNN
+fi
+
+
+if [ $(gyo $tmp-shokuji_jisseki_input) -gt 0 ] ; then
+cat <<- FINNN | LANG=C sort -u >> $tmp-target-table
+SCHEDULE/${shisetsu}/RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI
+RIYOUSHA_SHOKUJI_JISSEKI RIYOUSHA_SHOKUJI_JISSEKI
+FINNN
+fi
+
+if [ $(gyo $tmp-shokuji_jisseki_seikyu_input) -gt 0 ] ; then
+cat <<- FINNN | LANG=C sort -u >> $tmp-target-table
+SCHEDULE/${shisetsu}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+FINNN
+fi
+
+input_detail_dir=SCHEDULE/${shisetsu}
+
+shokuji_data_dir="/DATA/E-LIFE/SHOKUJI/RESTAURANT"
+shokuji_jisseki_data_dir="${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}"
+shokuji_seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${shisetsu}/0${EventTateya}/${restaurant_yoyakutsuki}"
+
+catering_jisseki_data_dir="${home_dir}/SHOKUJI/POMPA/${shisetsu}/0${EventTateya}/${cateringmonth}"
+catering_seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${shisetsu}/0${EventTateya}/${cateringmonth}"
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+# 参加者請求レコードが０の場合はリストに入れない
+
+cat <<- FIN > $tmp-koushin_pompa
+schedule_detail_base SCHEDULE_SHOUSAI 2 17 18 ${apdata_dir}/SCHEDULE ${input_dir}
+schedule_detail_base2 SCHEDULE_SHOUSAI 2 17 18 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+
+if [ "$EventType" = "00015" -o "$EventType" = "00012" ]; then
+cat <<- FIN >> $tmp-koushin_pompa
+schedule_detail_enddate SCHEDULE_ENDDATE 2 12 13 ${apdata_dir}/SCHEDULE ${input_dir}
+schedule_detail_enddate2 SCHEDULE_ENDDATE 2 12 13 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+if [ "$(gyo $tmp-schedule_Reserve_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-koushin_pompa
+schedule_Reserve SCHEDULE_RESERVATION 2 17 18 ${apdata_dir}/SCHEDULE ${input_dir}
+schedule_Reserve2 SCHEDULE_RESERVATION 2 17 18 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+if [ "$(gyo $tmp-restaurant_yoyaku_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-koushin_pompa
+restaurant_yoyaku SCHEDULE_RESTAURANT_ORDER 2 13 14 ${shokuji_data_dir}/${shisetsu}/${restaurant_yoyakutsuki} ${input_dir}
+restaurant_yoyaku2 SCHEDULE_RESTAURANT_ORDER 2 13 14 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+if [ "$(gyo $tmp-catering_yoyaku_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-koushin_pompa
+catering_yoyaku SCHEDULE_CATERING_ORDER 4 15 16 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+cp $tmp-koushin_pompa $work_dir/koushin_pompa_schedule
+
+if [ "$(gyo $tmp-schedule_seikyu_input)" = "0" ] ; then
+cat <<- FIN > $tmp-add_pompa
+riyousha SCHEDULE_SANKASHA 3 8 9 ${apdata_dir}/SCHEDULE ${input_dir}
+riyousha2 SCHEDULE_SANKASHA 3 8 9 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+else
+cat <<- FIN > $tmp-add_pompa
+schedule_seikyu SCHEDULE_RIYOUSHA_SEIKYU 3 13 14 ${data_dir}/SEIKYU/SHISETSU/SCHEDULE/${shisetsu}/$seikyumonth ${input_dir}
+schedule_seikyu2 SCHEDULE_RIYOUSHA_SEIKYU 3 13 14 ${pompa_dir}/SCHEDULE ${input_dir}
+riyousha SCHEDULE_SANKASHA 3 8 9 ${apdata_dir}/SCHEDULE ${input_dir}
+riyousha2 SCHEDULE_SANKASHA 3 8 9 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+fi
+
+if [ $(gyo $tmp-shokuji_jisseki_input) -gt 0 -a "${EventType}" == "00012" ] ; then
+cat <<- FIN > $tmp-shokuji_jisseki_pompa
+shokuji_jisseki RIYOUSHA_SHOKUJI_JISSEKI 7 28 22 ${catering_jisseki_data_dir} ${input_dir}
+FIN
+else
+cat <<- FIN > $tmp-shokuji_jisseki_pompa
+shokuji_jisseki RIYOUSHA_SHOKUJI_JISSEKI 7 28 22 ${pompa_dir}/SCHEDULE/RESTAURANT/${shisetsu}/${restaurant_yoyakutsuki} ${input_dir}
+shokuji_jisseki2 RIYOUSHA_SHOKUJI_JISSEKI 7 28 22 ${shokuji_jisseki_data_dir} ${input_dir}
+FIN
+fi
+
+if [ $(gyo $tmp-shokuji_jisseki_seikyu_input) -gt 0 -a "${EventType}" == "00012" ] ; then
+cat <<- FIN >> $tmp-shokuji_jisseki_pompa
+shokuji_jisseki_seikyu RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 7 34 28 ${catering_seikyu_dir} ${input_dir}
+shokuji_jisseki_seikyu2 RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 7 34 28 ${catering_jisseki_data_dir} ${input_dir}
+FIN
+else
+cat <<- FIN >> $tmp-shokuji_jisseki_pompa
+shokuji_jisseki_seikyu RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 7 34 28 ${pompa_dir}/SCHEDULE/RESTAURANT/${shisetsu}/${restaurant_yoyakutsuki} ${input_dir}
+shokuji_jisseki_seikyu2 RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 7 34 28 ${shokuji_seikyu_dir} ${input_dir}
+shokuji_jisseki_seikyu3 RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA 7 34 28 ${shokuji_jisseki_data_dir} ${input_dir}
+FIN
+fi
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+# ゲスト請求レコードが０の場合はリストに入れない
+#if [ "$(gyo $tmp-schedule_guest_seikyu_input)" = "0" ] ; then
+#cat <<- FIN >> $tmp-add_pompa
+#guest SCHEDULE_GUEST 3 10 11 ${apdata_dir}/SCHEDULE ${input_dir}
+#guest2 SCHEDULE_GUEST 3 10 11 ${pompa_dir}/SCHEDULE ${input_dir}
+#FIN
+#else
+cat <<- FIN >> $tmp-add_pompa
+guest SCHEDULE_GUEST 3 10 11 ${apdata_dir}/SCHEDULE ${input_dir}
+guest2 SCHEDULE_GUEST 3 10 11 ${pompa_dir}/SCHEDULE ${input_dir}
+schedule_guest_seikyu SCHEDULE_GUEST_SEIKYU 3 14 15 ${data_dir}/SEIKYU/SHISETSU/SCHEDULE/${shisetsu}/$seikyumonth ${input_dir}
+schedule_guest_seikyu2 SCHEDULE_GUEST_SEIKYU 3 14 15 ${pompa_dir}/SCHEDULE ${input_dir}
+FIN
+#fi
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+   
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'${shisetsu}'"||$2!="'${ScheduleID}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 食事実績要更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-shokuji_jisseki_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  self 1/4 6/8 0               |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        |
+  delf 1/7                     > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-shokuji_jisseki_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-shokuji_jisseki_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+echo "SID $ScheduleID"
+
+rm -f ${tmp}-*
+exit 0

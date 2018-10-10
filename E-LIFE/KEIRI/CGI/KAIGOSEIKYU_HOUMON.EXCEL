@@ -1,0 +1,187 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMON.EXCEL : EXCEL出力
+#
+# Usage : KAIGOSEIKYU_HOUMON.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 施設情報取得
+LAST_MONTH=$(mdate ${seikyu_nengetsu}m/-1)
+awk '$(NF-2)!=9&&$7<="'${LAST_MONTH}'31"&&$8>="'${LAST_MONTH}'01"' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS |
+LANG=C sort -k6,7 |
+getlast 6 6       |
+self 6 1 5        |
+LANG=C sort       > $tmp-riyosha_status
+# 1:利用者ID 2:施設 3:居室
+
+# 施設マスタ準備
+awk '$(NF-2)' ${hometbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 1 2 > $tmp-shisetsu_master
+# 1:施設コード 2:施設名
+
+# 利用者名マスタ
+awk '$(NF-2)!=9' ${riyosha_dir}/RIYOUSHA_KIHON |
+self 1 2 3 > $tmp-riyosha_kihon
+# 1:利用者ID 2:利用者名 3:利用者名カナ
+
+LANG=C sort -k2,2 $tmp-riyosha_status |
+# 1:利用者ID 2:施設 3:居室
+join2 +"施設外" key=2 $tmp-shisetsu_master      |
+LANG=C sort -k1,1                               > $tmp-riyosha_room
+# 1:利用者ID 2:施設 3:居室 4:施設名
+
+
+# 介護度マスタ
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-kaigodo_master
+12 要支援1
+13 要支援2
+21 要介護1
+22 要介護2
+23 要介護3
+24 要介護4
+25 要介護5
+FIN
+
+# 保険者マスタ
+awk '$(NF-2)!=9' ${hometbl_dir}/HOKENJA/HOKENJA_TABLE |
+self 2 4 |
+LANG=C sort -k1,1 |
+maezero 1.8 > $tmp-hokenja
+
+# POMPAデータ呼び出し
+awk '$4=="01"' ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+# 1:利用者ID                   2:登録時間                      3:識別番号(7131または7132) 4:基本情報を表す1     5:提供年月
+# 6:事業所番号                 7:保険者番号                    8:被保険者番号             9:_                   10:_
+# 11:_                         12:_                            13:_                       14:_                  15:被保険者生年月日
+# 16:性別コード                17:被保険者要介護状態区分コード 18:_                       19:認定有効期間開始日 20:認定有効期間終了日
+# 21:居宅サービス計画作成区分1 22:事業所番号                   23:_                       24:_                  25:_
+# 26:_                         27:_                            28:_                       29:_                  30:_
+# 31:給付率                    32:_                            33:_                       34:_                  35:保険サービス単位合計
+# 36:合計請求額                37:利用者負担額                 38:_                       39:_                  40:_
+self 1 5 7 8 17 19 20  > $tmp-kihonjoho
+# 1:利用者ID         2:年月             3:保険者番号 4:被保険者番号 5:介護区分コード
+# 6:認定有効期間開始 7:認定有効期間終了
+
+awk '$4=="10"' ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.SERVICESEIKYU_MEISAISHO |
+# 1:利用者ID        2:登録時間              3:識別番号                4:集計情報を表す10   5:提供年月
+# 6:事業所番号      7:保険者番号            8:被保険者番号            9:サービス種類コード 10:日数
+# 11:計画単位数     12:限度額管理対象単位数 13:限度額管理対象外単位数 14:_                 15:_
+# 16:保険単位数合計 17:保険単位数単価       18:保険請求額             19:保険利用者負担額  20:_
+# 21:_              22:_                    23:_                      24:_                 25:_
+# 26:_              27:_                    28:_                      29:_                 30:_
+# 31:_              32:_
+self 1 5 10 11 12 13 16 17 18 19  > $tmp-shukeijoho
+# 1:利用者id               2:年月           3:日数     4:4;計画単位数 5:限度額管理対象単位数
+# 6:限度額管理対象外単位数 7:保険単位数合計 8:保険単価 9:保険請求額   10:保険利用者負担額
+
+loopj num=2 $tmp-kihonjoho $tmp-shukeijoho |
+# 1:利用者ID                2:年月             3:保険者番号 4:被保険者番号 5:介護区分コード
+# 6:認定有効期間開始        7:認定有効期間終了 8:日数       9:4;計画単位数 10:限度額管理対象単位数
+# 11:限度額管理対象外単位数 12:保険単位数合計  13:保険単価  14:保険請求額  15:保険利用者負担額
+LANG=C sort -k3,3 |
+join2 key=3 $tmp-hokenja |
+# 1:利用者ID              2:年月                    3:保険者番号       4:保険者名  5:被保険者番号
+# 6:介護区分コード        7:認定有効期間開始        8:認定有効期間終了 9:日数      10:4;計画単位数
+# 11:限度額管理対象単位数 12:限度額管理対象外単位数 13:保険単位数合計  14:保険単価 15:保険請求額
+# 16:保険利用者負担額
+LANG=C sort -k6,6 |
+join2 key=6 $tmp-kaigodo_master             |
+# 1:利用者ID       2:年月                  3:保険者番号              4:保険者名         5:被保険者番号
+# 6:介護区分コード 7:介護度                8:認定有効期間開始        9:認定有効期間終了 10:日数
+# 11:4;計画単位数  12:限度額管理対象単位数 13:限度額管理対象外単位数 14:保険単位数合計  15:保険単価
+# 16:保険請求額    17:保険利用者負担額
+LANG=C sort -k1,1 |
+join2 +"施設外" key=1 $tmp-riyosha_room               |
+# 1:利用者ID                2:施設              3:居室         4:施設名         5:年月
+# 6:保険者番号              7:保険者名          8:被保険者番号 9:介護区分コード 10:介護度
+# 11:認定有効期間開始       12:認定有効期間終了 13:日数        14:4;計画単位数  15:限度額管理対象単位数
+# 16:限度額管理対象外単位数 17:保険単位数合計   18:保険単価    19:保険請求額    20:保険利用者負担額
+join2 key=1 $tmp-riyosha_kihon |
+# 1:利用者ID        2:利用者名              3:利用者カナ              4:施設              5:居室
+# 6:施設名          7:年月                  8:保険者番号              9:保険者名          10:被保険者番号
+# 11:介護区分コード 12:介護度               13:認定有効期間開始       14:認定有効期間終了 15:日数
+# 16:4;計画単位数   17:限度額管理対象単位数 18:限度額管理対象外単位数 19:保険単位数合計   20:保険単価
+# 21:保険請求額     22:保険利用者負担額
+LANG=C sort -k4,5 -k3,3 |
+awk '{$20=$20/100;print}' |
+tee ${work}/fugu |
+self 7 5 6 10 2 12 9 13 14 15 16/NF |
+# 1:対象年月    2:施設名                3:居室                    4:被保険者番号     5:被保険者名
+# 6:介護度      7:保険者                8:認定有効期間開始        9:認定有効期間終了 10:日数
+# 11:計画単位数 12:限度額管理対象単位数 13:限度額管理対象外単位数 14:給付単位数      15:単位数単価
+# 16:保険請求額 17:利用者負担額
+1bai 10 11 12 13 14 15 16 17 | juni > $tmp-meisai 
+
+
+cp $tmp-gattai ${work}/gattai
+
+TEMPLA=${temp_dir}/CHECK_HOUMON_MEISAI.xls
+Ehexcel < ${TEMPLA} 1 a4 ${tmp}-meisai                  > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+touch ${pompa_dir}/KOKUHO/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.CHECKED
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

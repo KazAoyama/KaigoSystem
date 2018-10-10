@@ -1,0 +1,514 @@
+#!/bin/bash
+#
+# SHOKUJI_SHUUKEI.EXCEL
+# 食事集計表示 食事別集計　エクセル出力用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID="$(nameread      "userid"       $namedata)"
+USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+SHISETSUID="$(nameread      "shisetsu"       $namedata)"
+if [ $(echo "${SHISETSUID}" | awk '$1~/^1/{print substr($1,1,1)}') = "1" ] ; then
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+else
+    SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+fi
+#---------------------------------
+# 表示期間
+echo "${TaishouYear}年${TaishouMonth}月"    > ${tmp}-taishoukikan
+
+TAISHOUMONTH=$(echo "${TaishouMonth}" | maezero 1.2)
+# 目標数値
+cat /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU  |
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"' |
+awk '$5<="'${TaishouYear}'""'${TAISHOUMONTH}'""01"&&$6>="'${TaishouYear}'""'${TAISHOUMONTH}'""01"' |
+LANG=C sort -k3,3 |
+self 4            |
+#> $tmp-mokuhyou
+lcalc '$1 / 100'  |
+marume 1.3        > $tmp-mokuhyou
+
+mokuhyou_asa=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="1"&&$(NF-2)!="9"{print $4}' /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU | head -1)
+mokuhyou_hiru=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="2"&&$(NF-2)!="9"{print $4}' /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU | head -1)
+mokuhyou_yoru=$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$3=="3"&&$(NF-2)!="9"{print $4}' /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU | head -1)
+
+[ -z "${mokuhyou_asa}" ] && mokuhyou_asa="0"
+[ -z "${mokuhyou_hiru}" ] && mokuhyou_hiru="0"
+[ -z "${mokuhyou_yoru}" ] && mokuhyou_yoru="0"
+
+# データ
+ if [ "$(gyo ${data})" != "0" ] ; then
+
+  mdate -a "${TaishouYear}""${TAISHOUMONTH}"m |
+  awk '{if($2=="1"){print $1,"(月)"}
+         else if($2=="2"){print $1,"(火)"}
+         else if($2=="3"){print $1,"(水)"}
+         else if($2=="4"){print $1,"(木)"}
+         else if($2=="5"){print $1,"(金)"}
+         else if($2=="6"){print $1,"(土)"}
+         else if($2=="7"){print $1,"(日)"}
+       }'                                    |
+  delf 3                                     > $tmp-day_youbi
+  # ${data}
+  # 1:日付 2:施設ID 3:食事（朝昼夜）4:入居者数 5:対象者人数 6:食事数量 7:喫食率 8:色
+
+  # マップする
+     cat ${data}      |
+#     # 色はエクセルではいらないので消す
+#tee $tmp-mmmmmmm      |
+#     delf NF          |
+     # 喫食率は空に
+     awk '$(NF-1)="@"'  |
+
+     # 入居者数はいらない
+     delf 4             |
+     # 日付と食事
+     self 1/3 1 3/NF    |
+     cjoin2 key=4 $tmp-day_youbi - |
+     awk '{if($1!="計"){print $0,substr($4,5,2)"/"substr($4,7,2)$5}
+           else{print $0,"/"}
+          }' |
+     delf 5  |
+     self 1/3 NF 5/NF-1 |
+     awk '{gsub("3","夕食(""'${mokuhyou_yoru}'""%)",$5);print $0}' |
+     awk '{gsub("2","昼食(""'${mokuhyou_hiru}'""%)",$5);print $0}' |
+     awk '{gsub("1","朝食(""'${mokuhyou_asa}'""%)",$5);print $0}'  |
+     tee $tmp-kisshoku_tee |
+#     awk '$3=="1"'    |
+     LANG=C sort      |
+     # 選択している施設を手前にする
+     if [ ! -z "${Shisetsu}" -a "${Shisetsu}" != "_" ] ; then
+       awk '{if($2=="'${Shisetsu}'"){print $0,"0"$2}
+             else{print $0,"1"$2}
+            }'        |
+       self 1 3 NF 4/NF-1 |
+       LANG=C sort -k1,3
+     else
+       cat -
+     fi               |
+# 1:日付       2:食事（朝昼夜） 3:施設ID 4:日付(/入り表記) 5:食事(目標％)
+# 6:対象者人数 7:食事数量       8:喫食率 9:色
+#     awk '{print $0,$6"人",$7"人"}' |
+#     self 1/5 NF-1 NF 8/NF-2        |
+#tee $tmp-aaaaaaaaaaaa | 
+     map +arr num=2   |
+     awk '$1!="*"'    |
+
+     # 一番手前の施設の朝食とか日付とかはいらない
+     delf 3 4         |
+     awk '{gsub("3","夕食(""'${mokuhyou_yoru}'""%)",$2);print $0}' |
+     awk '{gsub("2","昼食(""'${mokuhyou_hiru}'""%)",$2);print $0}' |
+     awk '{gsub("1","朝食(""'${mokuhyou_asa}'""%)",$2);print $0}' |
+     cjoin2 key=1 $tmp-day_youbi - |
+     awk '{if($1!="計"){print $0,substr($1,5,2)"/"substr($1,7,2)$2}
+           else{print $0,"/"}              
+          }' |
+     delf 2                                |
+     self NF 2/NF-1                        |
+     tee $tmp-listalldata                  |
+     awk '$1!="/"&&$1!="@"'                         > $tmp-listdata
+# 1:日付          2:食事（朝昼夜） 3:施設1：入居者数 4::施設1：対象者人数 5:施設1：食事数量
+# 6:施設1：喫食率 7:施設1：色　･･･
+  else
+    : > $tmp-listdata
+  fi
+
+# 月間喫食率データ
+  hyouji_kikan=$(cat ${tmp}-taishoukikan)
+  cat $tmp-listalldata |
+  tail -3           |
+#  sed 's/\/ //1'    |
+  sed 's/\//'${hyouji_kikan}'/g' > $tmp-search_month_goukei
+
+
+# ヘッダー施設名
+self 2 ${data}     |
+LANG=C sort -u     |
+cjoin1 key=1 - /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON  |
+self 1 2           > $tmp-shisetsu_all
+
+if [ ! -z ${Shisetsu} -a "${Shisetsu}" != "_" ] ; then
+  awk '$1=="'${Shisetsu}'"{print $2}' $tmp-shisetsu_all > $tmp-select_shisetsu
+  awk '$1!="'${Shisetsu}'"' $tmp-shisetsu_all           |
+  LANG=C sort                                           |
+  self 2                                                > $tmp-not_select_shisetsu
+  cat $tmp-select_shisetsu $tmp-not_select_shisetsu     |
+  tateyoko                                              |
+  sed 's/ / @ @ @ @ @ /g'                               > $tmp-header_shisetsu
+else
+  self 2 $tmp-shisetsu_all                              |
+  tateyoko                                              |
+  sed 's/ / @ @ @ @ @ /g'                                   > $tmp-header_shisetsu
+fi
+
+# ヘッダー項目名
+self 2 ${data}  |
+LANG=C sort -u  |
+awk '$1="入居者数　対象者数　食数　喫食率　@"{print $1}' |
+tateyoko        |
+sed 's/　/ /g'  > $tmp-header_koumoku
+
+#--------------------------------------------------------------
+# データ
+#------------------------------------------------------------------------------------
+#検索項目それぞれ
+#建屋名
+if [ ${Tateya} != "_" ] ;then
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR  |
+  awk '$2=="'${Tateya}'"&&$(NF-2)!="9"{print $1,$2}'    |
+  LANG=C sort -u |
+  cjoin1 key=1 - $tmp-shisetsu_all           |
+  self 2                                     | 
+  cjoin1 key=1 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME - |
+  self 2                                     |
+  tateyoko                                   |
+  sed 's/ / @ @ @ @ @ /g'                     > ${tmp}-tateya
+else
+  : > ${tmp}-tateya 
+fi
+
+# 事業形態
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_JIGYOKEITAI |
+  awk '$2=="'${Tateya}'"{print $1,$3}'                > $tmp-jigyoukeitai
+
+  awk '$1=="'${Shisetsu}'"{print $1}' $tmp-shisetsu_all > $tmp-select_shisetsucode
+  awk '$1!="'${Shisetsu}'"{print $1}' $tmp-shisetsu_all           |
+  LANG=C sort |
+  cat $tmp-select_shisetsucode -   |
+  cjoin1 key=1 $tmp-jigyoukeitai - |
+  self 2      |
+  tateyoko    |
+  sed 's/ / @ @ @ @ @ /g'        > $tmp-jigyoukeitai 
+
+## 表示期間
+#echo "${TaishouYear}年${TaishouMonth}月"    > ${tmp}-taishoukikan
+#
+#TAISHOUMONTH=$(echo "${TaishouMonth}" | maezero 1.2)
+## 目標数値
+#cat /home/hands/E-LIFE/TBL/SHOKUJI/KISSHOKURITSU_MOKUHYOU  |
+#awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"' |
+#awk '$5<="'${TaishouYear}'""'${TAISHOUMONTH}'""01"&&$6>="'${TaishouYear}'""'${TAISHOUMONTH}'""01"' |
+#LANG=C sort -k3,3 |
+#self 4            |
+##> $tmp-mokuhyou
+#lcalc '$1 / 100'  |
+#marume 1.3        > $tmp-mokuhyou
+
+#---------------------------------------------------------------------------------------
+# 諸情報取得
+#---------------------------------------------------------------------------------------
+  #--------
+  # 準備 
+  #--------
+# 対象日
+ today=$(date +%Y%m%d)
+ date=$(date +%m%d)
+ thismonth=$(date +%Y%m)
+ search_month_firstday=$(echo "${TaishouYear}""${TAISHOUMONTH}""01")
+ search_month_lastday=$(echo "${TaishouYear}""${TAISHOUMONTH}""31")
+ search_month=$(echo "${TaishouYear}""${TAISHOUMONTH}")
+
+# 体験入居者、ショートステイを抽出 
+cat /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKU |
+# 1:利用者ID   2:施設ID     3:建屋ID 4:フロアID 5:契約種類ID
+# 6:契約開始日 7:契約終了日･･･
+# 検索月が今月の場合は現時点で体験入居かどうか判定
+if [ "${thismonth}" = "${search_month}" ] ; then
+  awk '$6<="'${TaishouYear}'""'${today}'""01"&&$7>="'${today}'"&&$(NF-2)!="9"'   
+# 検索月が今月以外の場合はその月の最終日時点で体験入居かどうか
+else
+  awk '$6<="'${search_month_lastday}'"&&$7>="'${search_month_lastday}'"&&$(NF-2)!="9"'
+fi |
+awk '$5=="01"||$5=="02"'                       |
+self 1                                         |
+LANG=C sort -u > $tmp-taikennyuukyo
+
+  #------------
+  # 入居者数
+  #------------
+cat /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:シニアケア区分 3:フロア 4:ユニット 5:居室番号
+# 6:利用者ID 7:有効From       8:有効To
+if [ "${thismonth}" = "${search_month}" ] ; then
+  awk '$2=="'${Tateya}'"&&$7<="'${today}'"&&"'${today}'"<=$8&&$(NF-2)!="9"'                
+else
+  awk '$2=="'${Tateya}'"&&$7<="'${search_month_lastday}'"&&$8>="'${search_month_lastday}'"&&$(NF-2)!="9"'
+fi |
+LANG=C sort -k6,6       > $tmp-nyuukyosha 
+###入居者数ではタイケンニュウキョも含めようと思います(喫食対象者数では抜いてます)
+### 体験入居を除く
+##join0 +ng key=6 $tmp-taikennyuukyo - >/dev/null 2> $tmp-nyuukyosha
+### 1:施設ID   2:シニアケア区分 3:フロア 4:ユニット 5:居室番号
+### 6:利用者ID 7:有効From       8:有効To
+
+cat $tmp-nyuukyosha     |
+self 6 1                |
+LANG=C sort             |
+join1 key=1 - /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KIHON    |
+# 1:利用者ID         2:施設ID     3:利用者名   4:利用者名カナ 5:性別
+# 6:生年月日和暦区分 7:生年月日年 8:生年月日月 9:生年月日日   10:生年月日西暦
+#tee $tmp-nyuukyosha_kihon |
+if [ "${thismonth}" = "${search_month}" ] ; then
+  awk '{print $0,("'${today}'"-$10)/10000}' 
+else
+  awk '{print $0,("'${search_month_lastday}'"-$10)/10000}'
+fi |
+self 2 5 NF        |
+marume -sage 3.0   |
+LANG=C sort        |
+tee $tmp-ninzu_nenrei_data |
+# 1:施設ID  2:性別  3:年齢
+count 1 1          > $tmp-nyuukyosha_all_before
+# 1:施設ID  2:施設人数
+#|
+#count 1 1         |
+#awk '$1~/^0/'     > $tmp-nyuukyosha_all
+# 1:施設ID 2:施設人数
+
+#----
+# 0人の施設があった時用
+cat /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR   |
+awk '$1!~/^1/&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $1}'          |
+cjoin1 +ng key=1 $tmp-nyuukyosha_all_before - > $tmp-nyuukyosha_all_ari $tmp-nyuukyosha_all_nashi
+
+if [ -s $tmp-nyuukyosha_all_nashi ] ; then
+  # 男女年齢データに追記
+  cat $tmp-nyuukyosha_all_nashi    |
+  awk '{print $0,"1","0"}'         >  $tmp-ninzuu_nenrei_nashi_male
+  cat $tmp-nyuukyosha_all_nashi    |
+  awk '{print $0,"2","0"}'         |
+  cat $tmp-ninzuu_nenrei_nashi_male - >> $tmp-ninzu_nenrei_data
+
+  cat $tmp-nyuukyosha_all_nashi    |
+  awk '{print $0,"0"}'             |
+  tee $tmp-nyuukyosha_all_0nin     |
+  cat $tmp-nyuukyosha_all_before - |
+  LANG=C sort -u                   
+else
+  cat $tmp-nyuukyosha_all_before   
+fi > $tmp-nyuukyosha_all
+#--------------
+
+# 男性人数
+cat $tmp-ninzu_nenrei_data          |
+awk '$2=="1"&&$3!="0"'              |
+count 1 1                           |
+if [ -s $tmp-nyuukyosha_all_0nin  ] ; then
+  cat - $tmp-nyuukyosha_all_0nin
+else
+  cat -
+fi > $tmp-nyuukyosha_male
+# 1:施設ID 2:男性人数
+# 女性人数
+cat $tmp-ninzu_nenrei_data          |
+awk '$2=="2"&&$3!="0"'              |
+count 1 1                           |
+if [ -s $tmp-nyuukyosha_all_0nin  ] ; then
+  cat - $tmp-nyuukyosha_all_0nin
+else
+  cat -
+fi > $tmp-nyuukyosha_female
+# 1:施設ID 2:女性人数
+
+# 年齢
+cat $tmp-ninzu_nenrei_data        |
+sm2 1 1 3 3                       |
+# 1:施設ID 2:全年齢合計
+join1 key=1 $tmp-nyuukyosha_all - > $tmp-nyuukyosha_all_before
+
+cat $tmp-nyuukyosha_all_before    |
+# 1:施設ID 2:施設人数 3:全年齢合計
+awk '$1=="'${Shisetsu}'"'         > $tmp-nyuukyosha_all_before_selectshisetsu
+
+cat $tmp-nyuukyosha_all_before    |
+# 1:施設ID 2:施設人数 3:全年齢合計
+awk '$1!="'${Shisetsu}'"'         > $tmp-nyuukyosha_all_before_not_selectshisetsu
+
+# 施設人数と年齢ファイル作成
+cat $tmp-nyuukyosha_all_before_selectshisetsu $tmp-nyuukyosha_all_before_not_selectshisetsu |
+awk '{print $2,$3!="0"?$3/$2:$3,"1.0","@","@","@"}' |
+marume 2.1                        |
+awk '{print $1"人",$2"歳",$3,$4,$5,$6}'  |
+yarr                                     > $tmp-nyuukyosha_result
+
+
+# 年齢
+cat $tmp-ninzu_nenrei_data        |
+# 性別男性のものだけにし年齢合計を出す
+awk '$2=="1"'                     |
+sm2 1 1 3 3                       |
+# 1:施設ID 2:全年齢合計
+join1 key=1 $tmp-nyuukyosha_male - > $tmp-nyuukyosha_male_before
+
+# 選択施設のデータ
+cat $tmp-nyuukyosha_male_before    |
+# 1:施設ID 2:施設男性人数 3:全年齢合計
+awk '$1=="'${Shisetsu}'"'         > $tmp-nyuukyosha_male_before_selectshisetsu
+# 選択していない施設のデータ
+cat $tmp-nyuukyosha_male_before    |
+# 1:施設ID 2:施設人数 3:全年齢合計
+awk '$1!="'${Shisetsu}'"'         > $tmp-nyuukyosha_male_before_not_selectshisetsu
+
+# 男性人数と年齢のファイル
+cat $tmp-nyuukyosha_male_before_selectshisetsu $tmp-nyuukyosha_male_before_not_selectshisetsu |
+# 全施設の人数を取得(入居者割合計算のため)
+cjoin1 key=1 $tmp-nyuukyosha_all -                  |
+# 1:施設ID 2:施設全人数 3:施設男性人数  4:男性全年齢合計
+awk '{print $3,$4!="0"?$4/$3:$4,$3!="0"?$3/$2:$3,"@","@","@"}' |
+marume 2.1 3.3                           |
+awk '{print $1"人",$2"歳",$3,$4,$5,$6}'  |
+yarr                                     > $tmp-nyuukyosha_male_result
+
+
+# 年齢
+cat $tmp-ninzu_nenrei_data        |
+awk '$2=="2"'                     |
+sm2 1 1 3 3                       |
+# 1:施設ID 2:全年齢合計
+join1 key=1 $tmp-nyuukyosha_female - > $tmp-nyuukyosha_female_before
+
+cat $tmp-nyuukyosha_female_before    |
+# 1:施設ID 2:施設人数 3:全年齢合計
+awk '$1=="'${Shisetsu}'"'         > $tmp-nyuukyosha_female_before_selectshisetsu
+cat $tmp-nyuukyosha_female_before    |
+# 1:施設ID 2:施設人数 3:全年齢合計
+awk '$1!="'${Shisetsu}'"'         > $tmp-nyuukyosha_female_before_not_selectshisetsu
+
+# 女性人数と年齢のファイル
+cat $tmp-nyuukyosha_female_before_selectshisetsu $tmp-nyuukyosha_female_before_not_selectshisetsu |
+# 全施設の人数を取得(入居者割合計算のため)
+cjoin1 key=1 $tmp-nyuukyosha_all -                  |
+# 1:施設ID 2:施設全人数 3:施設女性人数  4:女性全年齢合計
+awk '{print $3,$4!="0"?$4/$3:$4,$3!="0"?$3/$2:$3,"@","@","@"}' |
+marume 2.1 3.3                           |
+#awk '{print $2,$3!="0"?$3/$2:$3,"1.0","@","@","@"}' |
+#marume 2.1                        |
+awk '{print $1"人",$2"歳",$3,$4,$5,$6}'  |
+yarr                                     > $tmp-nyuukyosha_female_result
+
+
+#cat $tmp-nyuukyosha_kihon        |
+# 1:利用者ID         2:施設ID     3:利用者名   4:利用者名カナ 5:性別
+# 6:生年月日和暦区分 7:生年月日年 8:生年月日月 9:生年月日日   10:生年月日西暦
+#awk '{print $0,substr($10,5,4)}' |
+#awk '{print $0,("'${today}'"-$10)/10000}' |
+#self 2 5 NF                      |
+#marume -sage 3.0                 |
+
+  #--------^
+  # 部屋数
+  #---------
+cat /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM |
+awk '$2=="'${Tateya}'"&&$5!="0"&&$(NF-2)!="9"{print $1,$5,"1"}' |
+LANG=C sort -u                   |
+delf 2                           |
+sm2 1 1 2 2                      > $tmp-kyoshitsu_number
+
+# 入居個室数(検索月の初日の戸数)
+#cat /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+#awk '$2=="'${Tateya}'"&&$8>="'${TaishouYear}'""'${TAISHOUMONTH}'""01"&&$(NF-2)!="9"{print $1,$5}' |
+cat $tmp-nyuukyosha  |
+# 1:施設ID   2:シニアケア区分 3:フロア 4:ユニット 5:居室番号
+# 6:利用者ID 7:有効From       8:有効To
+awk '$5!="0"{print $1,$5}'  |
+LANG=C sort -u       |
+awk '{print $1,"1"}' |
+sm2 1 1 2 2          > $tmp-nyuukyo_kyoshitsu_number    
+
+awk '$1=="'${Shisetsu}'"{print $0}' $tmp-kyoshitsu_number  |
+cjoin2 key=1 $tmp-nyuukyo_kyoshitsu_number -               |
+# 1:施設 2:入居居室数 3:居室数
+delf 1   > $tmp-select_shisetsu_room
+
+awk '$1!="'${Shisetsu}'"{print $0}' $tmp-kyoshitsu_number  |
+LANG=C sort                         |
+cjoin2 key=1 $tmp-nyuukyo_kyoshitsu_number -               |
+# 1:施設 2:入居居室数 3:居室数
+delf 1                              > $tmp-not_select_shisetsu_room
+
+
+cat $tmp-select_shisetsu_room $tmp-not_select_shisetsu_room |
+# 1:入居居室数 2:居室数
+awk '{print $2"戸","@",$1"戸",$1!="0"?$1/$2:$1,"@","@"}'    |
+marume 4.3                          |
+yarr                                > $tmp-room
+
+
+
+
+
+#---------------------------------------------------------------------------------------
+# 入力データのチェック
+
+# Excel出力
+download_dir=$home_dir/SHOKUJI/DOWNLOAD
+# 以前に作成したExcelは削除
+rm -f ${download_dir}/${download_dir}/kisshokuritsu_*_download.xls
+
+TEMPLA=${home_dir}/SHOKUJI/TEMPLATE/NEW_KISSHOKURITSU_TMP.xls
+Ehexcel < ${TEMPLA} 1 b4 $tmp-tateya              \
+                    1 b3 $tmp-header_shisetsu     \
+                    1 b5 $tmp-jigyoukeitai        \
+                    1 b6 $tmp-room                \
+                    1 c8 $tmp-nyuukyosha_result   \
+                    1 c9 $tmp-nyuukyosha_male_result     \
+                    1 c10 $tmp-nyuukyosha_female_result  \
+                    1 a12 $tmp-search_month_goukei       \
+                    1 b16 $tmp-mokuhyou           \
+                    1 a21 ${tmp}-listdata   > ${download_dir}/kisshokuritsu_$$_download.xls
+# > ${download_dir}/kisshokuritsu_$$_download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/kisshokuritsu_$$_download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+#cp $tmp-* /home/hands/work/okuda
+
+# ファイル名をはく
+cat ${tmp}-html.html
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,152 @@
+#!/bin/bash
+#
+# RIYOUHYOU_KAIGO.SEARCH
+# 利用票（介護）　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+#rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && ${hdTaishouYear}=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && ${taishoumonth}=$curmonth
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+RiyouhyouYear
+RiyouhyouMonth
+YoteiKakuteiFlg
+JissekiKakuteiFlg
+CareManager
+FIN
+cat $tmp-header |
+tateyoko > ${tmp}-header_yoko
+
+
+: > ${tmp}-riyouhyou_base
+
+if [ -s ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO ] ; then
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 対象年月
+# --------------------------
+#
+awk '$2=="'${hdTaishouYear}'"&&$3=="'${taishoumonth}'"'    |
+#--------------------------------------------------------------
+getlast 1 1              |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1                      |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-riyouhyou_base
+fi
+
+
+if [ ${MODE} = "search" -o ${MODE} = "print" ] ; then
+# 利用票ファイルの取得
+  cat ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO   |
+#--------------------------------------------------------------
+# 利用者ID
+  awk '$2=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+  awk '$3=="'${hdTaishouYear}'"&&$4=="'$taishoumonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 1:表示順 2:事業者タイプ 3:サービス区分 4:実績確定フラグ 5:予定データ値 6:実績データ値
+# 7:サービス開始時間 8:サービス終了時間 9:供給者ID 10:介護保険対象区分
+# 11:付随費用
+  self 1 5 6 7 8 10 12 13 14 15 17 |
+  LANG=C sort -k1,1n    |
+  awk '{print "l",$0}'  >  ${tmp}-riyouhyou_record
+
+elif [ ${MODE} = "tenkai" ] ; then
+# 展開情報の取得
+# データの最新日付を取得
+  cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+  LANG=C sort -k1n,2n                                                                  |
+  getlast 1 1                                                                          |
+  awk '{print $2}' > ${tmp}-latest_date
+
+  cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+  LANG=C sort -k1n,2n                                                                  |
+# 利用者ID
+  awk '$1=="'${Riyoushaid}'"'                                                          |
+# 展開情報対象日付がある場合
+  if [ -z "${tenkaidate}" -o "${tenkaidate}" = "_" ] ; then
+    join1 key=2 ${tmp}-latest_date -
+  else
+    awk '$2=="'${tenkaidate}'"'
+  fi |
+# 1:利用者ID          2:作成日付         3:サービスコード種類 4:サービスコード項目 5:表示順
+# 6:サービス内容      7:介護保険対象区分 8:供給者ID           9:サービス実施週曜日 10:サービス開始時刻
+# 11:サービス終了時刻 12:加算            13:サービス回数      14:単位              15:単位総数
+# 16:利用者負担額     17:総請求額        18:付随費用
+  self 5 3 4 9 10 11 8 7 18 |
+# 1:表示順           2:サービスコード種類 3:サービスコード項目 4:サービス実施週曜日 5:サービス開始時刻
+# 6:サービス終了時刻 7:供給者ID           8:介護保険対象区分   9:付随費用単価
+  LANG=C sort -k1n,1n       |
+  awk '{print "l",$0}'      > ${tmp}-riyouhyou_record
+fi
+
+cp ${tmp}-riyouhyou_record ${work_dir}/riyouhyou_record
+
+cat ${tmp}-riyouhyou_base ${tmp}-riyouhyou_record
+
+## 終了
+rm -f $tmp-*
+exit 0

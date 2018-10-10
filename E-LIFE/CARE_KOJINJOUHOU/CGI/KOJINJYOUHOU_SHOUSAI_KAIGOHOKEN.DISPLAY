@@ -1,0 +1,631 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_RENRAKUSAKI.DISPLAY
+# 個人情報詳細　連絡先タブ　表示用CGI
+#
+# Written by E.Okuda　2013/12/11
+
+#--------------------------------------------------------------
+
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+data=$2
+result=$3
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#USERNAME=$(awk '$1=="'${USER_ID}'"{print $2}' ${tbl_dir}/JYUGYOIN_NAME)
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+  RIYOUSHAID=$(nameread              "RIYOUSHAID"      $namedata)
+  NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+  NYUUKYOTATEYAID=$(nameread         "NYUUKYOTATEYAID"      $namedata)
+  NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+  NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+  NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+  USERNAME="$(awk '$1=="'${USERID}'"{print $2}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER | head -1)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER | head -1)"
+SHISETSUID="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+# 入居者所属施設名
+NYUUKYOSHISETSUNAME="$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON)"
+NYUUKYOTATEYANAME="$(awk '$1=="'${NYUUKYOTATEYAID}'"{print $3}' ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME)"
+NYUUKYOUNITNAME="$(awk '$1=="'${NYUUKYOUNITID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME)"
+[ -z "${NYUUKYOSHISETSUNAME}" -o "${NYUUKYOSHISETSUNAME}" = "_" ] && NYUUKYOSHISETSUNAME=$(awk '$1=="'${NYUUKYOSHISETSUID}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}      
+###USERNAME###     ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###ERROR_MESSAGE### ${error_message}
+###NYUUKYOSHISETSUID### ${NYUUKYOSHISETSUID}
+###NYUUKYOSHISETSUNAME### ${NYUUKYOSHISETSUNAME}
+###NYUUKYOTATEYAID### ${NYUUKYOTATEYAID}
+###NYUUKYOTATEYANAME### ${NYUUKYOTATEYANAME}
+###NYUUKYOFLOOR### ${NYUUKYOFLOOR}
+###NYUUKYOUNITID### ${NYUUKYOUNITID}
+###NYUUKYOUNITNAME### ${NYUUKYOUNITNAME}
+###NYUUKYOKYOSHITSU### ${NYUUKYOKYOSHITSU}
+###RIYOUSHANAME### ${RIYOUSHANAME}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###KAIGOHOKENID### ${KAIGOHOKENID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#------------------------------------------------------------------
+### モードによる表示の分岐
+#case "${MODE}" in
+
+  # 初期表示
+#  init)  
+# ${data}
+# 1: "Kaigohoken" or "Kyotaku" or "Service"
+
+  if [ -s ${data} ] ; then
+
+  cat ${data} |
+  awk '$1=="Kaigohoken"{print $0}' |
+  delf 1      > $tmp-kaigohoken_data
+
+  cat ${data} |
+  awk '$1=="Kyotaku"{print $0}' |
+  delf 1     > $tmp-kyotaku_data
+
+  cat ${data} |
+  awk '$1=="Service"{print $0}' |
+  delf 1      > $tmp-service_data
+
+  cat ${data} |
+  awk '$1=="Iryou"{print $0}' |
+  delf 1      > $tmp-iryou_data
+
+  cat ${data} |
+  awk '$1=="Ninchi"{print $0}' |
+  delf 1      > $tmp-ninchi_data
+
+  cat ${data} |
+  awk '$1=="Igaku"{print $0}' |
+  delf 1      > $tmp-igaku_data
+
+  cat ${data} |
+  awk '$1=="Yakuzai"{print $0}' |
+  delf 1      > $tmp-yakuzai_data
+
+  cat ${data} |
+  awk '$1=="HoumonYakuzai"{print $0}' |
+  delf 1      > $tmp-houmon_data
+  fi
+
+  if [ -s "$tmp-kaigohoken_data" ] ; then
+# 1:利用者(入居者)ID      2:介護保険ＩＤ          3:介護度                 4:保険者番号           5:保険者名
+# 6:被保険者番号          7:住所                  8:有効期間FROM：和暦元号 9:有効期間FROM：和暦年 10:有効期間FROM：和暦月
+# 11:有効期間FROM：和暦日 12:有効期間TO：和暦元号 13:有効期間TO：和暦年    14:有効期間TO：和暦月  15:有効期間TO：和暦日
+# 16:有効期間TO：西暦     17:備考                 18:更新日                19: UserID
+
+  # 介護度マスタの準備
+  cat ${tbl_dir}/CONFIG/KAIGODO_MASTER |
+  self 1 2    |
+  LANG=C sort |
+  getlast 1 1 > $tmp-kaigodo
+
+  # 元号の準備
+  # 有効期間FROM
+  cat $tmp-kaigohoken_data   |
+  self 2 8/11   |
+  join2 +"_" key=2 ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU -  |
+  delf 4/8      |
+  awk '{print $1,$3!="_"?$3$4"年"$5"月"$6"日":"@"}' > $tmp-yuukoukikan_from
+# 1:介護保険ＩＤ 2: 有効期間FROM(元号年月日)
+
+  # 有効期間TO
+  cat $tmp-kaigohoken_data   |
+  self 2 12/15  |
+  join2 +"_" key=2 ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU -  |
+  delf 4/8      |
+  awk '{print $1,$3!="_"?$3$4"年"$5"月"$6"日":"@"}' > $tmp-yuukoukikan_to
+# 有効期間To(元号年月日)
+
+
+   cat $tmp-kaigohoken_data |
+   sed 's/_/@/g' - |
+  # CLASSの設定
+  awk '{if($16!="@"&&$16>="'${today}'"){print $0,"kaigohoken_gyo"}
+        else if($16=="@"){print $0,"kaigohoken_gyo"}
+        else{print $0,"kaigohoken_gyo_old"}
+       }'      |
+# 新しい順にするため番号をふる
+  LANG=C sort -k16,16nr |
+  rank         |
+  delf 17      |
+# 1:番号                  2:利用者(入居者)ID      3:介護保険ＩＤ          4:介護度                 5:保険者番号
+# 6:保険者名              7:被保険者番号          8:住所                  9:有効期間FROM：和暦元号 10:有効期間FROM：和暦年
+# 11:有効期間FROM：和暦月 12:有効期間FROM：和暦日 13:有効期間TO：和暦元号 14:有効期間TO：和暦年    15:有効期間TO：和暦月
+# 16:有効期間TO：和暦日   17:備考                 18:更新日               19:UserID                20:CLASS
+
+  # User名
+  LANG=C sort -k19,19 |
+  join2 +"@" key=19 ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER -  |
+  delf 21/NF-1      |
+
+  # 有効期間の置き換え
+  LANG=C sort -k3,3   |
+  join1 key=3 $tmp-yuukoukikan_to - |
+  join1 key=3 $tmp-yuukoukikan_from -   |
+# 1:番号                    2:利用者(入居者)ID      3:介護保険ＩＤ          4:有効期間FROM(元号年月日) 5:有効期間To(元号年月日)
+# 6:介護度                  7:保険者番号            8:保険者名              9:被保険者番号             10:住所
+# 11:有効期間FROM：和暦元号 12:有効期間FROM：和暦年 13:有効期間FROM：和暦月 14:有効期間FROM：和暦日    15:有効期間TO：和暦元号
+# 16:有効期間TO：和暦年     17:有効期間TO：和暦月   18:有効期間TO：和暦日   19:備考                    20:更新日
+# 21:UserID                 22:CLASS
+  self 1/3 6/10 4 5 19/NF |
+# 1:番号     2:利用者(入居者)ID 3:介護保険ＩＤ 4:介護度       5:保険者番号
+# 6:保険者名 7:被保険者番号     8:住所         9:有効期間FROM 10:有効期間TO
+# 11:備考    12:更新日          13:UserID      14:User名      15:CLASS
+
+  #介護度の取得
+  LANG=C sort -k4,4 |
+  join2 +"@" key=4 $tmp-kaigodo - |
+  # 並び替え
+  LANG=C sort -k1,1 |
+  delf 1 2                      > $tmp-listdata
+# 1:介護保険ＩＤ 2:介護度  3:介護度名称   4:保険者番号 5:保険者名
+# 6:被保険者番号 7:住所    8:有効期間FROM 9:有効期間TO 10:備考
+# 11:更新日      12:UserID 13:User名      14:CLASS
+
+  else
+
+    : > $tmp-listdata
+
+  fi
+
+  if [ -s "$tmp-kyotaku_data" ] ; then
+# 1:利用者(入居者)ID    2:利用者サービス提供事業所ID 3:事業所ID 4:事業所名 5:担当ケアマネID(自事業所)
+# 6:ケアマネ名(自事業所 7:担当ケアマネNAME(他事業所) 8:期間From 9:期間To   10:更新日
+# 11:UseId
+
+    cat $tmp-kyotaku_data |  
+    sed 's/_/@/g' - |
+    # CLASSの設定
+    awk '{if($9<"'${today}'"){print $0,"kyotaku_gyo_old"}
+        else{print $0,"kyotaku_gyo"}
+       }'      |
+# 1:利用者(入居者)ID    2:利用者サービス提供事業所ID 3:事業所ID 4:事業所名 5:担当ケアマネID(自事業所)
+# 6:ケアマネ名(自事業所 7:担当ケアマネNAME(他事業所) 8:期間From 9:期間To   10:更新日
+# 11:UseId              12:CLASS
+
+#    # User名
+#    LANG=C sort -k12,12 |
+#    join2 +"@" key=12 ${tbl_dir}/USER/USER_ID -  |
+#    delf NF-2 NF-1      |
+
+    # ケアマネの表記
+    # ケアマne名(自事業所)が"@"だったら(他事行所)にする
+    awk '{if($5!="@"){print $0,$5,$6}
+          else{print $0,"@",$7}
+         }'            |
+    self 2/4 NF-1 NF 8/NF-2 |
+# 1:利用者サービス提供事業所ID 2:事業所ID 3:事業所名 4:担当ケアマネID 5:ケアマネ名
+# 6:期間From                   7:期間To   8:更新日   9:UseId          10:CLASS
+    LANG=C sort -k6,7nr     |
+
+    # 日付の表記
+    awk '{print $0,$6!="@"?substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2):"@",$7!="99999999"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"@"}'       |
+    self 1/5 NF-1 NF 8/NF-2 > $tmp-kyotakulist
+# 1:利用者サービス提供事業所ID 2:事業所ID 3:事業所名 4:担当ケアマネID(自事業所) 5:ケアマネ名
+# 6:期間From                   7:期間To   8:更新日   9:UseId                    10:User名
+# 11:CLASS
+  else
+
+  : >$tmp-kyotakulist
+
+  fi
+  if [ -s "$tmp-service_data" ] ; then
+# 1:利用者(入居者)ID  2:利用者サービス提供事業所ID 3:事業所ID 4:事業所名 5:担当者ID(自事業所)
+# 6:担当者名(自事業所 7:担当者NAME(他事業所)       8:期間From 9:期間To   10:更新日
+# 11:UseId
+
+    cat $tmp-service_data |
+    sed 's/_/@/g' - |
+    # CLASSの設定
+    awk '{if($9<"'${today}'"){print $0,"service_gyo_old"}
+        else{print $0,"service_gyo"}
+       }'      |
+# 1:利用者(入居者)ID         2:利用者サービス提供事業所ID 3:事業所ID                   4:事業所番号 5:事業所名
+# 6:担当者ID(自事業所) 7:担当者名(自事業所        8:担当ケ者NAME(他事業所) 9:期間From   10:期間To
+# 11:更新日                  12:UseId                     13:CLASS
+
+#    # User名
+#    LANG=C sort -k12,12 |
+#    join2 +"@" key=12 ${tbl_dir}/USER/USER_ID -  |
+#    delf NF-2 NF-1      |
+
+    # 担当者の表記
+    # 担当者名(自事業所)が"@"だったら(他事行所)にする
+    awk '{if($5!="@"){print $0,$5,$6}
+          else{print $0,"@",$7}
+         }'            |
+    self 2/4 NF-1 NF 8/NF-2 |
+# 1:利用者サービス提供事業所ID 2:事業所ID 3:事業所名 4:担当ケアマネID 5:ケアマネ名
+# 6:期間From                   7:期間To   8:更新日   9:UseId          10:CLASS
+    LANG=C sort -k6,7nr     |
+
+    # 日付の表記
+    awk '{print $0,$6!="@"?substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2):"@",$7!="99999999"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"@"}'       |
+    self 1/5 NF-1 NF 8/NF-2 > $tmp-servicelist
+# 1:利用者サービス提供事業所ID 2:事業所ID 3:事業所名 4:担当者ID(自事業所) 5:担当者名
+# 6:期間From                   7:期間To   8:更新日   9:UseId              10:User名
+# 11:CLASS
+  else
+
+  : > $tmp-servicelist
+
+  fi
+
+ if [ "${MODE}" = "touroku" ] ; then
+
+   IryouFromGengou="$(nameread "IryouFromGengou" ${namedata})"
+   IryouFromYear="$(nameread "IryouFromYear" ${namedata})"
+   IryouFromMonth="$(nameread "IryouFromMonth" ${namedata})"
+   IryouFromDay="$(nameread "IryouFromDay" ${namedata})"
+   IryouToGengou="$(nameread "IryouToGengou" ${namedata})"
+   IryouToYear="$(nameread "IryouToYear" ${namedata})"
+   IryouToMonth="$(nameread "IryouToMonth" ${namedata})"
+   IryouToDay="$(nameread "IryouToDay" ${namedata})"   
+
+  elif [ -s "$tmp-iryou_data" ] ; then
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:期間TO：元号   8:期間TO：年   9:期間TO：月   10:期間TO：日
+# 11:期間FROM：西暦
+
+   IryouFromGengou="$(awk '{print $2}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouFromYear="$(awk '{print $3}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouFromMonth="$(awk '{print $4}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouFromDay="$(awk '{print $5}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouToGengou="$(awk '{print $7}' $tmp-iryou_data |sed 's/99/@/g')"
+   IryouToYear="$(awk '{print $8}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouToMonth="$(awk '{print $9}' $tmp-iryou_data | sed 's/99/@/g')"
+   IryouToDay="$(awk '{print $10}' $tmp-iryou_data | sed 's/99/@/g')"
+
+ else
+   IryouFromGengoui=""
+   IryouFromYear=""
+   IryouFromMonth=""
+   IryouFromDay=""
+   IryouToGengou=""
+   IryouToYear=""  
+   IryouToMonth=""
+   IryouToDay=""
+  fi
+#  ;;
+
+ if [ "${MODE}" = "ninchitouroku" ] ; then
+   NinchiFromGengou="$(nameread "NinchiFromGengou" ${namedata})"
+   NinchiFromYear="$(nameread   "NinchiFromYear" ${namedata})"
+   NinchiFromMonth="$(nameread  "NinchiFromMonth" ${namedata})"
+   NinchiFromDay="$(nameread    "NinchiFromDay" ${namedata})"
+   NinchiToGengou="$(nameread   "NinchiToGengou" ${namedata})"
+   NinchiToYear="$(nameread     "NinchiToYear" ${namedata})"
+   NinchiToMonth="$(nameread    "NinchiToMonth" ${namedata})"
+   NinchiToDay="$(nameread      "NinchiToDay" ${namedata})"
+  elif [ -s "$tmp-ninchi_data" ] ; then
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:期間TO：元号   8:期間TO：年   9:期間TO：月   10:期間TO：日
+# 11:期間FROM：西暦
+
+   NinchiFromGengou="$(awk '{print $2}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiFromYear="$(awk '{print $3}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiFromMonth="$(awk '{print $4}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiFromDay="$(awk '{print $5}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiToGengou="$(awk '{print $7}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiToYear="$(awk '{print $8}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiToMonth="$(awk '{print $9}' $tmp-ninchi_data | sed 's/99/@/g')"
+   NinchiToDay="$(awk '{print $10}' $tmp-ninchi_data | sed 's/99/@/g')"
+
+ else
+   NinchiFromGengoui=""
+   NinchiFromYear=""
+   NinchiFromMonth=""
+   NinchiFromDay=""
+   NinchiToGengou=""
+   NinchiToYear=""
+   NinchiToMonth=""
+   NinchiToDay=""
+  fi
+
+ if [ "${MODE}" = "igakutouroku" ] ; then
+   ZaitakuIgakuSougouKanriShidouFromGengou="$(nameread "ZaitakuIgakuSougouKanriShidouFromGengou" ${namedata})"
+   ZaitakuIgakuSougouKanriShidouFromYear="$(nameread   "ZaitakuIgakuSougouKanriShidouFromYear" ${namedata})"
+   ZaitakuIgakuSougouKanriShidouFromMonth="$(nameread  "ZaitakuIgakuSougouKanriShidouFromMonth" ${namedata})"
+   ZaitakuIgakuSougouKanriShidouFromDay="$(nameread    "ZaitakuIgakuSougouKanriShidouFromDay" ${namedata})"
+ elif [ -s "$tmp-igaku_data" ] ; then
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+
+   ZaitakuIgakuSougouKanriShidouFromGengou="$(awk '{print $2}' $tmp-igaku_data | sed 's/99/@/g')"
+   ZaitakuIgakuSougouKanriShidouFromYear="$(awk '{print $3}' $tmp-igaku_data | sed 's/99/@/g')"
+   ZaitakuIgakuSougouKanriShidouFromMonth="$(awk '{print $4}' $tmp-igaku_data | sed 's/99/@/g')"
+   ZaitakuIgakuSougouKanriShidouFromDay="$(awk '{print $5}' $tmp-igaku_data | sed 's/99/@/g')"
+
+ else
+   ZaitakuIgakuSougouKanriShidouFromGengoui=""
+   ZaitakuIgakuSougouKanriShidouFromYear=""
+   ZaitakuIgakuSougouKanriShidouFromMonth=""
+   ZaitakuIgakuSougouKanriShidouFromDay=""
+ fi
+
+ if [ "${MODE}" = "yakuzaitouroku" ] ; then
+   ZaitakuYakuzaiKanriShidouFromGengou="$(nameread "ZaitakuYakuzaiKanriShidouFromGengou" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromYear="$(nameread   "ZaitakuYakuzaiKanriShidouFromYear" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromMonth="$(nameread  "ZaitakuYakuzaiKanriShidouFromMonth" ${namedata})"
+   ZaitakuYakuzaiKanriShidouFromDay="$(nameread    "ZaitakuYakuzaiKanriShidouFromDay" ${namedata})"
+ elif [ -s "$tmp-yakuzai_data" ] ; then
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+
+   ZaitakuYakuzaiKanriShidouFromGengou="$(awk '{print $2}' $tmp-yakuzai_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiKanriShidouFromYear="$(awk '{print $3}' $tmp-yakuzai_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiKanriShidouFromMonth="$(awk '{print $4}' $tmp-yakuzai_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiKanriShidouFromDay="$(awk '{print $5}' $tmp-yakuzai_data | sed 's/99/@/g')"
+
+ else
+   ZaitakuYakuzaiKanriShidouFromGengoui=""
+   ZaitakuYakuzaiKanriShidouFromYear=""
+   ZaitakuYakuzaiKanriShidouFromMonth=""
+   ZaitakuYakuzaiKanriShidouFromDay=""
+ fi
+
+ if [ "${MODE}" = "yakuzaihoumontouroku" ] ; then
+   ZaitakuYakuzaiHoumonKanriShidouFromGengou="$(nameread "ZaitakuYakuzaiHoumonKanriShidouFromGengou" ${namedata})"
+   ZaitakuYakuzaiHoumonKanriShidouFromYear="$(nameread   "ZaitakuYakuzaiHoumonKanriShidouFromYear" ${namedata})"
+   ZaitakuYakuzaiHoumonKanriShidouFromMonth="$(nameread  "ZaitakuYakuzaiHoumonKanriShidouFromMonth" ${namedata})"
+   ZaitakuYakuzaiHoumonKanriShidouFromDay="$(nameread    "ZaitakuYakuzaiHoumonKanriShidouFromDay" ${namedata})"
+ elif [ -s "$tmp-houmon_data" ] ; then
+# 1:利用者(入居者)ID 2:期間FROM：元号 3:期間FROM：年 4:期間FROM：月 5:期間FROM：日
+# 6:期間FROM:西暦    7:予備１   8:予備２   9:予備３   10:予備４
+# 11:予備５
+
+   ZaitakuYakuzaiHoumonKanriShidouFromGengou="$(awk '{print $2}' $tmp-houmon_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiHoumonKanriShidouFromYear="$(awk '{print $3}' $tmp-houmon_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiHoumonKanriShidouFromMonth="$(awk '{print $4}' $tmp-houmon_data | sed 's/99/@/g')"
+   ZaitakuYakuzaiHoumonKanriShidouFromDay="$(awk '{print $5}' $tmp-houmon_data | sed 's/99/@/g')"
+
+ else
+   ZaitakuYakuzaiHoumonKanriShidouFromGengoui=""
+   ZaitakuYakuzaiHoumonKanriShidouFromYear=""
+   ZaitakuYakuzaiHoumonKanriShidouFromMonth=""
+   ZaitakuYakuzaiHoumonKanriShidouFromDay=""
+ fi
+
+
+#esac
+
+#-------------------------------------------------------------
+# 医療系サービスの準備
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${IryouFromGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-iryou_from_gengou
+
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${IryouToGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-iryou_to_gengou
+
+
+echo "###IryouFromYear###"    "${IryouFromYear}"   >> $tmp-calsed_data
+echo "###IryouFromMonth###"   "${IryouFromMonth}"   >> $tmp-calsed_data
+echo "###IryouFromDay###"     "${IryouFromDay}"   >> $tmp-calsed_data
+echo "###IryouToYear###"      "${IryouToYear}"   >> $tmp-calsed_data
+echo "###IryouToMonth###"     "${IryouToMonth}"   >> $tmp-calsed_data
+echo "###IryouToDay###"       "${IryouToDay}"   >> $tmp-calsed_data
+
+#---------------------------------------------------------------
+# 認知症加算
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${NinchiFromGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-ninchi_from_gengou
+
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${NinchiToGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-ninchi_to_gengou
+
+
+echo "###NinchiFromYear###"    "${NinchiFromYear}"   >> $tmp-calsed_data
+echo "###NinchiFromMonth###"   "${NinchiFromMonth}"   >> $tmp-calsed_data
+echo "###NinchiFromDay###"     "${NinchiFromDay}"   >> $tmp-calsed_data
+echo "###NinchiToYear###"      "${NinchiToYear}"   >> $tmp-calsed_data
+echo "###NinchiToMonth###"     "${NinchiToMonth}"   >> $tmp-calsed_data
+echo "###NinchiToDay###"       "${NinchiToDay}"   >> $tmp-calsed_data
+
+#---------------------------------------------------------------
+# 在宅医学総合管理指導
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${ZaitakuIgakuSougouKanriShidouFromGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-igaku_from_gengou
+
+
+echo "###ZaitakuIgakuSougouKanriShidouFromYear###"    "${ZaitakuIgakuSougouKanriShidouFromYear}"   >> $tmp-calsed_data
+echo "###ZaitakuIgakuSougouKanriShidouFromMonth###"   "${ZaitakuIgakuSougouKanriShidouFromMonth}"   >> $tmp-calsed_data
+echo "###ZaitakuIgakuSougouKanriShidouFromDay###"     "${ZaitakuIgakuSougouKanriShidouFromDay}"   >> $tmp-calsed_data
+
+#---------------------------------------------------------------
+# 在宅薬剤管理指導
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${ZaitakuYakuzaiKanriShidouFromGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-yakuzai_from_gengou
+
+
+echo "###ZaitakuYakuzaiKanriShidouFromYear###"    "${ZaitakuYakuzaiKanriShidouFromYear}"   >> $tmp-calsed_data
+echo "###ZaitakuYakuzaiKanriShidouFromMonth###"   "${ZaitakuYakuzaiKanriShidouFromMonth}"   >> $tmp-calsed_data
+echo "###ZaitakuYakuzaiKanriShidouFromDay###"     "${ZaitakuYakuzaiKanriShidouFromDay}"   >> $tmp-calsed_data
+#--------------------------------------------------------------
+#---------------------------------------------------------------
+# 在宅薬剤訪問管理指導
+
+# 元号
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+# 1:ID 2:元号名 3:西暦年月From 4:西暦年月To
+awk '$(NF-2)!=9{print $1,$2}'                 |
+awk '{if($1=="'${ZaitakuYakuzaiHoumonKanriShidouFromGengou}'"){print $0,"selected"}
+     else{print $0,"@"}
+      }'                      |
+LANG=C sort -k1,1nr           > $tmp-yakuzai_houmon_from_gengou
+
+
+echo "###ZaitakuYakuzaiHoumonKanriShidouFromYear###"    "${ZaitakuYakuzaiHoumonKanriShidouFromYear}"   >> $tmp-calsed_data
+echo "###ZaitakuYakuzaiHoumonKanriShidouFromMonth###"   "${ZaitakuYakuzaiHoumonKanriShidouFromMonth}"   >> $tmp-calsed_data
+echo "###ZaitakuYakuzaiHoumonKanriShidouFromDay###"     "${ZaitakuYakuzaiHoumonKanriShidouFromDay}"   >> $tmp-calsed_data
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+if [ "$MODE" = "touroku" -o "$MODE" = "ninchitouroku" -o "$MODE" = "igakutouroku" -o "$MODE" = "yakuzaitouroku" -o "$MODE" = "yakuzaihoumontouroku" ] ; then
+
+touroku_result="$(cat ${result} | head -1 | self 2)"
+
+ if [ ${touroku_result} = "touroku_ok" ] ; then
+    message="登録が完了しました。"
+ else
+    message=$(awk '$1=="message"{print $2}' ${result})
+ fi
+
+fi
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ ! -z "${KANRYOU}" ] ; then
+	cat <<- FINN > $tmp-html2
+          <script type="text/javascript" language="javascript">
+           kaigohoken_pop = window.open("","kaigohoken_pop");
+           kaigohoken_pop.close();
+          </script>
+FINN
+ fi
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${SAMPLE_TEXT1}" = "_" ] && SAMPLE_TEXT1=""
+sample_area=$(echo "${SAMPLE_AREA}" | sed 's/\\n/###RETURN###/g')
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# データのはめ込み
+cat ${html_dir}/KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.html         |
+calsed -f $tmp-calsed_data_result -                          |
+mojihame -lkaigohoken_list - $tmp-listdata                   |
+mojihame -lkyotaku_list - $tmp-kyotakulist                   |
+mojihame -lservice_list - $tmp-servicelist                   |
+mojihame -liryou_gengou_from_select - $tmp-iryou_from_gengou |
+mojihame -liryou_gengou_to_select - $tmp-iryou_to_gengou     |
+mojihame -lninchi_gengou_from_select - $tmp-ninchi_from_gengou |
+mojihame -lninchi_gengou_to_select - $tmp-ninchi_to_gengou     |
+mojihame -lzaitaku_igaku_sougou_gengou_from_select - $tmp-igaku_from_gengou |
+mojihame -lzaitaku_yakuzai_gengou_from_select - $tmp-yakuzai_from_gengou |
+mojihame -lzaitaku_yakuzai_houmon_gengou_from_select - $tmp-yakuzai_houmon_from_gengou |
+sed 's/###SPACE###/ /g'                                 |
+sed 's/\\n/\n/g'                                        |
+sed 's/###KAIGYO###/\n/g'                              |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

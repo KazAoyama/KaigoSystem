@@ -1,0 +1,175 @@
+#!/bin/bash
+#
+# KOKUHOREN_DATASAKUSEI.CSV : 国保連CSV出力
+#
+# Usage : KOKUHOREN_DATASAKUSEI.CSV namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+SHURUI=$(echo ${KOUMOKU} | awk '{print substr($1,1,1)}')
+NENGETSU=$(echo ${KOUMOKU} | awk '{print substr($1,2,7)}')
+
+[ "${SHURUI}" = "S" ] && SHURUI_NAME="SEIKYU_DATA"
+[ "${SHURUI}" = "K" ] && SHURUI_NAME="KYUFUKANRI"
+[ "${SHURUI}" = "Y" ] && SHURUI_NAME="YOBO_KYUFUKANRI"
+
+# ファイル名
+# 予防給付管理票の場合
+case "${SHURUI_NAME}" in
+  YOBO_KYUFUKANRI )
+    cat /DATA/E-LIFE/SEIKYU/KYOTAKU/${shisetsu_name}/${taisho_nengetsu}/KAKUTEI/${NENGETSU}.${SHURUI_NAME} |
+    tee ${work}/yobo_chin |
+    awk '$1==2'           |
+    self 6                |
+    tail -n1              > $tmp-jigyosho_bango
+    JIGYOSHOBANGO="$(cat $tmp-jigyosho_bango)"
+    FILENAME="KYUFU_130090014_""${JIGYOSHOBANGO}""_""${today}"".csv"
+  ;;
+
+  KYUFUKANRI )
+    # 事業所によって違う
+    if [ "${shisetsu_name}" = "1005" ];then
+      SHISETSU_KIGO="K2"
+    elif [ "${shisetsu_name}" = "1004" ];then
+      SHISETSU_KIGO="K1"
+    else
+      SHISETSU_KIGO="K3"
+    fi
+    NEN="$(echo ${taisho_nengetsu} | awk '{print substr($1,3,2)}')"
+    month="$(echo ${taisho_nengetsu} | awk '{print substr($1,6,1)}')"
+    if [ "${month}" = "0" ];then
+      TSUKI="A"
+    elif [ "${month}" = 1 ];then
+      TSUKI="B"
+    elif [ "${month}" = 2 ];then
+      TSUKI="C"
+    else
+      TSUKI="${month}"
+    fi
+    FILENAME="${SHISETSU_KIGO}""${NEN}""${TSUKI}""000.csv"
+  ;;
+
+  SEIKYU_DATA )
+    # 事業所によって違う
+    if [ "${shisetsu_name}" = "1005" ];then
+      SHISETSU_KIGO="K2"
+    elif [ "${shisetsu_name}" = "1004" ];then
+      SHISETSU_KIGO="K1"
+    else
+      SHISETSU_KIGO="K3"
+    fi
+    NEN="$(echo ${taisho_nengetsu} | awk '{print substr($1,3,2)}')"
+    month="$(echo ${taisho_nengetsu} | awk '{print substr($1,6,1)}')"
+    if [ "${month}" = "0" ];then
+      TSUKI="A"
+    elif [ "${month}" = 1 ];then
+      TSUKI="B"
+    elif [ "${month}" = 2 ];then
+      TSUKI="C"
+    else
+      TSUKI="${month}"
+    fi
+    JISSHI_NEN="$(echo ${NENGETSU} | awk '{print substr($1,3,2)}')"
+    jisshi_month="$(echo ${NENGETSU} | awk '{print substr($1,6,1)}')"
+    if [ "${jisshi_month}" = "0" ];then
+      JISSHI_TSUKI="A"
+    elif [ "${jisshi_month}" = 1 ];then
+      JISSHI_TSUKI="B"
+    elif [ "${jisshi_month}" = 2 ];then
+      JISSHI_TSUKI="C"
+    else
+      JISSHI_TSUKI="${jisshi_month}"
+    fi
+    FILENAME="${SHISETSU_KIGO}""${NEN}""${TSUKI}""${JISSHI_NEN}""${JISSHI_TSUKI}"".csv"
+  ;;
+esac
+
+# ディレクトリ
+mkdir -p ${download_dir}/${current_time}/${userid}
+
+# ダウンロード
+cat /DATA/E-LIFE/SEIKYU/KYOTAKU/${shisetsu_name}/${taisho_nengetsu}/KAKUTEI/${NENGETSU}.${SHURUI_NAME} |
+sed 's/ /,/g'                                                                                          |
+sed 's/_//g'                                                                                           > $tmp-base
+sed 's/#/ /g' $tmp-base                                                                                |
+nkf -sxLw                                                                                              > ${download_dir}/${current_time}/${userid}/${FILENAME}
+
+
+
+# ダウンロードリスト
+echo ${KOUMOKU} ${current_time} > $tmp-list
+if [ -e ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST ];then
+  cat ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST $tmp-list |
+  LANG=C sort -k1,1 -k2,2                                                             |
+  getlast 1 1                                                                         > $tmp-new_list
+  mv $tmp-new_list ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST
+else
+  mv $tmp-list ${pompa_dir}/KOKUHO/${shisetsu_name}/${taisho_nengetsu}/DOWNLOAD_LIST
+fi
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}/${userid}/${FILENAME}
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${current_time}/${userid}/${FILENAME}"
+
+rm -f ${tmp}-*
+exit 0
+

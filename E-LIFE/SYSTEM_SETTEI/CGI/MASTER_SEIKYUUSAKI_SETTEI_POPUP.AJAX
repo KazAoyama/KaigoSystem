@@ -1,0 +1,94 @@
+#!/bin/bash
+#
+# MASTER_SEIKYUUSAKI_SETTEI_POPUP.AJAX : 支払設定画面ポップアップ 人検索AJAX
+#
+# Written by S.Otsubo
+
+# 選択された条件と期間内で自身の支払い口座(全請求と施設請求の口座)を持っている人をさがす
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d%H%M%S) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 表示データの作成
+
+# 有効な利用者所属を取得する
+awk '$9!="9"' ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロア 4:ユニット   5:居室
+# 6:入居者ID 7:入居日 8:退去日 9:削除フラグ 10:更新日時
+# 11:更新者
+
+# 入居日退去日有効なものに絞る
+awk '{$7=substr($7,1,6);
+      $8=substr($8,1,6);
+      print}' -                         |
+awk '$7<="'${seikyu_from}'" && $8>="'${seikyu_from}'"' - |
+# 同じ月内で引っ越す人は各部屋に出てきてしまうので、最新の部屋のみ表示する
+LANG=C sort -k6,8                       |
+getlast 6 6                             |
+cjoin0 key=1/3 <(echo "${Shisetsu} ${Tateya_select} ${Floor_select}") - |
+cjoin0 key=5 <(echo "${Room_select}") - |
+self 6                                  |
+# 自身のIDは除く
+grep -v "${SENTAKU_USER}" -             |
+LANG=C sort -u                          > ${tmp}-user_list
+
+# 利用者口座情報の絞込み
+# -
+# まず部屋の人
+cjoin0 key=1 ${tmp}-user_list ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KOUZA |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義漢字
+# 16:予備       17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード絞込み(全請求：1か施設請求：2)
+cjoin0 key=5 <(echo "1 2" | tarr) -                      |
+# 有効期間で絞る
+awk '$8<="'${seikyu_from}'" && $9>="'${seikyu_from}'"' - |
+self 1                                                   |
+LANG=C sort                                              |
+# 名前つける
+cjoin0 key=1 - ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+awk '$5!="9"' -                                          |
+self 1/2                                                 |
+cat <(echo "_ 設定なし") -                               > ${tmp}-shiharai_kanou_user
+# 1:利用者ID 2:口座ID
+#--------------------------------------------------------
+
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+awk '/\<seikyu_select_start\>/,/\<seikyu_select_end\>/' ${html_dir}/MASTER_SEIKYUUSAKI_SETTEI_POPUP.html |
+mojihame -l"SEIKYU_SELECT" - ${tmp}-shiharai_kanou_user |
+cat <(echo -e 'Content-Type: text/html; charset=UTF-8; \n\n') -
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

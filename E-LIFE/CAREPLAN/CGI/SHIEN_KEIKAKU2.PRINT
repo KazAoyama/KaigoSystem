@@ -1,0 +1,243 @@
+#!/bin/bash
+#
+# SHIEN_KEIKAKU2.PRINT : 支援計画書２印刷
+#
+# Usage : SHIEN_KEIKAKU2.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_shien1
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+# 入居者情報(仮)
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:誕生日和暦 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 2 5 6 7 8 14                                  |
+LANG=C sort -k2,2                                  |
+# 1:利用者名 2:誕生日和暦 3:和暦名 4:和暦開始 5:和暦終了
+# 6:誕生日年 7:誕生日月   8:誕生日 9:住所
+join1 key=2 ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU -        |
+# 1:利用者名 2:和暦名 3:誕生日年 4:誕生日月 5:誕生日
+# 6:住所
+self 1 3 6 7 8 9                                   |
+awk '{print $1,$2$3"年"$4"月"$5"日",$6}'                       > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+
+if [ "$(gyo ${result_data})" != 0 ] ; then
+    cat ${result_data}        > $tmp-listdata
+else
+# 空のリストデータを作成する
+    : > $tmp-listdata
+fi
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+
+cp -p $tmp-listdata $work_dir/listdata_shien2
+
+# 基本チェックデータ取得
+awk '$1=="k"' $tmp-listdata    |
+delf 1           > $tmp-listdata_shien2
+
+# 総合リストデータ取得
+awk '$1=="l"' $tmp-listdata    |
+delf 1/3           > $tmp-mokuhyoulist
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata_shien2)
+#--------------------------------------------------------
+
+dispMokuhyouOneday=$(echo $MokuhyouOneday | sed 's/\\n/<br>/g')
+dispMokuhyouOneyear=$(echo $MokuhyouOneyear | sed 's/\\n/<br>/g')
+dispHoushin=$(echo $Houshin | sed 's/\\n/<br>/g')
+dispKaizen=$(echo $Kaizen | sed 's/\\n/<br>/g')
+dispIken=$(echo $Iken | sed 's/\\n/<br>/g')
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata_shien2)
+#--------------------------------------------------------
+
+dispKeikakuSakuseiDate=$(echo $hdKeikakuSakuseiDate | awk '$1!="" {print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###RIYOUSHAMEI### $Riyoushamei
+###HDKEIKAKUSAKUSEIDATE### $hdKeikakuSakuseiDate
+###MOKUHYOUONEDAY### $dispMokuhyouOneday
+###MOKUHYOUONEYEAR### $dispMokuhyouOneyear
+###HOUSHIN### $dispHoushin
+###KAIZEN### $dispKaizen
+###IKEN### $dispIken
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+# 事業所マスタ
+# 介護保険対象外も含める(2014/6/23)
+cat ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER ${home_dir}/TBL/JIGYOUSHO_MASTER/CUSTOM_JIGYOUSHO_MASTER     |
+# 1:事業所ID 2:事業所名 3:事業所タイプ
+#awk '$46!="9" {print $1,$3,$4}'                     |
+awk '{print $1,$3,$4}'                     |
+tee $tmp-jigyousho_mst                              |
+LANG=C sort -k3,3                                   |
+join1 key=3 ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+# 1:事業所ID 2:事業所名 3:事業所タイプ 4:サービスタイプ 5:サービスタイプ名
+self 1 2 5                                          |
+LANG=C sort -k1,3                                   > ${tmp}-jigyousho_master
+
+self 1 2 $tmp-jigyousho_mst                         |
+LANG=C sort -k1,1                                   > $tmp-original_jigyousho_mei
+
+# カスタム事業所
+self 1 3 ${home_dir}/TBL/JIGYOUSHO_MASTER/CUSTOM_JIGYOUSHO_MASTER      |
+LANG=C sort -k1,1                                   > $tmp-custom_jigyousho_mei
+
+cat $tmp-original_jigyousho_mei $tmp-custom_jigyousho_mei |
+LANG=C sort -k1,1                                   > $tmp-jigyousho_mei
+
+cp $tmp-mokuhyoulist $work_dir/mokuhyoulist
+cp $tmp-jigyousho_mei $work_dir/jigyousho_mei
+
+
+cat $tmp-mokuhyoulist |
+# HTML javascript内で事業所名をセットするので、ここでは事業所IDのまま(2014/6/23)
+#LANG=C sort -k7,7     |
+#join2 +@ key=7 $tmp-jigyousho_mei |
+#delf 7                |
+#LANG=C sort -k11,11   |
+#join2 +@ key=11 $tmp-jigyousho_mei |
+#delf 11               |
+#LANG=C sort -k15,15   |
+#join2 +@ key=15 $tmp-jigyousho_mei |
+#delf 15               |
+#LANG=C sort -k19,19   |
+#join2 +@ key=19 $tmp-jigyousho_mei |
+#delf 19               |
+#LANG=C sort -k23,23   |
+#join2 +@ key=23 $tmp-jigyousho_mei |
+#delf 23               |
+LANG=C sort -k1,1     |
+sed 's/\\n/<br>/g'     |
+sed 's/_/@/g'         > $tmp-mokuhyoulist_disp
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_SHIEN_KEIKAKU2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+mojihame -h###MOKUHYOU### - $tmp-mokuhyoulist_disp    |
+mojihame -l###JIGYOUSHOMASTER### - $tmp-jigyousho_master    |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-shienkeikaku2_base_pdf.html
+
+cp $tmp-shienkeikaku2_base_pdf.html $work_dir/shienkeikaku2_base_pdf.html
+
+case "${MODE}" in
+  # 一括印刷
+  allprint )
+  /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 3 --margin-right 3 --margin-top 9 $tmp-shienkeikaku2_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/IKKATSU_YOBO/$USER_ID/${Riyoushaid}_B_SHIEN_KEIKAKU2.pdf
+  ;;
+
+  #個別印刷
+  *)
+mkdir -p ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/SHIEN_KEIKAKU2.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape --margin-bottom 2 --margin-left 3 --margin-right 3 --margin-top 9 $tmp-shienkeikaku2_base_pdf.html ${home_dir}/CAREPLAN/DOWNLOAD/${Riyoushaid}/SHIEN_KEIKAKU2.pdf
+#--------------------------------------------------------------
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${Riyoushaid}/SHIEN_KEIKAKU2.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+;;
+esac
+
+#--------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

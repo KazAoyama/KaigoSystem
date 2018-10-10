@@ -1,0 +1,285 @@
+#!/bin/bash
+#
+# HOMONKAIGO_KEIKAKU.SEARCH
+# 訪問介護計画書　検索用CGI
+#
+# Written by K.Aoyama :20131212
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+# POSTされてくるパラメータ
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdSakuseiDate
+SakuseiDate
+slKeikakuType
+Tantousha
+Riyousha
+Gender
+BirthDate
+Kaigodo
+Address
+Tel
+HonninKibou
+KazokuKibou
+Needs
+slShomeiJigyousha
+txtShomeiSetsumeibi
+slShomeiSetsumeisha
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/HOUMONKAIGO_KEIKAKU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${hdSakuseiDate}" -o "${hdSakuseiDate}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdSakuseiDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                |
+#--------------------------------------------------------------
+tee $tmp-result             |
+# 利用者IDははずす
+delf 1                      |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-houmonkaigo_base
+
+
+
+# 課題リストデータ取得用対象日付
+awk '{print $2}' $tmp-result > $tmp-taishoudate
+
+cp -p $tmp-taishoudate $work_dir/taishoudate_houkai
+
+
+
+#--------------------------------------------------------------
+if [ "$MODE" = "careplan" ] ; then
+# 「介護」のレコード
+  if [ "$slKeikakuType" = "0" ] ; then
+# 利用者ＩＤ、対象年月、供給者コード、サービス予定が"確定"しているもの
+     cat $data_dir/CAREPLAN/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO |
+     awk '$2=="'$Riyoushaid'"&&$3=="'$TaishouYear'"&&$4=="'$TaishouMonth'"&&$5=="11"&&$14=="'$Kyoukyusha'"&&$20=="1"'   |
+     # 1:サービスコード項目 2:予定 3:開始時刻 4:終了時刻
+     self 6 8 12 13            |
+     # セットしないところは空白
+     awk '{print $0,"_","_","_","_","_","_","_","_","_","_","_","_"}'    |
+     # 1:レコード区分 2:サービスコード項目 3:予定 4:開始時刻 5:終了時刻
+     awk '{print "c",$0}'      |
+     LANG=C sort -k4,5         > $tmp-riyouhyou
+
+     cat $data_dir/CAREPLAN/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN_DATE |
+     awk '$(NF-2)!="9"'  |
+     awk '$1=="'$Riyoushaid'" {print $2}'                                |
+     tail -1                                                         > $tmp-latest_date
+     latest_date=$(cat $tmp-latest_date)
+
+     cat $data_dir/CAREPLAN/CAREPLAN_KAIGO/${Riyoushaid}/CAREPLAN2_KAIGO |
+     awk '$(NF-2)!="9"'  |
+     awk '$1=="'$Riyoushaid'"'                                |
+     if [ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] ; then
+       awk '$2=="'${latest_date}'"'
+     else
+       awk '$2=="'${hdKeikakuSakuseiDate}'"'
+     fi |
+# 1:長期目標     2:長期目標スタート 3:長期目標終了 4:短期目標１ 5:短期目標スタート
+# 6:短期目標終了 7:短期目標２       8:短期目標３   9:短期目標４ 10:短期目標５
+     self 5 6 7 8 9 10 25 40 55 70 > $tmp-mokuhyoulist
+# 長期目標 
+     self 1/3 $tmp-mokuhyoulist |
+     awk '{print "l","_",$0}'     > $tmp-chouki_mokuhyou
+# 短期目標
+     self 4/6 $tmp-mokuhyoulist |
+     rank                         > $tmp-tanki_mokuhyou1
+# 短期目標１のみ日付がセットされているため、複数の短期目標に日付をセット
+     self 7/NF $tmp-mokuhyoulist |
+     rank                         > $tmp-tanki_mokuhyou2
+     cp $tmp-tanki_mokuhyou1 $work_dir/tanki_mokuhyou1
+     cp $tmp-tanki_mokuhyou2 $work_dir/tanki_mokuhyou2
+
+# 短期目標２以降のレコードを縦に並び替え
+     tarr num=1 $tmp-tanki_mokuhyou2 |
+# 短期目標１の日付を取得
+     join1 key=1 $tmp-tanki_mokuhyou1 |
+# 目標レコードフォーマットに整形
+     self 1 5 3 4                     |
+# 短期レコードがないものは除外
+     awk '$2!="_"'               |
+# 短期目標１レコードをマージ
+     cat $tmp-tanki_mokuhyou1 -  |
+     LANG=C sort -k1n,1n         |
+     delf 1                      |
+     awk '{print "s","_",$0}'     > $tmp-tanki_mokuhyou
+  else
+# 「予防」のレコード
+     cat $data_dir/CAREPLAN/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO |
+# 利用者ＩＤ、対象年月、供給者コード、サービス予定が"確定"しているもの
+     awk '$2=="'$Riyoushaid'"&&$3=="'$TaishouYear'"&&$4=="'$TaishouMonth'"&&$5=="61"&&$14=="'$Kyoukyusha'"&&$20=="1"'   |
+     # 1:サービスコード項目 2:予定 3:開始時刻 4:終了時刻
+     self 6 8 12 13            |
+     # セットしないところは空白
+     awk '{print $0,"_","_","_","_","_","_","_","_","_","_","_","_"}'    |
+     # 1:レコード区分 2:サービスコード項目 3:予定 4:開始時刻 5:終了時刻
+     awk '{print "c",$0}'      |
+     LANG=C sort -k4,5         > $tmp-riyouhyou
+
+     cat $data_dir/CAREPLAN/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+     awk '$(NF-2)!="9"'  |
+     awk '$1=="'$Riyoushaid'" {print $2}'                                |
+     tail -1                                                         > $tmp-latest_date
+     latest_date=$(cat $tmp-latest_date)
+
+# 介護予防は支援目標テーブルから取得(2014/6/16)  ＝＞　長期目標にセット
+     cat /home/hands/E-LIFE/CAREPLAN/POMPA/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_MOKUHYOU |
+     awk '$(NF-2)!="9"'  |
+     awk '$1=="'$Riyoushaid'"'                                |
+     if [ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] ; then
+       awk '$2=="'${latest_date}'"'
+     else
+       awk '$2=="'${hdKeikakuSakuseiDate}'"'
+     fi |
+     self 4 10 11 |
+     awk '{print "l","_",$0}'     > $tmp-chouki_mokuhyou
+
+##     : > $tmp-chouki_mokuhyou
+     : > $tmp-tanki_mokuhyou
+  fi
+else
+
+#--------------------------------------------------------------
+# 長期目標ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KEIKAKU_CHOUKI_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$7!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1/2 NF-2/NF                     |
+#--------------------------------------------------------------
+awk '{print "l",$0}'        > ${tmp}-chouki_mokuhyou
+
+
+#--------------------------------------------------------------
+# 短期目標ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KEIKAKU_TANKI_MOKUHYOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$7!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1/2 NF-2/NF                     |
+#--------------------------------------------------------------
+awk '{print "s",$0}'        > ${tmp}-tanki_mokuhyou
+
+
+
+#--------------------------------------------------------------
+# 援助ファイルの取得
+cat ${pompa_dir}/HOUMONKAIGO/${Riyoushaid}/KEIKAKU_ENJO |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$18!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF                     |
+# 登録順に表示（レコードIDで）####20140515修正####
+LANG=C sort -k3,3                |
+# 1:利用者ID      2:作成日(西暦)    3:レコードID     4:曜日        5:開始時刻
+# 6:終了時刻      7:ヘルパー１      8:ヘルパー２     9:ヘルパー３  10:ヘルパー４
+# 11:サービス区分 12:サービス内容１ 13:サービス内容2 14:所要時間１ 15:所要時間２
+# 16:留意事項     17:合計時間
+awk '{print $11,"_",$5,$6,$3,$4,$7,$8,$9,$10,$12,$13,$14,$15,$16,$17}'  |
+#--------------------------------------------------------------
+awk '{print "c",$0}'        > ${tmp}-riyouhyou
+
+fi
+
+# 計画書データを表示
+cat ${tmp}-houmonkaigo_base ${tmp}-chouki_mokuhyou ${tmp}-tanki_mokuhyou $tmp-riyouhyou
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,103 @@
+#!/bin/bash
+#
+# SHUKOU_TOUROKU.EXCEL : 献立登録EXCEL出力
+#
+# Usage : SHUKOU_TOUROKU.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 施設名
+awk '$(NF-2)!=9 && $1=="'${shisetsu}'"' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 2 > $tmp-shisetsu_name
+
+# フロア
+echo "${floor}"  |
+awk '{if($1==0){$1="全て"}else{$1=$1"F"};print}'        > $tmp-floor
+
+# 居室
+echo "${room}"  |
+awk '{if($1==0){$1="全て"};print}'        > $tmp-room
+
+# 入居者名
+if [ ${riyosha_name} != "00" ];then
+  awk '$(NF-2)!=9&&$1=="'${riyosha_name}'"{print $2}' ${riyosha_dir}/RIYOUSHA_KIHON 
+else
+  echo "全て"
+fi > $tmp-riyosha_name
+
+# 内容
+self 1/4 ${searchfile} > $tmp-meisai
+
+: > $tmp-header_kihon
+
+TEMPLA=${temp_dir}/SHUKOU_TOUROKU_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 a2 $tmp-shisetsu_name              \
+                    1 b4 $tmp-floor                      \
+                    1 b5 $tmp-room                       \
+                    1 b6 $tmp-riyosha_name               \
+                    1 a10 $tmp-meisai                    > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

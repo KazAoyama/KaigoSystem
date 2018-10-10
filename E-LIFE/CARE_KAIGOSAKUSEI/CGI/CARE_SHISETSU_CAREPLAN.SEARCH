@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# CARE_SHISETSU_CAREPLAN.DISPLAY
+# 居宅サービス計画書２　表示用CGI
+#
+# Written by K.Aoyama :20131204
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+
+##########
+# テスト
+#########
+
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "${hdIkkatsuKijunDate}" -o "${hdIkkatsuKijunDate}" = "_" ] ; then
+  if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" ] ; then
+    cat ${apdata_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+  fi
+else
+    cat ${apdata_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    awk '$2<="'${hdIkkatsuKijunDate}'"'                          |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+    KeikakuSakuseiDate=$(self 3 ${tmp}-careplan_date)
+fi
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+# 計画作成日
+# [ -z "${hdKeikakuSakuseiDate}" -o "" = "_" ] && error_exit "計画作成日が不明です"
+
+cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_SHISETSU_CAREPLAN |
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+LANG=C sort -k1,2             |
+getlast 1 1                   |
+awk '{print $2}'              > ${tmp}-careplan_lastdate
+
+lastdate=$(cat ${tmp}-careplan_lastdate)
+
+: > ${tmp}-careplan2_base
+
+#--------------------------------------------------------------
+# 表示順（2014/7/24）
+#--------------------------------------------------------------
+cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CAREPLAN2_SORT  |
+if [ -z "${hdKakoTaishouDate}" -o "${hdKakoTaishouDate}" = "_" ]; then
+if [ -z "${hdKeikakuSakuseiDate}" -o "" = "_" ] ; then
+  awk '$2=="'${lastdate}'"'
+else
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'
+fi 
+else
+  awk '$2=="'${hdKakoTaishouDate}'"'
+fi |
+self 1/4                   > $tmp-careplan2_sort
+
+if [ -s $tmp-careplan2_sort ] ; then
+ :
+else
+ echo "_" "_" "_" "_" > $tmp-careplan2_sort
+fi
+
+cat << EOF > $tmp-hindo
+0 毎日
+1 随時
+2 必要時
+3 1回／週
+4 2回／週
+5 3回／週
+6 1回／月
+7 2回／月
+8 3回／月
+EOF
+
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_SHISETSU_CAREPLAN |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+if [ -z "${hdKakoTaishouDate}" -o "${hdKakoTaishouDate}" = "_" ]; then
+if [ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] ; then
+  awk '$2=="'${lastdate}'"'
+else
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'
+fi 
+else
+  awk '$2=="'${hdKakoTaishouDate}'"'
+fi |
+#getlast 1 1              |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+# 削除フラグ、ユーザ、更新日付をはずす
+# "が入るとjson上おかしくなる
+sed 's/"//g'                |
+LANG=C sort -k14,14         |
+join2 +"@" key=14 $tmp-hindo |
+awk '{if($15=="@"){$15=$14};print $0}' |
+delf 14                     |
+LANG=C sort -k18,18         |
+join2 +"@" key=18 $tmp-hindo |
+awk '{if($19=="@"){$19=$18};print $0}' |
+delf 18                     |
+LANG=C sort -k20,20         |
+join2 +"@" key=20 $tmp-hindo |
+awk '{if($21=="@"){$21=$20};print $0}' |
+delf 20                     |
+LANG=C sort -k22,22         |
+join2 +"@" key=22 $tmp-hindo |
+awk '{if($23=="@"){$23=$22};print $0}' |
+delf 22                     |
+LANG=C sort -k24,24         |
+join2 +"@" key=24 $tmp-hindo |
+awk '{if($25=="@"){$25=$24};print $0}' |
+delf 24                     |
+delf 105 106 107            |
+#--------------------------------------------------------------
+LANG=C sort -k1,3           |
+# 表示順 2014/7/24
+join2 +"0" key=1/3 $tmp-careplan2_sort |
+LANG=C sort -k4,4n          |
+self 1/3 5/NF 4             > ${tmp}-careplan2_base
+
+
+# ケアプランが新規で内容を過去の最新のものを反映するとき
+#if [ ! -s ${tmp}-careplan2_base ] ; then
+#   cat ${pompa_dir}/SHISETSU_CAREPLAN/${Riyoushaid}/CARE_SHISETSU_CAREPLAN |
+#   awk '$1=="'${Riyoushaid}'"&&$2=="'${lastdate}'"{$2="'${hdKeikakuSakuseiDate}'";print $0}'   |
+#   delf 105 106 107         |
+#   LANG=C sort -k1,3        > ${tmp}-careplan2_base
+#fi
+
+
+# データ表示
+cat ${tmp}-careplan2_base
+
+## 終了
+rm -f $tmp-*
+exit 0

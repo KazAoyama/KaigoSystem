@@ -1,0 +1,208 @@
+#!/bin/bash
+#
+# SERVICE_JISSHI_TEJUN.PRINT : 個別援助計画書表示
+#
+# Usage : SERVICE_JISSHI_TEJUN.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_service_jisshi
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${Riyoushaid} > ${tmp}-riyoushaid
+
+# ログインUSER名と施設の取得（仮）
+cat ${home_dir}/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee $tmp-user_mst                                  |
+# 1:USER_ID 2:ユーザー名
+join1 key=1 ${tmp}-user                            |
+# 1:USER_ID 2:ユーザー名
+self 2                                             > ${tmp}-usermei
+
+cat ${home_dir}/TBL/SHISETSU_MASTER/SHISETSU_KIHON |
+tee $tmp-shisetsu_mst_work                         |
+# 1:施設コード 2:施設名
+join1 key=1 ${tmp}-shisetsu                        |
+self 2                                             > ${tmp}-user_shisetsu
+
+self 1 2 $tmp-shisetsu_mst_work                    > $tmp-shisetsu_mst
+
+cat ${home_dir}/TBL/ZEIRITSU_GENGOU_MASTER/GENGOU  |
+awk '$5!="9"{print $1,$2,substr($3,1,4)}'          > $tmp-gengou_master
+self 1 2 $tmp-gengou_master > $tmp-gengou_master2
+
+# 本日の日付
+curday=$(date +%Y%m%d | self 1)
+
+
+# 入居者情報(仮)
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KIHON          |
+join1 key=1 ${tmp}-riyoushaid                      |
+# 1:利用者名 2:性別 3:誕生日和暦   4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 2 4 5 6 7 8 14 15                             |
+LANG=C sort -k3,3                                  |
+# 1:利用者名 2:性別   3:誕生日和暦 4:和暦名       5:誕生日年
+# 6:誕生日月 7:誕生日 8:住所       9:携帯電話番号
+join1 key=3 $tmp-gengou_master2 -        |
+# 1:利用者名 2:性別 3:和暦名       4:誕生日年 5:誕生日月
+# 6:誕生日   7:住所 8:携帯電話番号
+self 1 2 4 5 6 7 8 9                            |
+awk '{if($2=="female"){$2="1"}else{$2="0"};print $1,$2,$3$4"年"$5"月"$6"日",$7,$8}'  > ${tmp}-riyousha_kihon
+Riyoushamei=$(self 1 ${tmp}-riyousha_kihon)
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 検索結果
+  print)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+
+
+cp -p $tmp-listdata $work_dir/listdata_service_jisshi
+
+dispTeikyoKubun=$TeikyoKubun
+dispTeikyouYoubi=$TeikyouYoubi
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata)
+#--------------------------------------------------------
+
+dispShokaiSakuseiDate=$(echo $hdShokaiSakuseiDate | awk '$1!="" {print "\""substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)"\""}')
+
+#if [ -z "${Riyousha}" -o "${Riyousha}" = "_" ] ; then
+   Riyousha=${Riyoushamei}
+#fi
+
+awk '$1=="'$Sakuseisha'"' $tmp-user_mst > $tmp-sakuseisha
+
+dispSakuseisha=$(self 2 $tmp-sakuseisha)
+
+dispShisetsu=$slShisetsu
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###DATAID### $DataID
+###HDSHOKAISAKUSEIDATE### $dispShokaiSakuseiDate
+###SHOKAISAKUSEIDATE### $ShokaiSakuseiDate
+###KOUSHINDATE### $KoushinDate
+###RIYOUSHA### $Riyousha
+###KYOSHITSU### $Kyoshitsu
+###SAKUSEISHA### $dispSakuseisha
+###SERVICENAIYOU### $ServiceNaiyou
+###TEIKYOKUBUN### $dispTeikyoKubun
+###TEIKYOUYOUBI### $dispTeikyouYoubi
+###TEIKYOUJIKANSTART### $TeikyouJikanStart
+###TEIKYOUJIKANEND### $TeikyouJikanEnd
+###TXTAREATOKKI### $txtareaTokki
+###TXTAREAKOUMOKU### $txtareaKoumoku
+###TXTAREATEJUN### $txtareaTejun
+###TXTAREABIKO### $txtareaBiko
+###TXTAREASHOYOUJIKAN### $txtareaShoyouJikan
+###SLSHISETSU### $dispShisetsu
+###PASSWORD### $password
+###SHISETSUID### $shisetsu
+###DOMAIN### $domain
+FIN
+
+# 施設マスタ
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_SERVICE_JISSHI_TEJUN.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###USER__NAME### - ${tmp}-usermei |
+mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+sed 's/###KAIGYO###/<br>/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+sed 's/。<br>/｡<br>/g'        |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-service_jisshi_tejun_base_pdf.html
+#--------------------------------------------------------------
+cp $tmp-service_jisshi_tejun_base_pdf.html $work_dir/service_jisshi_tejun_base_pdf.html
+mkdir -p ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}
+
+# 過去のPDFを一旦消す
+rm ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/SERVICE_JISSHI_TEJUN.pdf
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --disable-smart-shrinking --margin-bottom 2 --margin-left 10 --margin-right 3 --margin-top 2 $tmp-service_jisshi_tejun_base_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/SERVICE_JISSHI_TEJUN.pdf
+
+stime="$(date +%Y%m%d%H%M%s)"
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/${Riyoushaid}/SERVICE_JISSHI_TEJUN.pdf?stime=$stime","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

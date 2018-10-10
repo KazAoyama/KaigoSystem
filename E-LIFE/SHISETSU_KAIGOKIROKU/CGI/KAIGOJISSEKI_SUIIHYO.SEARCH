@@ -1,0 +1,293 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_SUIIHYO.SEARCH : 介護実績推移表検索用CGI
+#
+# Usage : KAIGOJISSEKI_SUIIHYO.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+apptbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月の取得
+echo ${nengetsu} > ${tmp}-nengetsu
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 検索する年月の日にちを取得
+mdate ${nengetsu}m    > ${tmp}-search_month
+
+if [ $(echo ${bunrui_select}) != "all" ]; then
+  # 検索する介護分類を決める
+  case "${bunrui_select}" in
+    shokuji )
+      BUNRUI="1"
+    ;;
+    haisetsu )
+      BUNRUI="2"
+    ;;
+    nyuyoku )
+      BUNRUI="3"
+    ;;
+    senmen )
+      BUNRUI="4"
+    ;;
+    kihon_dousa )
+      BUNRUI="5"
+    ;;
+    iryo_kenkou )
+      BUNRUI="6"
+    ;;
+    shinri_shakai )
+      BUNRUI="7"
+    ;;
+  esac
+  
+  # 検索する
+  cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU   |
+  # 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+  # 11:実施者 12:登録日時間 13:ID
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k4,4n                                                      |
+  join0 key=4 <(echo "${BUNRUI}")                                         > ${tmp}-taisho_data
+else
+  # 検索する
+  cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.KAIGOJISSEKI_IKKATSU   |
+  # 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+  # 11:実施者 12:登録日時間 13:ID
+  LANG=C sort -k1,1n                                                      |
+  join0 key=1 ${tmp}-taishosha                                            |
+  LANG=C sort -k4,4n                                                      > ${tmp}-taisho_data
+
+fi
+cat ${tmp}-taisho_data > /home/hands/work/kashiyama/taisho_data
+
+# まわしてカウント
+for day in $(cat ${tmp}-search_month);do
+  cat ${tmp}-taisho_data             |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+# 11:実施者 12:登録日時間 13:ID
+  LANG=C sort -k2,2n                 |
+  join0 key=2 <(echo $day)           |
+  awk '{print $0,"1"}'      |
+  self 2 5 14                       > ${tmp}-daydata
+# 1:日にち 2:介護項目 3:1
+
+
+  case "${bunrui_select}" in
+    all )
+cat <<- FIN > ${tmp}-base
+$day 食事摂取 "0"
+$day おやつ摂取 "0"
+$day 水分摂取 "0"
+$day 排尿介助 "0"
+$day 排便介助 "0"
+$day 下剤与薬 "0"
+$day 入浴 "0"
+$day 1+++洗髪 "0"
+$day 2+++清拭 "0"
+$day 3+++足浴 "0"
+$day 4+++手浴 "0"
+$day 内服薬 "0"
+$day 処置等 "0"
+$day 医療 "0"
+$day 口腔ケア "0"
+$day 頓用 "0"
+$day 外用薬 "0"
+$day 測定・観察 "0"
+$day 通院介助 "0"
+$day 健康診断 "0"
+$day 入院中の面会 "0"
+$day 往診 "0"
+$day 健康相談 "0"
+FIN
+    cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SENMEN_KOMOKU  |
+    awk '{print "'${day}'",$1,"0"}'               >> ${tmp}-base
+    cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KIHON_KOMOKU   |
+    awk '{print "'${day}'",$1,"0"}'               >> ${tmp}-base
+    cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHINRI_KOUMOKU  |
+    awk '{print "'${day}'",$1,"0"}'               >> ${tmp}-base
+
+    cat ${tmp}-daydata ${tmp}-base   |
+    LANG=C sort -k1,1n -k2,2         |
+    sm2 1 2 3 3                      |
+    self 2 1 3                        >> ${tmp}-month_data
+ 
+ 
+    ;;
+    shokuji )
+cat <<- FIN > ${tmp}-base
+$day 食事摂取 "0"
+$day おやつ摂取 "0"
+$day 水分摂取 "0"
+FIN
+    cat ${tmp}-daydata ${tmp}-base   |
+    LANG=C sort -k1,1n -k2,2         |
+    sm2 1 2 3 3                      |
+    self 2 1 3                        >> ${tmp}-month_data
+    
+    ;;
+    haisetsu )
+cat <<- FIN > ${tmp}-base
+$day 排尿介助 "0"
+$day 排便介助 "0"
+$day 下剤与薬 "0"
+FIN
+    cat ${tmp}-daydata ${tmp}-base   |
+    LANG=C sort -k1,1n -k2,2         |
+    sm2 1 2 3 3                      |
+    self 2 1 3                        >> ${tmp}-month_data
+    
+    ;;
+    nyuyoku )
+cat <<- FIN > ${tmp}-base
+$day 入浴 "0"
+$day 1+++洗髪 "0"
+$day 2+++清拭 "0"
+$day 3+++足浴 "0"
+$day 4+++手浴 "0"
+FIN
+    cat ${tmp}-daydata ${tmp}-base   |
+    LANG=C sort -k1,1n -k2,2         |
+    sm2 1 2 3 3                      |
+    self 2 1 3                        >> ${tmp}-month_data
+    
+    ;;
+    senmen )
+      cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SENMEN_KOMOKU  |
+      awk '{print "'${day}'",$1,"0"}'                > ${tmp}-base
+
+      cat ${tmp}-daydata ${tmp}-base   |
+      LANG=C sort -k1,1n -k2,2         |
+      sm2 1 2 3 3                      |
+      self 2 1 3                        >> ${tmp}-month_data
+    ;;
+    kihon_dousa )
+      cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/KIHON_KOMOKU  |
+      awk '{print "'${day}'",$1,"0"}'                > ${tmp}-base
+
+      cat ${tmp}-daydata ${tmp}-base   |
+      LANG=C sort -k1,1n -k2,2         |
+      sm2 1 2 3 3                      |
+      self 2 1 3                        >> ${tmp}-month_data
+    ;;
+    iryo_kenkou )
+cat <<- FIN > ${tmp}-base
+$day 内服薬 "0"
+$day 処置等 "0"
+$day 医療 "0"
+$day 口腔ケア "0"
+$day 頓用 "0"
+$day 外用薬 "0"
+$day 測定・観察 "0"
+$day 通院介助 "0"
+$day 健康診断 "0"
+$day 入院中の面会 "0"
+$day 往診 "0"
+$day 健康相談 "0"
+FIN
+    cat ${tmp}-daydata ${tmp}-base   |
+    LANG=C sort -k1,1n -k2,2         |
+    sm2 1 2 3 3                      |
+    self 2 1 3                        >> ${tmp}-month_data
+    
+    ;;
+    shinri_shakai )
+      cat ${apptbl_dir}/KAIGOJISSEKI/${shisetsu}/SHINRI_KOUMOKU  |
+      awk '{print "'${day}'",$1,"0"}'                > ${tmp}-base
+
+      cat ${tmp}-daydata ${tmp}-base   |
+      LANG=C sort -k1,1n -k2,2         |
+      sm2 1 2 3 3                      |
+      self 2 1 3                        >> ${tmp}-month_data
+    ;;
+  esac
+done    
+# 1:介護項目 2:回数
+
+# データを整形
+cat ${tmp}-month_data               |
+LANG=C sort -k1,1 -k2,2n             |
+delf 2                               |
+yarr num=1                           |
+ysum num=1                           |
+awk '{gsub(/[0-9]/,"",$1);print}'    |
+awk '{gsub(/+++/,"",$1);print}'      > ${tmp}-search_kekka
+# 1:介護項目 2:1日 3:2日 4:3日 5:4日 6:5日 7:6日 8:7日 9:8日 10:9日
+# 11:10日 12:11日 13:12日 14:13日 15:14日 16:15日 17:16日 18:17日 19:18日 20:19日
+# 21:20日 22:21日 23:22日 24:23日 25:24日 26:25日 27:26日 28:27日 29:28日 30:29日
+# 31:30日 32:31日 33:月合計数
+
+# ヘッダーを作る
+cat ${tmp}-search_month    |
+tarr                       |
+awk '{print substr($1,7,2)}' |
+yarr                       |
+awk '{print "介護項目",$0,"月合計"}' > ${tmp}-header
+
+
+cat ${tmp}-header ${tmp}-search_kekka
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

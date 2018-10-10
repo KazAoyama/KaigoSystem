@@ -1,0 +1,109 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_KYOTAKU_JIGYOSHOBETSU_ICHIRAN.DISPLAY : 事業所別利用状況一覧サブウインドウ.DISPLAY
+#
+# Usage : KAIGOSEIKYU_KYOTAKU_JIGYOSHOBETSU_ICHIRAN.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+kengen_dir="${home_dir}/E-LIFE/SYSTEM_SETTEI/POMPA/KENGEN_KANRI"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+
+# 年月の取得
+#if [ -n "${teishutsu_nengetsu}" -a "${teishutsu_nengetsu}" != "_" ];then
+#  mdate -e ${this_month}m/-3                                |
+#  tarr                                                      |
+#  LANG=C sort -k1,1nr                                       |
+#  awk '{print $0,"'${teishutsu_nengetsu}'"}'                          |
+#  awk '{if($1==$2){print $1,"selected"}else{print $1,""}}'  |
+#  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月",$2}' > ${tmp}-teishutsu_nengetsu
+#else
+#  mdate -e ${this_month}m/-3                                |
+#  tarr                                                      |
+#  LANG=C sort -k1,1nr                                       |
+#  awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-teishutsu_nengetsu
+#fi
+
+mdate -e ${this_month}m/-13                               |
+tarr                                                      |
+LANG=C sort -u -k1,1nr                                    |
+awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-from
+
+mdate -e ${this_month}m/-13                               > $tmp-kari
+mdate -e ${this_month}m/+2                                > $tmp-kari2
+cat $tmp-kari $tmp-kari2                                  |
+LANG=C sort                                               |
+tarr                                                      |
+LANG=C sort -u -k1,1nr                                    |
+awk '{all=substr($1,1,6);nen=substr($1,1,4);getu=substr($1,5,2);print all,nen"年"getu"月"}' > ${tmp}-to
+
+
+
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###TEXT_KENSAKU_HIDUKE_FROM### ${text_kensaku_hiduke_from}
+###TEXT_KENSAKU_HIDUKE_TO### ${text_kensaku_hiduke_to}
+###TEXT_TATEKAE_HIDUKE### ${text_tatekae_hiduke}
+###HD_KENSAKU_HIDUKE_FROM### ${hd_kensaku_hiduke_from}
+###HD_KENSAKU_HIDUKE_TO### ${hd_kensaku_hiduke_to}
+###HD_TATEKAE_HIDUKE### ${hd_tatekae_hiduke}
+###TAISHO### ${taisho}
+FIN
+
+
+#### MODEが修正のときは処理を分岐する
+cat ${html_dir}/JIGYOSHOBETSU_ICHIRAN.html   |
+mojihame -l###HANI_FROM### - ${tmp}-from |
+mojihame -l###HANI_TO### - ${tmp}-to |
+calsed -f ${tmp}-calsed - 
+# HTMLの作成
+
+rm -f ${tmp}-*
+exit 0
+

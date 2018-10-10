@@ -1,0 +1,129 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KIHON_SHINKI.UPDATE_IMAGE
+#
+# 個人情報、顔写真登録処理
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep EDIT_KEIYAKUSHO_SELECT - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "EDIT_KEIYAKUSHO_SELECT_$KEIYAKU_SHURUI" $mime > $tmp-keiyakusho
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/EDIT_KEIYAKUSHO_SELECT_'$KEIYAKU_SHURUI'/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/pdf/ || $1~/PDF/' > $tmp-filemark
+
+# 権限がなければエラー終了
+ [ "${TOUROKUDISP}" = "none" ] && error_exit "権限がありません。"
+
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "PDFではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# アップロードされた画像をJAN-数字.jpgにして、TMP_IMAGEに置く
+mkdir -p ${tenpu_dir}/${RIYOUSHAID}
+
+cp -p $tmp-keiyakusho ${tenpu_dir}/${RIYOUSHAID}/${RIYOUSHAID}_${KEIYAKU_SHURUI}.pdf
+[ ${?} != "0" ] && error_exit "MST_TRK002"
+
+
+# 画面表示用データ
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KEIYAKU  |
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+self 2 3 9 12 13 16 NF-1 NF        > $tmp-keiyaku_data
+# 1:契約ID 2:施設ID   3:契約種類ID 4:契約開始日 5:契約終了日
+# 6:備考   7:更新日時 8:UserID
+
+# 該当データがあれば施設名称、契約名称を取得
+if [ -s "$tmp-keiyaku_data" ] ; then
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+  self 1 2 > $tmp-shisetsu_name
+  cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+  self 1 2 >> $tmp-shisetsu_name
+  
+  cat ${tbl_dir}/KEIYAKU_MASTER/KEIYAKU_SHURUI_NAME  |
+  self 1 2 > $tmp-keiyaku_shurui
+  
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER |
+  self 1 2 > $tmp-userid
+  #cp $tmp-* /home/hands/work/okuda
+  
+  cat $tmp-keiyaku_data |
+  LANG=C sort -k8,8     |
+  join1 key=8 $tmp-userid - |
+  delf NF-1      |
+  LANG=C sort -k3,3     |
+  join1 key=3 $tmp-keiyaku_shurui - |
+  LANG=C sort -k2,2     |
+  join1 key=2 $tmp-shisetsu_name -       |
+  LANG=C sort -k1,1nr    > $tmp-result
+  # 1:契約ID     2:施設ID     3:施設名 4:契約種類ID 5:契約種類名称
+  # 6:契約開始日 7:契約終了日 8:備考   9:更新日時   10:UserID
+fi
+cat $tmp-result
+
+
+#echo "result ok"
+#-------------------------------------------------------------
+
+
+# 終了
+rm -f $tmp-*
+exit 0

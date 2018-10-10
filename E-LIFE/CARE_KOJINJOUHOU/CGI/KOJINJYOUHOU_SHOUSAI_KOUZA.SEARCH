@@ -1,0 +1,149 @@
+#!/bin/bash
+#
+#KOJINJYOUHOU_SHOUSAI_KOUZA.SEARCH  
+# 個人情報詳細(契約)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+
+# MODEによる処理の分岐
+if [ "${MODE}" = "init" ] ; then
+
+#-------------------------------------------------------------
+# ファイルの取得
+# 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+# 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+# 16:予備1           17:予備2                18:予備3            19:予備4            20:予備5
+# 21:削除フラグ      22:更新日時             23:UserID
+
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KOUZA  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+  awk '{gsub(/_/,"###SPACE###",$10);print}' |
+#  # 契約日と更新日時の表記を整形
+#  awk '{print $4,$5,$6,$7,$8,$9,$10!="_"?substr($10,1,4)"/"substr($10,5,2)"/"substr($10,7,2):"_",$11!="_"?substr($11,1,4)"/"substr($11,5,2)"/"substr($11,7,2):"_",$12,$13,$18!="_"?substr($18,1,4)"/"substr($18,5,2)"/"substr($18,7,2):"_",$18!="_"?substr($18,9,2)":"substr($18,11,2):"_",$19}'  |
+#  awk '{print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11"　"$12,$13}'  > $tmp-kouza_data
+  self 2/11 NF-1 NF 13 16  > $tmp-riyousha_kouza
+#  awk '{print $4,$5,$6,$7,$8,$9,$10,$11,$2,$13,$21,$22}'  > $tmp-kouza_data
+# 1:口座ID    2:金融機関コード 3:支店コード 4:請求内容コード 5:口座種類
+# 6:口座番号  7:支払期間From   8:支払期間To 9:名義人         10:備考
+# 11:更新日時 12:UserID       13:一括請求入居者ID            14:顧客番号
+
+  # 該当データがあれば、金融機関名称、支店名を取得
+  if [ -s "$tmp-riyousha_kouza" ] ; then
+
+  : > $tmp-kouza_data
+
+  # 金融機関IDがあるものとないもので分ける
+  cat $tmp-riyousha_kouza |
+  awk '$2!="_"{print $0}' |
+  delf NF-1                 >> $tmp-kouza_data
+
+  cat $tmp-riyousha_kouza |
+  delf NF                 |
+  awk '$2=="_"{print $NF,$7,$8,$(NF-2),$(NF-1),$1}' > $tmp-kouza_data_nashi
+# 1:入居者ID  2:請求期間From  3:請求期間To 4:更新日時 5:UserID
+
+  # 口座がなかったものは関連利用者の口座情報を取得
+  if [ -s $tmp-kouza_data_nashi ] ; then
+  cat $tmp-kouza_data_nashi |
+  LANG=C sort |
+  uniq        |
+  join1 key=1 ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER -  |
+# 1:入居者ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:利用者名(入居者)外字 5:削除フラグ
+# 6:更新日時 7:ユーザーID         8:請求期間From           9:請求期間To          10:更新日時
+# 11:UserID  12:口座ID
+  self 1 2 NF-4/NF |
+# 1:入居者ID 2:利用者(入居者)氏名 3:請求期間From 4:請求期間To 5:更新日時
+# 6:UserID
+  awk '{print $NF,"_","_","_","_","2","_","_",$3,$4,"_",$2"様と一括請求",$(NF-2),$(NF-1),"_"}' > $tmp-tanyuukyo_kouza_result
+# 1:口座ID         2:金融機関コード 3:金融機関名 4:支店コード   5:支店名
+# 6:請求内容コード 7:口座種類       8:口座番号   9:支払期間From 10:支払期間To
+# 11:名義人        12:備考          13:更新日時  14:UserID
+  else
+   :
+  fi
+
+
+   cat ${tbl_dir}/KINYUU_MASTER/KINYUUKIKAN_NAME |
+   self 1 3 > $tmp-kinyuukikanmei
+
+   cat ${tbl_dir}/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME  |
+   self 1 2 4 > $tmp-shitenmei
+
+   
+
+   cat $tmp-kouza_data   |
+   LANG=C sort -k2,3     |
+   join1 key=2/3 $tmp-shitenmei  |
+   join1 key=2 $tmp-kinyuukikanmei - > $tmp-kouza_result
+# 1:口座ID         2:金融機関コード 3:金融機関名 4:支店コード   5:支店名
+# 6:請求内容コード 7:口座種類       8:口座番号   9:支払期間From 10:支払期間To
+# 11:名義人        12:備考          13:更新日時  14:UserID      15:顧客番号
+
+
+#cp $tmp-* /home/hands/work/okuda
+    if [ -s $tmp-kouza_result -a -s $tmp-tanyuukyo_kouza_result ] ; then
+      cat $tmp-kouza_result $tmp-tanyuukyo_kouza_result
+    elif [ -s $tmp-tanyuukyo_kouza_result ] ; then 
+      cat $tmp-tanyuukyo_kouza_result
+    else 
+      cat  $tmp-kouza_result
+    fi
+  
+  fi
+
+
+fi
+#-------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

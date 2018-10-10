@@ -1,0 +1,248 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_SUIIHYO_SHOUSAI.DISPLAY : 介護実績一括登録.DISPLAY
+#
+# Usage : KAIGOJISSEKI_SUIIHYO_SHOUSAI.DISPLAY namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# eval
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="shosai"
+fi
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   > $tmp-riyosha_status
+
+# フロアの準備
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 3                                                       |
+LANG=C sort -u -k1,1n                                        |
+awk '{print $1,$1"F"}'                                       > ${tmp}-floor_name
+# ユニットの準備
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+LANG=C sort -u -k1,1n                                        |
+join1 key=1 $tmp-unit_master                                 > $tmp-unit_name
+
+
+
+###対象者のヘッダー情報の作成
+echo ${floor} ${unit} ${riyosha_name} ${nengetsu} ${sendword}       |
+# 1:フロア 2:ユニット 3:名前 4:年月 5:sendword
+# フロア
+join1 key=1 $tmp-floor_name                                         |
+# 1:フロア 2:フロア名 3:ユニット 4:名前 5:年月 6:sendword
+delf 1                                                              |
+# 1:フロア 2:ユニット 3:名前 4:年月 5:sendword
+join1 key=2 $tmp-unit_name                                          |
+# 1:フロア 2:ユニット 3:ユニット名 4:名前 5:年月 6:sendword
+delf 2 4                                                            |
+# 1:フロア 2:ユニット 3:名前 4:年月 5:sendword
+join1 key=3 $tmp-riyosha_master                                     |
+# 1:フロア 2:ユニット 3:名前 4:名前 5:年月 6:sendword
+delf 3                                                              |
+# 1:フロア 2:ユニット 3:名前 4:年月 5:sendword
+awk '{gsub(/+++/," ",$5);print}'                                     |
+# 1:フロア 2:ユニット 3:名前 4:年月 5:介護項目 6:日にち
+awk '{nen=substr($4,1,4);getu=substr($4,5,2);print $1,$2,$3,nen"年"getu"月"$6"日"}'  > ${tmp}-riyosha_joho                                       |
+
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d) 
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"/"getsu"/"hi}') 
+else
+  :
+fi
+
+SEARCH_BUNRUI=$(echo ${sendword} | awk '{gsub(/+++/," ",$1);print}' | self 1)
+############ SEARCHFILEの処理
+cat ${searchfile} |
+tee ./scfile |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+# 11:実施者 12:登録日時間 13:ID
+awk '{gsub(/+++/," ",$11);print}' |
+delf 11                           |
+self 3 4 5 6 10 7 8 9 11 13       |
+# 1:共有 2:介護分類 3:介護項目 4:開始時間 5:終了時間 6:内容 7:場所 8:備考 9:実施者 10:ID
+LANG=C sort -k2,2n                |
+join1 key=2 ${apptbl_dir}/KAIGO_BUNRUI_MASTER |
+delf 2                            |
+LANG=C sort -k4,4                 |
+# 介護項目で絞込み
+awk '$3~/'$SEARCH_BUNRUI'/'     |           
+awk '{frmhr=substr($4,1,2);frmmt=substr($4,4,2);tohr=substr($5,1,2);tomt=substr($5,4,2);from=frmhr*60+frmmt;to=tohr*60+tomt;time=to-from;print $1,$5,$2,$3,$6,$7,$8,time,$9}'          |
+# 1:共有 2:開始時間 3:介護分類 4:介護項目 5:内容 6:場所 7:備考 8:時間 9:実施者
+awk '{if($6!="_"){print $1,$2,$3,$4,$5"【場所】"$6,$7,$8,$9}else{print $1,$2,$3,$4,$5,$7,$8,$9}}' > ${tmp}-search_data
+# 1:共有 2:開始時間 3:介護分類 4:介護項目 5:内容 6:備考 7:時間 8:実施者
+
+
+#######################################################################################
+# formhame前の実態参照変換
+calsed "&" "&amp;" ${namefile}                      |
+calsed "<" "&lt;"                                   |
+calsed ">" "&gt;"                                   |
+calsed "\"" "&quot;"                                |
+# formhame前にキーワードが　"_"　のみの場合、消去
+awk '{if($1~/SEARCH_WORD/){if($2~/^_$/){$2=""};}print}'  |
+# formhame前にキーワードが検索ボックスの空白を "_"から" "に戻す
+awk '{if($1~/SEARCH_WORD/){gsub(/_/," ",$2)};print}'     > $tmp-namefile
+
+#######################################################################################
+
+#######################################################################################
+# namefileの再構成
+
+cat <<- FIN > ${tmp}-namefile
+MODE ${MODE}
+FIN
+#######################################################################################
+
+
+#######################################################################################
+# calsedするfileをつくろう
+
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-calsed1
+###DROPDOWN_ACTIVE6### active
+###TEXT_SAKUSEIBI### ${text_sakuseibi}
+###HD_SAKUSEIBI### ${hd_sakuseibi}
+###LI_KANGOKAIGOKIROKU7### active
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+FIN
+
+case ${bunrui_select} in
+  shokuji )
+    echo "###shokuji_suibun###" "selected" >> ${tmp}-calsed2
+  ;;
+  haisetsu )
+    echo "###haisetsu###" "selected" >> ${tmp}-calsed2
+  ;;
+  nyuyoku )
+    echo "###nyuyoku###" "selected" >> ${tmp}-calsed2
+  ;;
+  senmen )
+    echo "###senmen###" "selected" >> ${tmp}-calsed2
+  ;;
+  kihon_dousa )
+    echo "###kihon_dousa###" "selected" >> ${tmp}-calsed2
+  ;;
+  iryo_kenkou )
+    echo "###iryo_kenkou###" "selected" >> ${tmp}-calsed2
+  ;;
+  shinri_shakai )
+    echo "###shinri_shakai###" "selected" >> ${tmp}-calsed2
+  ;;
+  vital )
+    echo "###vital###" "selected" >> ${tmp}-calsed2
+  ;;
+esac
+
+cat ${tmp}-calsed1 ${tmp}-calsed2 ${checkfile} > ${tmp}-calsed
+
+# HTMLの作成
+
+if [ "$MODE" = "search" ];then
+  : > {tmp}-html
+else
+cat <<- FIN > ${tmp}-html
+<table>
+  <tr>
+    <td style="font-size:14pt; color:blue; font-weight:bold;">
+検索する対象者と年月、介護分類を選択して「検索」ボタンをクリックしてください。
+    </td>
+  </tr>
+</table>
+FIN
+fi
+# 初期表示メッセージ
+cat ${html_dir}/KAIGOJISSEKI_SUIIHYO_SHOSAI.html    |
+mojihame -l###RIYOSHA### - ${tmp}-riyosha_joho      |
+mojihame -l###SEARCH_KEKKA### - ${tmp}-search_data
+#mojihame -l###FLOOR_NAME### - ${tmp}-floor_name |
+#mojihame -l###RIYOSHA_NAME### - ${tmp}-riyosha_name |
+#mojihame -l###NENGETSU### - ${tmp}-nengetsu |
+#mojihame -l###HEADER### - ${tmp}-header |
+#mojihame -l###SEARCHKEKKA### - ${tmp}-search_kekka |
+##mojihame -l###TOUJITSU_JISSEKI### - ${tmp}-input_data |
+##mojihame -l###VITAL_JISSEKI### - ${tmp}-input_vital_data |
+##mojihame -l###MOUSHIOKURI_JISSEKI### - ${tmp}-input_moushiokuri_data |
+#mojihame -l###USER__NAME### - ${tmp}-usermei |
+#mojihame -l###USER_SHISETSU_NAME### - ${tmp}-user_shisetsu |
+#calsed -f ${tmp}-calsed - |
+#formhame -d"_" - ${tmp}-namefile 
+
+rm -f ${tmp}-*
+exit 0
+

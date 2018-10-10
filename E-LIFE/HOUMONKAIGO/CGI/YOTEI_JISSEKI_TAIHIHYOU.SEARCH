@@ -1,0 +1,194 @@
+#!/bin/bash
+#
+# YOTEI_JISSEKI_TAIHIHYOU.SEARCH
+# 予定実績対比表　検索用CGI
+#
+# Written by K.Aoyama :20131129
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+apdata_dir=/DATA/E-LIFE/CAREPLAN
+pompa_dir=/home/hands/E-LIFE/CAREPLAN/POMPA
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+#[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 介護の事業者コード
+kaigo_code=$(awk '$1=="'${shisetsu}'" && $3=="11" {print $2}' /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER)
+# 予防の事業者コード
+yobo_code=$(awk '$1=="'${shisetsu}'" && $3=="61" {print $2}' /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth=$curmonth
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+RiyouhyouYear
+RiyouhyouMonth
+YoteiKakuteiFlg
+JissekiKakuteiFlg
+CareManager
+FIN
+cat $tmp-header |
+tateyoko > ${tmp}-header_yoko
+
+
+: > ${tmp}-riyouhyou_base
+
+# ログインしているグループ事業所IDから対象の入居者IDを抽出
+cat ${data_dir}/UNEI/RIYOUSHA/JIGYOUSHO_RIYOUSHA_STATUS                     |
+# 1:事業所ID 2:入居者ID 3:契約開始日 4:契約終了日 5:削除フラグ
+# 6:更新時間 7:更新者
+awk '$1=="'${shisetsu}'"'                                                    |
+self 2                                                                      |
+# 1:入居者ID
+LANG=C sort -k1,1 -u                                                        > $tmp-gaitou_nyuukyosya_list
+
+cat $tmp-gaitou_nyuukyosya_list |
+while read Riyoushaid ; do
+# 利用票ファイルの取得
+  if [ -e ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO ] ; then
+    cat ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO  |
+    awk '$14=="'${kaigo_code}'"'
+
+  else
+    :
+  fi |
+
+  if [ -e ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO ] ;then
+    cat ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_RECORD_YOBO   |
+    awk '$14=="'${yobo_code}'"'
+  else
+    :
+  fi | 
+  #--------------------------------------------------------------
+  # 利用者ID
+    awk '$2=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+  #--------------------------------------------------------------
+  # 日付
+  # --------------------------
+  #
+    awk '$3$4=="'$TaishouNengetsu'"'  |
+  # --------------------------
+  #--------------------------------------------------------------
+  # 1:表示順 2:事業者タイプ 3:サービス区分 4:実績確定フラグ 5:予定データ値 6:実績データ値
+  # 7:サービス開始時間 8:サービス終了時間 9:供給者ID 10:介護保険対象区分
+  # 11:付随費用 単位
+    self 1 5 6 7 8 10 12 13 14 15 17 16 |
+    LANG=C sort -k1,1n                  |
+    awk '{print "'${Riyoushaid}'","l",$0}'  >  ${tmp}-riyouhyou_record_${Riyoushaid}
+  
+  # レコード存在するなら処理続ける
+  if [ -s ${tmp}-riyouhyou_record_${Riyoushaid} ] ;then
+  
+    #介護BASE
+    if [ -e ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO ] ; then
+      #--------------------------------------------------------------
+      # ファイルの取得
+      cat ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO |
+      #--------------------------------------------------------------
+      # 利用者ID
+      awk '$1=="'${Riyoushaid}'"'   |
+      #--------------------------------------------------------------
+      # 検索
+      # --------------------------
+      # 対象年月
+      # --------------------------
+      #
+      awk '$2$3=="'${TaishouNengetsu}'"'    |
+      #--------------------------------------------------------------
+      getlast 1 1             > ${tmp}-${Riyoushaid}-kaigo
+  
+      #　該当データがあったら処理行う    
+      if [ -s ${tmp}-${Riyoushaid}-kaigo ] ;then
+        # 削除フラグ、ユーザ、更新日付をはずす
+        cat ${tmp}-${Riyoushaid}-kaigo |
+        delf NF-2/NF                |
+        #--------------------------------------------------------------
+        delf 1                      |
+        cat ${tmp}-header_yoko -    |
+        tateyoko                    |
+        awk '{print "'${Riyoushaid}'","k",$0}'        > ${tmp}-riyouhyou_base_${Riyoushaid}
+      fi
+    fi
+  
+    #予防BASE
+    if [ -e ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_BASE_YOBO ] ; then
+      #--------------------------------------------------------------
+      # ファイルの取得
+      cat ${pompa_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/RIYOUHYOU_BASE_YOBO |
+      #--------------------------------------------------------------
+      # 利用者ID
+      awk '$1=="'${Riyoushaid}'"'   |
+      #--------------------------------------------------------------
+      # 検索
+      # --------------------------
+      # 対象年月
+      # --------------------------
+      #
+      awk '$2$3=="'${TaishouNengetsu}'"'    |
+      #--------------------------------------------------------------
+      getlast 1 1               > ${tmp}-${Riyoushaid}-yobo
+  
+      #　該当データがあったら処理行う
+      if [ -s ${tmp}-${Riyoushaid}-yobo ] ;then
+        cat ${tmp}-${Riyoushaid}-yobo |
+        # 削除フラグ、ユーザ、更新日付をはずす
+        delf NF-2/NF            |
+        #--------------------------------------------------------------
+        delf 1                      |
+        cat ${tmp}-header_yoko -    |
+        tateyoko                    |
+        awk '{print "'${Riyoushaid}'","k",$0}'        >> ${tmp}-riyouhyou_base_${Riyoushaid}
+      fi
+    fi
+  fi
+done
+
+# できたものすべてまとめる
+ cat ${tmp}-riyouhyou_base_* > ${tmp}-riyouhyou_base
+ cat ${tmp}-riyouhyou_record_* > ${tmp}-riyouhyou_record
+
+cp ${tmp}-riyouhyou_record $work_dir/riyouhyou_record
+
+cat ${tmp}-riyouhyou_base ${tmp}-riyouhyou_record
+
+## 終了
+rm -f $tmp-*
+exit 0

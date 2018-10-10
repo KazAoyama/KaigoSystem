@@ -1,0 +1,459 @@
+#!/bin/bash
+#
+# KAIGOJISSEIKI_ICHIRAN_HYOJI.EXCEL : 介護実績データ検索EXCEL出力
+#
+# Usage : KAIGOJISSEKI_ICHIRAN_HYOJI.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+awk '$(NF-2)!=9' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS     |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   > $tmp-riyosha_status
+
+
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  echo "00" "全て"                                                  > $tmp-all
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1n                                                |
+  join1 key=1 $tmp-riyosha_master                                   |
+  cat $tmp-all -                                                    |
+# 1:RIYOSHA_CODE 2:RIYOSHA_NAME 
+  join0 key=1 <(echo "${riyosha_name}")                             |
+  self 2                                                            > ${tmp}-riyosha_name
+else
+  :                                                                 > ${tmp}-riyosha_name
+fi
+# フロアの取得
+if [ -n "${floor}" -a "${floor}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_floor
+  self 3 $tmp-riyosha_status                      |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+  awk '{print $1,$1"F"}'                                       |
+  cat $tmp-all_floor -                                         |
+  LANG=C sort -k1,1                                           |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  join0 key=1 <(echo ${floor})                                 |
+  self 2                                                       > ${tmp}-floor_name
+else
+  :                                                            > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${unit}" -a "${unit}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_unit
+  self 4 $tmp-riyosha_status                        |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+# 1:UNIT_CODE 2:UNIT_NAME
+  LANG=C sort -u -k1,1                                        |
+  join1 key=1 $tmp-unit_master                                 |
+  cat $tmp-all_unit -                                          |
+# 1:UNIT_CODE 2:UNIT_NAME
+  join0 key=1 <(echo "${unit}")                                |
+  self 2                                                       > ${tmp}-unit_name
+else
+  :                                                            > ${tmp}-unit_name
+fi
+
+# 実施者の取得
+if [ -n "${JISSHISHA}" -a "${JISSHISHA}" != "_" ];then
+  echo "0" "全て"                                              > $tmp-all_jisshisha
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER                   |
+  self 1 2                                                       > $tmp-user_master
+  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${tbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU                |
+  # 1:userid 2:施設id  3:建屋 4:フロア 5:ユニットid
+  # 6:事業所詳細 7:役職（ケアマネかサ責） 8:介護支援専門員番号
+  LANG=C sort -k2,2n                                             |
+  join0 key=2 $tmp-shisetsu                                      |
+  awk '$3=="02"'                                                 |
+  self 1                                                         |
+  uniq                                                           |
+  LANG=C sort -k1,1n                                             |
+  join1 key=1 $tmp-user_master                                   |
+  cat $tmp-all_jisshisha -                                       |
+# 1:JISSISHA_CODE 2:JISSHISHA_NAME
+  join0 key=1 <(echo "${JISSHISHA}")                             |
+  self 2                                                       > ${tmp}-jisshisha
+else
+  :                                                            > ${tmp}-jisshisha
+fi
+
+# 介護実績にチェックが入っていたら
+if [ -n "${hyojikomoku_kaigojisseki}" ];then
+  case ${bunrui_select} in
+    default )
+      echo "全て" > ${tmp}-kaigojisseki_check
+    ;;
+    shokuji )
+      echo "食事水分等摂取" > ${tmp}-bunruimei
+      case ${bunrui_shokuji} in
+        1 )
+        kaigokoumoku="食事摂取"
+        ;;
+        2 )
+        kaigokoumoku="おやつ摂取"
+        ;;
+        3 )
+        kaigokoumoku="水分摂取"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+    haisetsu )
+      echo "排泄関係" > ${tmp}-bunruimei
+      case ${bunrui_haisetsu} in
+        1 )
+        kaigokoumoku="排尿介助"
+        ;;
+        2 )
+        kaigokoumoku="排便介助"
+        ;;
+        3 )
+        kaigokoumoku="下剤与薬"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+    nyuyoku )
+      echo "入浴・清拭" > ${tmp}-bunruimei
+      case ${bunrui_nyuyoku} in
+        1 )
+        kaigokoumoku="入浴"
+        ;;
+        2 )
+        kaigokoumoku="洗髪"
+        ;;
+        3 )
+        kaigokoumoku="清拭"
+        ;;
+        4 )
+        kaigokoumoku="足浴"
+        ;;
+        5 )
+        kaigokoumoku="手浴"
+        ;;
+        0 )
+        kaigokoumoku="0"
+        ;;
+      esac
+    ;;
+    senmen )
+      echo "洗面・整容" > ${tmp}-bunruimei
+      case ${bunrui_senmen} in
+        1 )
+        kaigokoumoku="モーニングケア"
+        ;;
+        2 )
+        kaigokoumoku="ナイトケア"
+        ;;
+        3 )
+        kaigokoumoku="食後の口腔ケア"
+        ;;
+        4 )
+        kaigokoumoku="リネンケア"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+    kihon_dousa )
+      echo "基本動作・リハビリ" > ${tmp}-bunruimei
+      case ${bunrui_kihon_dousa} in
+        1 )
+        kaigokoumoku="生活リハ"
+        ;;
+        2 )
+        kaigokoumoku="アクティビティー"
+        ;;
+        3 )
+        kaigokoumoku="マッサージ"
+        ;;
+        4 )
+        kaigokoumoku="体位交換"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+    iryo_kenkou )
+      echo "医療・健康" > ${tmp}-bunruimei
+      case ${bunrui_iryo_kenkou} in
+        1 )
+        kaigokoumoku="内服薬"
+        ;;
+        2 )
+        kaigokoumoku="処置等"
+        ;;
+        3 )
+        kaigokoumoku="医療"
+        ;;
+        4 )
+        kaigokoumoku="口腔ケア"
+        ;;
+        5 )
+        kaigokoumoku="頓用"
+        ;;
+        6 )
+        kaigokoumoku="外用薬"
+        ;;
+        7 )
+        kaigokoumoku="測定・観察"
+        ;;
+        8 )
+        kaigokoumoku="通院介助"
+        ;;
+        9 )
+        kaigokoumoku="健康診断"
+        ;;
+        10 )
+        kaigokoumoku="入院中の面会"
+        ;;
+        11 )
+        kaigokoumoku="往診"
+        ;;
+        12 )
+        kaigokoumoku="健康相談"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+    shinri_shakai )
+      echo "心理・社会面" > ${tmp}-bunruimei
+      case ${bunrui_shinri_shakai} in
+        1 )
+        kaigokoumoku="巡回・訪室"
+        ;;
+        2 )
+        kaigokoumoku="理美容"
+        ;;
+        3 )
+        kaigokoumoku="相談・助言等"
+        ;;
+        4 )
+        kaigokoumoku="ご家族への連絡"
+        ;;
+        0 )
+        kaigokoumoku="全て"
+        ;;
+      esac
+    ;;
+  esac
+  echo ${kaigokoumoku} > ${tmp}-kaigokoumoku_mei
+else
+  : > ${tmp}-bunruimei
+  : > ${tmp}-kaigokoumoku_mei
+fi
+ycat ${tmp}-bunruimei ${tmp}-kaigokoumoku_mei > ${tmp}-kaigo_jisseki_koumoku
+
+# バイタルにチェックが入っていたら
+if [ -n "${hyojikomoku_vital}" ];then
+  [ "${vital_taion}" = "on" ] && echo "【体温】" >> ${tmp}-vital_komoku
+  [ "${vital_ketuatu_ue}" = "on" ] && echo "【血圧(上)】" >> ${tmp}-vital_komoku
+  [ "${vital_ketuatu_shita}" = "on" ] && echo "【血圧(下)】" >> ${tmp}-vital_komoku
+  [ "${vital_myakuhaku}" = "on" ] && echo "【脈拍】" >> ${tmp}-vital_komoku
+  [ "${vital_kokyu}" = "on" ] && echo "【呼吸】" >> ${tmp}-vital_komoku
+  [ "${vital_SAT}" = "on" ] && echo "【SAT】" >> ${tmp}-vital_komoku
+  [ "${vital_taijyu}" = "on" ] && echo "【体重】" >> ${tmp}-vital_komoku
+  cat ${tmp}-vital_komoku  |
+  yarr                     |
+  sed 's/ //g'             > ${tmp}-vital_mei
+else
+  : > ${tmp}-vital_mei
+fi
+
+
+# 申送りにチェックが入っていたら
+if [ -n "${hyojikomoku_moushiokuri}" ];then
+  echo "0" "全て" |
+  cat - ${apptbl_dir}//MOUSHIOKURI_SELECT |
+  join0 key=1 <(echo "${hyojikomoku_moushiokuri}") |
+  self 2          |
+  awk '{print "【申送種別】",$1}'  > ${tmp}-okuri_select
+  echo "0" "全て" |
+  cat - ${apptbl_dir}/MOUSHIOKURI_TAISHO  |
+  join0 key=1 <(echo "${moushiokuri_taisho}") |
+  self 2          |
+  awk '{print "【申送対象】",$1}'          > ${tmp}-okuri_taisho
+  echo "0" "全て" |
+  cat - ${apptbl_dir}/MOUSHIOKURI_KOUMOKU |
+  join0 key=1 <(echo "${moushiokuri_koumoku}") |
+  self 2          |
+  awk '{print "【検索項目】",$1}'          > ${tmp}-okuri_koumoku
+  echo "【キーワード検索】" "${keyword}"   > ${tmp}-keyword
+else
+  : > ${tmp}-okuri_select
+  : > ${tmp}-okuri_taisho
+  : > ${tmp}-okuri_koumoku
+  : > ${tmp}-keyword
+fi
+ycat ${tmp}-okuri_select ${tmp}-okuri_taisho ${tmp}-okuri_koumoku ${tmp}-keyword |
+sed 's/ //g' > ${tmp}-okuri_checked
+
+# 作成日が渡って来なかったら当日をセット
+echo  "${text_sakuseibi}" > ${tmp}-day1
+echo  "${text_sakuseibi2}" > ${tmp}-day2
+
+
+# searchfileの処理
+cat $tmp-riyosha_status |
+self 6 7 5 |
+# 1:利用者ID 2:開始日 3:居室
+LANG=C sort -k1,2 |
+getlast 1 1 |
+self 1 3 > $tmp-riyosha_room
+# 1:利用者ID 2:居室
+
+if [ -e "${searchfile}" ];then
+  cat ${searchfile}   |
+  awk '$1=="JISSEKI"' |
+  # 1:目印 2:対象者 3:作成日 4:共有 5:開始時間 6:介護分類 7:介護項目 8:内容 9:備考 10:時間 11:実施者 12:色 13:ID
+  LANG=C sort -k2,2  |
+  join1 key=2 $tmp-riyosha_master                |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2                                         |
+  LANG=C sort -k7,7                             |
+  join1 key=7 ${apptbl_dir}/KAIGO_BUNRUI_MASTER  |
+  delf 7                                         |
+  awk '{gsub(/+++/,"【場所】",$9);print}'        |
+  LANG=C sort -k5,5                              > ${tmp}-jisseki
+
+  cat ${searchfile}                              |
+  awk '$1=="VITAL"'                              |
+  LANG=C sort -k2,2                             |
+  join1 key=2 $tmp-riyosha_master                |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2                                         |
+  LANG=C sort -k3,3                              > ${tmp}-vital
+  cat ${searchfile}                              |
+  awk '$1=="OKURI"'                              |
+  join1 key=2 $tmp-riyosha_master                |
+  join2 key=2 $tmp-riyosha_room |
+  delf 2                                         |
+  LANG=C sort -k3,3                              > ${tmp}-okuri
+  
+  cat  ${tmp}-jisseki ${tmp}-vital ${tmp}-okuri  |
+  awk '{gsub(/+++/,"",$7);print}'                > ${tmp}-search          
+  # 1:目印 2:共有 3:開始時間 4:介護分類 5:介護項目 6:内容 7:備考 8:時間 9:実施者
+else
+  :
+fi
+cat ${tmp}-search | self 1/8 |
+awk '{if($1=="JISSEKI"){$1="介護実績";print $0}else if($1=="VITAL"){$1="バイタル";print $0}else{$1="申送り";print $0}}' > ${tmp}-head
+cat ${tmp}-search | self 9   |
+awk '{gsub(/】/,"】 ",$0);gsub(/【/," 【",$0);gsub(/<br>/,"",$0);print}'  > ${tmp}-naiyo
+cat ${tmp}-search | self 10/12 > ${tmp}-last
+
+# 検索結果が０件だったらアラート表示して終わり
+if [ -s $tmp-search ]; then
+
+TEMPLA=${temp_dir}/KAIGOJISSEKI_DATA_KENSAKU_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-floor_name                   \
+                    1 d4 ${tmp}-unit_name                    \
+                    1 b6 ${tmp}-kaigo_jisseki_koumoku        \
+                    1 b7 ${tmp}-vital_mei                    \
+                    1 b8 ${tmp}-okuri_checked                \
+                    1 b5 ${tmp}-day1                         \
+                    1 d5 ${tmp}-day2                         \
+                    1 a13 ${tmp}-head                        \
+                    1 i13 ${tmp}-naiyo                       \
+                    1 w13 ${tmp}-last                        \
+                    1 h4 ${tmp}-jisshisha                    \
+                    1 f4 ${tmp}-riyosha_name                 > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+  # ファイル名をはく
+  echo "${userid}_$$.download.xls"
+
+else
+  # 結果が無ければアラート
+  echo "zero"
+
+fi
+
+rm -f ${tmp}-*
+exit 0
+

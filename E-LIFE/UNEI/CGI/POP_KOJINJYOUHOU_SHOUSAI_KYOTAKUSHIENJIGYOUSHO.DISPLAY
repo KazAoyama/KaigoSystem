@@ -1,0 +1,372 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KEIYAKU.DISPLAY
+# 個人情報詳細(契約)POPUP
+#
+# Written by E.Okuda (Tokyu-hands.co.jp) :2013/12/10
+
+#--------------------------------------------------------------
+# ログ
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+
+# 渡ってきたデータを取得
+#if [ ${CONTENT_LENGTH:-0} -gt 0 ]; then
+#  dd bs=${CONTENT_LENGTH} |
+#  cgi-name -d_ -i_
+#else
+#  :
+#fi > $tmp-name
+
+# 変数の定義
+namedata="$1"
+data="$2"
+
+
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+MODE=$(nameread "MODE" ${namedata})
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+
+if [ "$MODE" = "init" ]; then
+  JigyoushoShubetsu=""
+  JigyoushoName=""
+  CareManagerName=""
+  TajigyoushoCareManagerName=""
+  KyotakukikanFrom=""
+  KyotakukikanTo=""
+  RIYOUSHAKYOTAKUID=""
+else
+  JigyoushoShubetsu="$(nameread  "JigyoushoShubetsu" $namedata)"
+  JigyoushoName="$(nameread  "JigyoushoName" $namedata)"
+  CareManagerName="$(nameread  "CareManagerName" $namedata)"
+  TajigyoushoCareManagerName="$(nameread  "TajigyoushoCareManagerName" $namedata)"
+  KyotakukikanFrom="$(nameread  "KyotakukikanFrom" $namedata)"
+  KyotakukikanTo="$(nameread  "KyotakukikanTo" $namedata)"
+  RIYOUSHAKYOTAKUID="$(nameread  "RIYOUSHAKYOTAKUID" $namedata)"
+fi
+USERID="$(nameread  "USERID" $namedata)"
+SHISETSUID="$(nameread  "SHISETSUID" $namedata)"
+RIYOUSHAID="$(nameread  "RIYOUSHAID" $namedata)"
+RIYOUSHANAME="$(awk '$1=="'${RIYOUSHAID}'"{print $2}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_MASTER)"
+NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+NYUUKYOTATEYAID=$(nameread         "NYUUKYOTATEYAID"      $namedata)
+NYUUKYOFLOOR=$(nameread         "NYUUKYOFLOOR"      $namedata)
+NYUUKYOUNITID=$(nameread         "NYUUKYOUNITID"      $namedata)
+NYUUKYOKYOSHITSU=$(nameread        "NYUUKYOKYOSHITSU"      $namedata)
+  ROGINSHISETSU=$(nameread "shisetsu" $namedata)
+  ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+  [ -z "${ROGINSHISETSUNAME}" -o "${ROGINSHISETSUNAME}" = "_" ] && ROGINSHISETSUNAME="$(awk '$1=="'${ROGINSHISETSU}'"{print $2}' ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER | head -1)"
+
+# calsedファイル
+cat << FIN > $tmp-calsed_data
+###USERID###       ${USERID}
+###SHISETSUID###   ${SHISETSUID}
+###RIYOUSHAID###   ${RIYOUSHAID}
+###RIYOUSHANAME###   ${RIYOUSHANAME}
+###NYUUKYOSHISETSUID###  ${NYUUKYOSHISETSUID}
+###NYUUKYOTATEYAID###  ${NYUUKYOTATEYAID}
+###NYUUKYOFLOOR###  ${NYUUKYOFLOOR}
+###NYUUKYOUNITID###  ${NYUUKYOUNITID}
+###NYUUKYOKYOSHITSU###  ${NYUUKYOKYOSHITSU}
+###RIYOUSHAKYOTAKUID### ${RIYOUSHAKYOTAKUID}
+###TOUROKUDISP### ${TOUROKUDISP}
+###PRINTDISP###  ${PRINTDISP}
+###ROGINSHISETSU### ${ROGINSHISETSU}
+###ROGINSHISETSUNAME### ${ROGINSHISETSUNAME}
+FIN
+
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+# serchでも結果なしのものはinitへ
+if [ "${MODE}" = "serach" ] ;then
+  result="$(awk '$1=="result"{print $2}' ${data})"
+
+  if [ "${result}" = "ng" ] ; then
+    MODE="init"
+  fi
+
+fi
+
+
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init)
+
+   echo "${NYUUKYOSHISETSUID}" |
+   awk '$1~/^1[0-9]*/{print $0}' > $tmp-jigyousho_check
+  
+
+
+  ;;
+
+ # 検索結果
+ search )
+    awk '$1=="kyotakujigyousho"{print $0}' ${data}   |
+    delf 1              > $tmp-search_kyotaku_data
+# 1:利用者(入居者)ID 2:利用者居宅支援事業所ID 3:事業所Id 4:担当ケアマネID(自事業所) 5:担当ケアマネNAME(他事業所)
+# 6:期間From         7:期間To
+
+#  JigyoushoShubetsu="$(awk '{print $3}' $tmp-search_kyotaku_data)"
+  JigyoushoName="$(awk '{print $3}' $tmp-search_kyotaku_data)"
+  CareManagerName="$(awk '{print $4}' $tmp-search_kyotaku_data)"
+  TajigyoushoCareManagerName="$(awk '{print $5}' $tmp-search_kyotaku_data)"
+  KyotakukikanFrom="$(awk '{print $6!="_"?substr($6,1,4)"/"substr($6,5,2)"/"substr($6,7,2):"_"}' $tmp-search_kyotaku_data)"
+  KyotakukikanTo="$(awk '{print $7!="99999999"?substr($7,1,4)"/"substr($7,5,2)"/"substr($7,7,2):"_"}' $tmp-search_kyotaku_data)"
+
+# 事業所種別
+  cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+  awk '$1=="'${JigyoushoName}'"{print $0}'    > $tmp-jijigyousho
+
+# 自事業所マスタに事業所番号があったら種別=0
+ if [ -s $tmp-jijigyousho ] ; then
+    JigyoushoShubetsu="0"
+  else
+    JigyoushoShubetsu="1" 
+  fi
+
+ ;;
+  # 登録の場合
+  touroku | sakujyo)
+
+
+  result=$(awk '$1=="result"{print $2}' ${data})
+
+    if [ "${result}" = "ng" ] ; then
+      message=$(awk '$1=="message"{print $2}' ${data})
+    else
+      message="登録完了しました。"
+    fi
+
+  ;;
+esac
+
+#--------------------------------------------------------------
+# 共通処理
+#---------------------------------------------------------
+# プルダウンの準備
+#---------------------------------------------------------
+# 事業所
+[ -z "${JigyoushoShubetsu}" -o "${JigyoushoShubetsu}" = "_" ] && JigyoushoShubetsu="0"
+
+#  事業所の絞込み？
+
+# 自事業所
+if [ "${JigyoushoShubetsu}" = "0" ] ; then
+ cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER |
+# 1:グループ事業所ＩＤ 2:グループ事業所名 3:電話番号 4:住所   5:金融機関コード
+# 6:金融機関支店コード 7:口座区分         8:口座番号 9:口座名
+
+  awk '$(NF-2)!="9"{print $1,$2}'         |
+  awk '{if($1=="'${JigyoushoName}'"){print $0,"selected"}
+        else{print $0,"@"}
+        }'  > $tmp-jigyousyo
+else
+  # 他事業所
+  cat ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_HIMODUKE_MASTER |
+  awk '$(NF-2)!="9"{print $2}'         |
+  LANG=C sort |
+  uniq |
+  join1 +ng key=1 - ${tbl_dir}/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER  >$tmp-jijigyousho 2>$tmp-tajigyousho
+# 1:事業所ＩＤ         2:サービス供給事業者番号 3:サービス供給事業者名 4:サービスコード種類 5:事業所区分
+# 6:指定基準事業所区分 7:地域区分               8:生活保護指定         9:割引率  ... 
+#...
+# 43:事業所評価加算（申出）の有無 44:生活機能向上グループ活動加算 45:24時間通報体制加算
+
+  # 居宅事業所(43:居宅介護支援,46:居宅予防支援)に渋る
+  cat $tmp-tajigyousho |
+  awk '$(NF-2)!="9"{print $0}'   |
+  awk '$4=="43"||$4=="46"{print $1,$3}' |
+  # 1:事業所番号 2:事業所名
+  awk '{if($1=="'${JigyoushoName}'"){print $0,"selected"}
+        else{print $0,"@"}
+        }'  > $tmp-jigyousyo
+fi
+
+# 担当ケアマネ
+
+#  従業員マスタからケアマネ情報をもってくる
+#  cat ${tbl_dir}/USER/USER_ID  |
+#  self 1 2                     |
+#  awk 'BEGIN{print "@ @"}{print $0}'   |
+#  awk '{if($1=="'${CareManagerName}'"){print $0,"selected"}
+#        else{print $0,"@"}
+#        }'> $tmp-caremanager
+
+[ -z "${JigyoushoName}" -o "${JigyoushoName}" = "_" ] && JigyoushoName=$(awk '{print $1}' $tmp-jigyousyo | head -1)
+
+#  cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU  |
+ cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU ${tbl_dir}/JYUUGYOUIN_MASTER/EXTRA_USER_SHISETSU  |
+# 1:従業員ID   2:施設ID 3:建屋ID             4:フロア 5:ユニットID
+# 6:事業所詳細 7:役職   8:介護支援専門員番号
+
+# 事業所による絞込
+if [ "${JigyoushoShubetsu}" = "0" ] ;then
+  # 指定事業所所属の訪問介護でない、介護支援専門員番号のある人
+#  awk '$2=="'${JigyoushoName}'"&&$6!="2"&&$8!="_"{print $0}' |
+  awk '$2=="'${JigyoushoName}'"&&$6!="2"{print $0}' |
+  LANG=C sort -u |
+  uniq |
+  join1 key=1 <(awk '$(NF-2)!=9' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_KIHON) - |
+  awk '$5>="'${today}'"&&$(NF-2)!="9"{print $1,$2}'     |
+# 1:従業員ID    2:従業員名    3:従業員名カナ 4:勤務期間FROM        5:勤務期間TO
+# 6:ID          7:PAS         8:施設ID       9:建屋ID              10:フロア
+# 11:ユニットID 12:事業所詳細 13:役職        14:介護支援専門員番号
+  awk 'BEGIN{print "@ @"}{print $0}'   |
+  awk '{if($1=="'${CareManagerName}'"){print $0,"selected"}
+        else{print $0,"@"}
+        }' > $tmp-caremanager
+else
+  : > $tmp-caremanager
+fi
+
+
+#-------------------------------------------------------------
+# ボタン表示系
+#-------------------------------------------------------------
+
+if [ "${MODE}" = "init" ] ; then
+  echo "###SAKUJYODISP###" "none"   >> $tmp-calsed_data
+else
+  echo "###SAKUJYODISP###" "@"   >> $tmp-calsed_data
+fi
+
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+	cat <<- FIN > $tmp-html2
+	  <script type="text/javascript" language="javascript">
+	    alert('${message}');
+	  </script>
+	FIN
+fi
+
+if [ "${MODE}" != "init" -a "${MODE}" != "search" -a "${result}" = "ok" ] ; then
+cat <<- FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+        var obj =document.forms["PopKanryou"];
+        shousai_kihon = window.open("KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.CGI","shousai_kihon");
+//      shousai_kihon.close();
+        obj.target="shousai_kihon";
+        obj.method="post";
+        obj.action="KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.CGI";
+        obj.submit();
+        resizeTo(300,130);
+//      window.close();
+    </script>
+	FIN
+fi
+
+#     window.opener.location.href = "KOJINJYOUHOU_SHOUSAI_KEIYAKU.CGI";
+#     window.opener.document.tab.submit();
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# テキスト系は_を空白に直してやる
+[ "${Bikou}" = "_" ] && Bikou=""
+bikou=$(echo "${Bikou}" | sed 's/\\n/###RETURN###/g')
+#--------------------------------------------------------------
+
+    # calsed用データ
+  echo "###TajigyoushoCareManagerName###"         "${TajigyoushoCareManagerName}"      >> $tmp-calsed_data
+  echo "###KyotakukikanFrom###"     "${KyotakukikanFrom}"  >> $tmp-calsed_data
+  echo "###KyotakukikanTo###"         "${KyotakukikanTo}"      >> $tmp-calsed_data
+
+  # 種別のチェック
+  if [ "${JigyoushoShubetsu}" = "0" ] ; then
+    echo "###JIJIGTOUSHOCHECK###" "checked"  >> $tmp-calsed_data
+    echo "###TAJIGYOUSHOCHECK###" "@"        >> $tmp-calsed_data
+    echo "###JIJIGYOUSHOCAREMANEDISP###" "@"  >> $tmp-calsed_data
+    echo "###TAJIGYOUSHOCAREMANEDISP###" "none"        >> $tmp-calsed_data
+  else
+    echo "###JIJIGTOUSHOCHECK###" "@"  >> $tmp-calsed_data
+    echo "###TAJIGYOUSHOCHECK###" "checked"        >> $tmp-calsed_data
+    echo "###JIJIGYOUSHOCAREMANEDISP###" "none"  >> $tmp-calsed_data
+    echo "###TAJIGYOUSHOCAREMANEDISP###" "@"        >> $tmp-calsed_data
+  fi
+
+cat $tmp-calsed_data  |
+sed 's/_/@/g' -        > $tmp-calsed_data_result
+#--------------------------------------------------------------
+# データのはめ込み
+
+# 登録時登録okだったら新規htmlではなく、通常の詳細htmlを表示
+#if [ "${MODE}" = "touroku" -a "${result}" = "touroku_ok" ] ; then
+#else
+#fi |
+if [ "${MODE}" != "init" -a "${MODE}" != "search" -a "${result}" = "ok" ] ; then
+  cat ${html_dir}/POP_KOJINJYOUHOU_TOUROKU_KANRYOU.html
+else
+  cat ${html_dir}/POP_KOJINJYOUHOU_SHOUSAI_KYOTAKUSHIENJIGYOUSHO.html      |
+  mojihame -ljigyousho_select - $tmp-jigyousyo                      |
+  mojihame -lcaremanager_select - $tmp-caremanager                   
+fi |
+
+calsed -f $tmp-calsed_data_result -                    |
+sed 's/###SPACE###/ /g'                                |
+sed 's/\\n/\n/g'                                       |
+sed 's/###KAIGYO###/\n/g'                             |
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+
+cat -
+#--------------------------------------------------------------
+
+## 終了
+rm -f $tmp-*
+exit 0

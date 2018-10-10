@@ -1,0 +1,157 @@
+#/bin/bash
+#
+# KAIGOJISSEKI_IKKATSU.SEARCH : 介護実績一括登録検索用CGI
+#
+# Usage : KAIGOJISSEKI_IKKATSU.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+work="${app_dir}/WORK"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月日の取得
+echo ${hd_sakuseibi} > ${tmp}-sakuseibi
+
+[ ! -n "${hd_sakuseibi}" ] && hd_sakuseibi=${today}
+
+# 選択されたフロアの入居者分だけを表示するように改修
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 <(echo $shisetsu)                                |
+if [ ${shisetsu} = "0001" ];then
+  join0 key=2 <(echo "02")
+else
+  join0 key=2 <(echo "00")
+fi |
+awk '$9==1'                                                  |
+awk '$7<="'${hd_sakuseibi}'" && $8>="'${hd_sakuseibi}'"'     > $tmp-riyosha_status
+
+# フロアが渡って来なかったら最上階を初期表示
+if [ ! -n "${floor}" ];then
+  cat $tmp-riyosha_status                                    |
+  self 3                                                     |
+  LANG=C sort -u -k1,1                                       |
+  head -n1                                                   > $tmp-hyoji_floor
+  floor=$(cat $tmp-hyoji_floor)
+else
+  :
+fi
+
+cat $tmp-riyosha_status                                      |
+cjoin0 key=3 <(echo $floor)                                   |
+self 6                                                       |
+LANG=C sort                                                  > $tmp-taisho_list
+
+echo ${today} | LANG=C sort -k1,1 > ${tmp}-today
+
+# データの取得
+cat ${pompa_dir}/${shisetsu}/${this_month}/${this_month}.DISPLAY_KAIGOJISSEKI_IKKATSU               |
+# 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+cjoin0 key=1 $tmp-taisho_list                                                    |
+LANG=C sort -k12,12                                                              |
+tail -n100                                                                       |
+#awk '{print $0,substr($12,1,8)}'                                                |
+#LANG=C sort -k14,14                                                             |
+#join0 key=14 ${tmp}-today                                                       |
+awk '{print "JISSEKI",$0}'                                                       > ${tmp}-kaigojisseki
+#delf 14                                                                         > ${tmp}-kaigojisseki
+# 1:目印 2:対象者 3:作成日 4:共有 5:介護分類 6:介護項目 7:開始時間 8:内容 9:場所 10:備考 11:終了時間 12:実施者 13:登録日時間 14:ID
+cat ${pompa_dir}/${shisetsu}/${this_month}/${this_month}.KAIGOJISSEKI_IKKATSU_VITAL         |
+# 1:利用者    2:作成日 3:体温    4:血圧(上)  5:血圧(下)
+# 6:脈拍      7:呼吸   8:SAT     9:体重      10:時刻
+# 11:所要時間 12:備考  13:実施者 14:登録時間 15:ID
+
+#awk '{print $0,substr($14,1,8)}'                                                |
+cjoin0 key=1 $tmp-taisho_list                                                    |
+LANG=C sort -k14,14                                              |
+tail -n100 |
+#LANG=C sort -k16,16n                                                            |
+#join0 key=16 ${tmp}-today                                                       |
+#delf 16                                                                         |
+awk '{gsub(/+++/," ",$13);print}'                                               |
+delf 13                                                                         |
+awk '{print "VITAL",$0}'                                                        > ${tmp}-vital
+# 1:目印 2:利用者 3:作成日 4:体温 5:血圧(上) 6:血圧(下) 7:脈拍 8:呼吸 9:SAT 10:体重 11:時刻 12:所要時間 13:備考 14:実施者 15:登録時間 16:ID
+cat ${pompa_dir}/${shisetsu}/${this_month}/${this_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI   |
+# 1:利用者 2:作成日    3:申送り種別 4:時刻         5:対象
+# 6:項目   7:記入者    8:日誌共有   9:支援経過共有 10:内容
+# 11:色    12:登録日時 13:ID
+#awk '{print $0,substr($12,1,8)}'                                                |
+cjoin0 key=1 $tmp-taisho_list                                                    |
+LANG=C sort -k13,13 |
+tail -n100 |
+#LANG=C sort -k14,14n                                                            |
+#join0 key=14 ${tmp}-today                                                       |
+#delf 14                                                                         |
+awk '{gsub(/+++/," ",$7);print}'                                                |
+delf 7                                                                          |
+awk '{print "OKURI",$0}'                                                        > ${tmp}-okuri
+# 1:目印 2:利用者 3:作成日 4:申送り種別 5:時刻 6:対象 7:項目 8:記入者 9:日誌共有 10:支援経過共有 11:内容 12:色 13:登録日時 14:ID
+
+cat ${tmp}-kaigojisseki ${tmp}-vital ${tmp}-okuri
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

@@ -1,0 +1,139 @@
+#!/bin/bash
+#
+# NISSHI_SENIOR_NIKKIN.SEARCH
+# 日勤引継ぎ　検索用CGI
+#
+# Written by K.Aoyama :20140114
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+# 連絡ID
+#[ -z "${NikkinID}" -o "${NikkinID}" = "_" ] && error_exit "IDが不明です。"
+[ -z "${NikkinID}" -o "${NikkinID}" = "_" ] && NikkinID="_"
+
+# 他施設
+[ -z "${displayShisetsu}" -o "${displayShisetsu}" = "_" ] && displayShisetsu=${shisetsu}
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+NikkinID
+hdKijunDate
+HikitsugiJikou
+FIN
+
+
+cat <<- FIN > $tmp-header_setsubi
+KinkyuYobidashiKaisu
+SeikatsuSensorKaisu
+KeihoubanKaisu
+FIN
+
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+cat ${tmp}-header_setsubi   |
+yarr                > ${tmp}-header_setsubi_yoko
+
+if [ -s ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/NIKKIN_HIKITSUGI ] ; then
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+cat ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/NIKKIN_HIKITSUGI |
+# 1:施設   2:建屋   3:ID         4:登録日付 5:引継ぎ事項
+# 6:備考１ 7:備考２ 8:有効フラグ 9:処理時間 10:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$3=="'$NikkinID'"'     |
+self 3/5  |
+# 1:ID 2:登録日付 3:連絡ヘッダー 4:連絡詳細 5:建屋
+tee $tmp-result             |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "h",$0}' > ${tmp}-nikkin_hikitsugi
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "引継ぎ事項取得エラー"
+fi
+
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-nikkin_hikitsugi
+
+if [ -s ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/SETSUBI_KAISU ] ; then
+#--------------------------------------------------------------
+# 緊急呼出・生活センサー・警報盤（設備）回数データ
+cat ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/SETSUBI_KAISU |
+# 1:施設           2:建屋 3:登録日付   4:緊急呼出回数 5:生活センサー発報回数
+# 6:警報盤発報回数 7:予備 8:有効フラグ 9:処理時間     10:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"&&$3=="'${hdKijunDate}'"'     |
+self 4/6  |
+# 1:ID 2:登録日付 3:連絡ヘッダー 4:連絡詳細 5:建屋
+tee $tmp-result             |
+cat ${tmp}-header_setsubi_yoko -    |
+tateyoko                    |
+awk '{print "n",$0}' > ${tmp}-nikkin_setsubi_kaisu
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "各種回数取得エラー"
+fi
+
+[ "$(gyo $tmp-result)" = "0" ] && : > ${tmp}-nikkin_setsubi_kaisu
+
+#--------------------------------------------------------------
+# 緊急呼出・生活センサー・警報盤（設備）データ
+cat ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/KINKYU_YOBIDASHI |
+awk '$1=="'${shisetsu}'"&&$3=="'${hdKijunDate}'"'     |
+self 4 |
+awk '{print "k",$0}' > ${tmp}-nikkin_kinkyu_yobidashi
+[ "$(gyo $tmp-nikkin_kinkyu_yobidashi)" = "0" ] && : > ${tmp}-nikkin_kinkyu_yobidashi
+
+cat ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/SEIKATSU_SENSOR |
+awk '$1=="'${shisetsu}'"&&$3=="'${hdKijunDate}'"'     |
+self 4 |
+awk '{print "s",$0}' > ${tmp}-nikkin_seikatsu_sensor
+[ "$(gyo $tmp-nikkin_seikatsu_sensor)" = "0" ] && : > ${tmp}-nikkin_seikatsu_sensor
+
+cat ${pompa_dir}/NIKKIN_HIKITSUGI/$displayShisetsu/KEIHOUBAN |
+awk '$1=="'${shisetsu}'"&&$3=="'${hdKijunDate}'"'     |
+self 4 |
+awk '{print "b",$0}' > ${tmp}-nikkin_keihouban
+[ "$(gyo $tmp-nikkin_keihouban)" = "0" ] && : > ${tmp}-nikkin_keihouban
+
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-nikkin_hikitsugi ${tmp}-nikkin_setsubi_kaisu ${tmp}-nikkin_kinkyu_yobidashi ${tmp}-nikkin_seikatsu_sensor ${tmp}-nikkin_keihouban
+
+## 終了
+rm -f $tmp-*
+exit 0

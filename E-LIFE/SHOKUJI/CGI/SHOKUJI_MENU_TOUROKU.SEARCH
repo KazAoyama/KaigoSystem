@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# SHOKUJI_MENU_TOUROKU.SEARCH
+# 食事メニュー検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+Shisetsu="${shisetsu}"
+USERID="${userid}"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければ 従業員マスタから
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1) # 従業員マスタに指定がなければ>施設建屋フロアマスタの上にある方(シニアがあればシニア)
+
+if [ "$MODE" = "init" ]; then
+  KikanFrom=""
+  KikanTo=""
+  ShokujiMenu=""
+  KihonKakaku=""
+  NyuukyoshaKakaku=""
+  Guest1Kakaku=""
+  Guest2Kakaku=""
+  StaffKakaku=""
+# グリーンハウス価格追加(20150729)
+  GreenHouseKakaku=""
+  Choushoku="1"
+  Chuushoku="1"
+  Yuushoku="1"
+  Oyatsu=""
+  Iro=""
+  Shokushu=""
+  SHOKUJIMENUID=""
+  SearchShokushu=""
+  SearchShokuji=""
+  SearchKikan=""
+  Hyouji=""
+  KisshokuTaishou=""
+  hideRestaurant=""
+  drinkType="1"
+else
+# 選択している
+  KikanFrom=$(nameread         "KikanFrom"      $namedata)
+  KikanTo=$(nameread           "KikanTo"      $namedata)
+  ShokujiMenu=$(nameread       "ShokujiMenu"      $namedata)
+  KihonKakaku=$(nameread       "KihonKakaku"      $namedata)
+  NyuukyoshaKakaku=$(nameread  "NyuukyoshaKakaku"      $namedata)
+  Guest1Kakaku=$(nameread      "Guest1Kakaku"      $namedata)
+  Guest2Kakaku=$(nameread      "Guest2Kakaku"      $namedata)
+  StaffKakaku=$(nameread       "StaffKakaku"      $namedata)
+# グリーンハウス価格追加(20150729)
+  GreenHouseKakaku=$(nameread  "GreenHouseKakaku" $namedata)
+  Choushoku=$(nameread         "Choushoku"      $namedata)
+  Chuushoku=$(nameread         "Chuushoku"      $namedata)
+  Yuushoku=$(nameread          "Yuushoku"      $namedata)
+  Oyatsu=$(nameread            "Oyatsu"      $namedata)
+  Iro=$(nameread               "Iro"      $namedata)
+  Shokushu=$(nameread          "Shokushu"      $namedata)
+  SHOKUJIMENUID=$(nameread     "SHOKUJIMENUID"      $namedata)
+  SearchShokushu="$(nameread   "SearchShokushu"      $namedata)"
+  SearchShokuji="$(nameread    "SearchShokuji"      $namedata)"
+  SearchKikan="$(nameread      "SearchKikan"      $namedata)"
+  Hyouji="$(nameread           "Hyouji"      $namedata)"
+  KisshokuTaishou="$(nameread  "KisshokuTaishou"      $namedata)"
+  hideRestaurant="$(nameread  "hideRestaurant"      $namedata)"
+  drinkType="$(nameread  "drinkType"      $namedata)"
+fi
+
+# レストラン非表示、ドリンクタイプ
+if [ -s ${pompa_dir}/${Shisetsu}/SHOKUJI_RESTAURANT_MENU ] ; then
+   cat ${pompa_dir}/${Shisetsu}/SHOKUJI_RESTAURANT_MENU |
+   awk '$(NF-2)!="9"{if($2=="1"){$2="〇"}else{$2="@"}print $1,$2}' |
+   LANG=C sort -k1,1 > $tmp-restaurant_hide_menu
+else
+   echo "_" "_" > $tmp-restaurant_hide_menu
+fi
+
+if [ -s ${pompa_dir}/${Shisetsu}/SHOKUJI_DRINKTYPE ] ; then
+   cat ${pompa_dir}/${Shisetsu}/SHOKUJI_DRINKTYPE |
+   awk '$(NF-2)!="9"{print $1,$2}' |
+   LANG=C sort -k2,2 |
+   join1 key=2 <(self 2 3 ${home_dir}/TBL/CONFIG/SHOKUJI_MENU_TYPE) |
+   self 1 3 |
+   LANG=C sort -k1,1 > $tmp-drink_type
+else
+   echo "_" "_" > $tmp-drink_type
+fi
+
+awk '$(NF-2)!="9"{print $0}' ${pompa_dir}/${Shisetsu}/SHOKUJI_MENU |
+awk '$4=="'${Shisetsu}'"&&$5=="'${Tateya}'"{print $0}' |
+#delf 4 5 NF-5/NF  |
+delf 4 5 NF-4/NF  |
+# 1:メニューid   2:メニュー名      3:食事種類      4:入居者価格 5:ゲスト１価格
+# 6:ゲスト２価格 7:スタッフ価格    8:朝食          9:昼食       10:夕食
+# 11:おやつ      12:期間From(西暦) 13:期間To(和暦) 14:色        15:表示順
+# 16:喫食対象 17:グリーンハウス価格
+                                                         
+# 食事種類名称の取得
+LANG=C sort -k3,3 |
+join1 key=3 ${tbl_dir}/SHOKUJI/SHOKUJI_SHURUI -  |
+# 1:メニューid  2:メニュー名  3:食事種類        4:食事種類名    5:入居者価格
+# 6:ゲスト1価格 7:ゲスト2価格 8:スタッフ価格    9:朝食          10:昼食
+# 11:夕食       12:おやつ     13:期間From(西暦) 14:期間To(和暦) 15:色
+# 16:表示順     17:喫食対象 18:グリーンハウス価格
+ 
+# 朝食～おやつの表記
+awk '{print $0,$9!="0"?"朝":"@",$10!="0"?"昼":"@",$11!="0"?"夕":"@",$12!="0"?"おやつ":"@"}' |
+#self 1/8 NF-3/NF 13/17 |
+self 1/8 NF-3/NF 13/18 |
+#sed 's/_/@/g' |
+# 1:メニューid  2:メニュー名  3:食事種類        4:種類名        5:入居者価格
+# 6:ゲスト1価格 7:ゲスト2価格 8:スタッフ価格    9:朝食          10:昼食
+# 11:夕食       12:おやつ     13:期間From(西暦) 14:期間To(和暦) 15:色
+# 16:表示順     17:喫食対象   18:グリーンハウス価格
+
+tee $tmp-classmae |
+# CLASS
+awk '{if($14<"'${today}'"){print $0,"shokuji_gyo_old"}
+      else{print $0,"shokuji_gyo"}
+     }'                        |
+
+# 日付
+awk '{print $0,$13!="@"?substr($13,1,4)"/"substr($13,5,2)"/"substr($13,7,2):"@",$14!="99999999"?substr($14,1,4)"/"substr($14,5,2)"/"substr($14,7,2):"@"}'   |
+# 1:メニューid  2:メニュー名  3:食事種類            4:種類名        5:入居者価格
+# 6:ゲスト1価格 7:ゲスト2価格 8:スタッフ価格        9:朝食          10:昼食
+# 11:夕食       12:おやつ     13:期間From(西暦)     14:期間To(和暦) 15:色
+# 16:表示順     17:喫食対象   18:グリーンハウス価格 19:class        20:期間From
+# 21:期間To
+self 1/12 NF-1 NF 15/NF-2 |
+# 色名称
+LANG=C sort -k15,15       |
+join1 key=15 ${tbl_dir}/CONFIG/COLOR_TABLE - |
+# レストラン非表示
+LANG=C sort -k1,1         |
+join2 +"@" key=1 $tmp-drink_type |
+join2 +"@" key=1 $tmp-restaurant_hide_menu |
+self 1 4/NF 2 3             |
+# 1:メニューid  2:メニュー名        3:食事種類        4:種類名    5:入居者価格
+# 6:ゲスト1価格 7:ゲスト2価格       8:スタッフ価格    9:朝食      10:昼食
+# 11:夕食       12:おやつ           13:期間From       14:期間To   15:色
+# 16:色表記     17:色名             18:表示順         19:喫食対象 20:グリーンハウス価格
+# 21:class      22:レストラン非表示 23:ドリンクタイプ
+awk '{print "LIST",$0}'   |
+# 1:LIST                2:メニューid  3:メニュー名        4:食事種類        5:種類名
+# 6:入居者価格          7:ゲスト1価格 8:ゲスト2価格       9:スタッフ価格    10:朝食
+# 11:昼食               12:夕食       13:おやつ           14:期間From       15:期間To
+# 16:色                 17:色表記     18:色名             19:表示順         20:喫食対象
+# 21:グリーンハウス価格 22:class      23:レストラン非表示 24:ドリンクタイプ
+self 1/NF-8 NF-6/NF       |
+LANG=C sort -k3,3 -k13,13 > $tmp-data
+# 1:LIST       2:メニューid        3:メニュー名      4:食事種類     5:種類名
+# 6:入居者価格 7:ゲスト1価格       8:ゲスト2価格     9:スタッフ価格 10:朝食
+# 11:昼食      12:夕食             13:おやつ         14:期間From    15:期間To
+# 16:色        17:色表記           18:表示順         19:喫食対象    20:グリーンハウス価格
+# 21:CLASS     22:レストラン非表示 23:ドリンクタイプ
+
+#cp $tmp-* /home/hands/work/okuda 
+if [ -s $tmp-data ] ; then
+  # 絞込み条件があったら絞り込む
+  cat $tmp-data |
+  if [ ! -z "${SearchShokushu}" -a "${SearchShokushu}" != "_" ] ; then
+    awk '$4=="'${SearchShokushu}'"'
+  else
+    cat -
+  fi |
+
+  if [ ! -z "${SearchShokuji}" -a "${SearchShokuji}" != "_" ] ; then
+
+     if [ "${SearchShokuji}" = "4" ] ; then
+       awk '$13!="@"'
+     elif [ "${SearchShokuji}" = "3" ] ; then
+       awk '$12!="@"'
+     elif [ "${SearchShokuji}" = "2" ] ; then
+       awk '$11!="@"'
+     elif [ "${SearchShokuji}" = "1" ] ; then
+       awk '$10!="@"'
+     else
+       cat -
+     fi
+  else
+    cat -
+  fi |
+
+  if [ ! -z "${SearchKikan}" -a "${SearchKikan}" != "_" ] ; then
+    if [ "${SearchKikan}" = "2" ] ; then
+      awk '$15!="@"&&$15<"'${today}'"'
+    elif [ "${SearchKikan}" = "1" ] ; then
+      awk '$15=="@"||$15>"'${today}'"'
+    else
+      cat -
+    fi
+  else
+    cat -
+  fi 
+
+else
+  :
+fi |
+cat -
+## 終了
+rm -f $tmp-*
+exit 0

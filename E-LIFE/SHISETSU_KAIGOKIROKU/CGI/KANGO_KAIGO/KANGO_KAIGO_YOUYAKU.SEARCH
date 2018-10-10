@@ -1,0 +1,203 @@
+#!/bin/bash
+#
+# KANGO_KAIGO_YOUYAKU.SEARCH : 看護介護要約検索用CGI
+#
+# Usage : KANGO_KAIGO_YOUYAKU.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+
+# 利用者マスタの準備
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$7<="'${today}'" && $8>="'${today}'"'                   |
+awk '$(NF-2)!=9'                                                  > $tmp-riyosha_status
+
+
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 利用者名の取得
+if [ -n "${riyosha_name}" -a "${riyosha_name}" != "_" ];then
+  :
+else
+  cat $tmp-riyosha_status                                           |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+  awk '$4=="'${unit}'"'                                             |
+  self 6                                                            |
+  LANG=C sort -k1,1                                                |
+  head -n 1                                                         > ${tmp}-riyosha_name
+  riyosha_name=$(cat $tmp-riyosha_name)
+fi
+if [ $MODE = "search_room" ];then
+  awk '$5=="'${room_select}'"{print $6,$7}' $tmp-riyosha_status |
+  LANG=C sort -k2,2 |
+  tail -n1 > $tmp-riyosha_name
+  riyosha_name=$(self 1 $tmp-riyosha_name)
+fi
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# ユーザーIDと施設IDを先にnamefileとして作る
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-base
+userid ${userid}
+shisetsu ${shisetsu}
+MODE ${MODE}
+FIN
+
+# データを検索する
+find ${pompa_dir}/KANGO_KAIGO_YOUYAKU/${riyosha_name} -maxdepth 1 -type f -name "${riyosha_name}.*" > ${tmp}-search_data
+searchname=$(cat ${tmp}-search_data   |
+             tarr                     |
+             awk '{print "1",$0}'     | 
+             LANG=C sort -k1,1n       |
+             getlast 1 1              |
+             delf 1)
+cat ${searchname} $tmp-base           > ${tmp}-search
+# サーチしたデータが無かった場合は利用者情報を初期表示
+furigana=$(cat ${riyosha_dir}/RIYOUSHA_MASTER | join0 key=1 <(echo ${riyosha_name}) | self 3)
+riyosha_kaigodo=$(cat ${riyosha_dir}/RIYOUSHA_KAIGOHOKEN | join0 key=1 <(echo ${riyosha_name}) | awk '$23<="'${today}'" && $28>="'${today}'"' | self 3)
+[ "${riyosha_kaigodo}" = "1" ] && kaigodo="要支援1"
+[ "${riyosha_kaigodo}" = "2" ] && kaigodo="要支援2"
+[ "${riyosha_kaigodo}" = "3" ] && kaigodo="要介護1"
+[ "${riyosha_kaigodo}" = "4" ] && kaigodo="要介護2"
+[ "${riyosha_kaigodo}" = "5" ] && kaigodo="要介護3"
+[ "${riyosha_kaigodo}" = "6" ] && kaigodo="要介護4"
+[ "${riyosha_kaigodo}" = "7" ] && kaigodo="要介護5"
+nyukyosha_shimei=$(cat ${riyosha_dir}/RIYOUSHA_KIHON | join0 key=1 <(echo ${riyosha_name}) | self 2)
+kaigodo_kikan=$(cat ${riyosha_dir}/RIYOUSHA_KAIGOHOKEN | join0 key=1 <(echo ${riyosha_name}) | awk '$23<="'${today}'" && $28>="'${today}'"' | self 23 28 | awk '{print $1"～"$2}')
+seibetsu_number=$(cat ${riyosha_dir}/RIYOUSHA_KIHON | join0 key=1 <(echo ${riyosha_name}) | self 4)
+[ "${seibetsu_number}" = "1" ] && seibetsu="男"
+[ "${seibetsu_number}" = "2" ] && seibetsu="女"
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU | self 1 2 > $tmp-gengou_master
+birthday=$(cat ${riyosha_dir}/RIYOUSHA_KIHON | join0 key=1 <(echo ${riyosha_name}) | self 5 6 7 8 | join1 key=1 $tmp-gengou_master |  awk '{print $2$3"年"$4"月"$5"日"}')
+nenrei=$(cat ${riyosha_dir}/RIYOUSHA_KIHON | join0 key=1 <(echo ${riyosha_name}) | self 9 | awk '{print "'${today}'",$1}' | lcalc '($1-$2)/10000' | marume -sage 1.0)
+# SHISETSU_RIYOSHA_STATUSの準備
+cat ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS                  |
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id
+join0 key=1 <(echo "${shisetsu}")                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$8>="'${today}'"'                   |
+LANG=C sort -k6,6n                                           |
+join0 key=6 <(echo $riyosha_name)                            > $tmp-riyosha_status
+kyoshitsu=$(cat $tmp-riyosha_status | self 5)
+# 種別は入居者か体験入居者か
+cat ${riyosha_dir}/RIYOUSHA_KEIYAKU                          |
+# 1:利用者ID 2:契約ID 3:施設ID 4:建屋ID 5:フロアID
+# 6:ユニットID 7:居室ID 8:入居時年齢 9:契約種類ID 10:契約日
+# 11:引渡し日 12:契約開始日 13:契約終了日 14:退去理由 15:退去理由詳細
+# 16:備考 ・・・
+join0 key=1 <(echo "${riyosha_name}")                        |
+awk '$3=="'${shisetsu}'"'                                    |
+tee ${work}/youyaku_keiyaku |
+awk '$9=="001" || $9=="002" || $9=="003" || $9=="004" || $9=="005" || $9=="006" || $9=="007"' |
+LANG=C sort -k12,12                |
+tail -n1                                                     |
+self 9                                                       > $tmp-keiyakushurui_id
+cat ${tbl_dir}/KEIYAKU_MASTER/KEIYAKU_SHURUI                 |
+awk '$1=="'${shisetsu}'" && $4!="9"{print $2,$3}'            > $tmp-keiyaku_shurui                             
+shubetsu=$(cat $tmp-keiyakushurui_id | join1 key=1 $tmp-keiyaku_shurui | self 2)
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-post
+furigana ${furigana}
+kaigodo ${kaigodo}
+nyukyosha_shimei ${nyukyosha_shimei}
+kaigodo_kikan ${kaigodo_kikan}
+seibetsu ${seibetsu}
+birthday ${birthday}
+nenrei ${nenrei}
+userid ${userid}
+shisetsu ${shisetsu}
+MODE ${MODE}
+floor ${floor}
+unit ${unit}
+riyosha_name ${riyosha_name}
+kyoshitsu ${kyoshitsu}
+shubetsu ${shubetsu}
+room_select ${kyoshitsu}
+FIN
+
+if [ -e $tmp-search ];then
+  cat $tmp-search
+else
+  :
+fi                   |
+cat - ${tmp}-post
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

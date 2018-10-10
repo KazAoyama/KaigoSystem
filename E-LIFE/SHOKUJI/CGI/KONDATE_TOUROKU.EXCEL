@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# KONDATE_TOUROKU.EXCEL : 献立登録EXCEL出力
+#
+# Usage : KONDATE_TOUROKU.EXCEL namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+# 施設名
+awk '$(NF-2)!=9 && $1=="'${shisetsu}'"' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON |
+self 2 > $tmp-shisetsu_name
+
+# 期間
+self 1 ${searchfile}  |
+LANG=C sort -u        > $tmp-kikan
+
+# POMPAデータ呼び出し
+
+START=$(head -n1 $tmp-kikan)
+END=$(tail -n1 $tmp-kikan)
+
+awk '$(NF-2)!=9' ${pompa_dir}/KONDATE_TOUROKU/${shisetsu}/KONDATE_TOUROKU_${START} > $tmp-searchfile
+
+cp $tmp-searchfile ${work}/searchkondate
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU                    |
+awk '$5!="9"{print $1,$2,$3,$4}'                                > $tmp-gengou_master
+# 和暦変換
+cat $tmp-gengou_master |
+awk '$3<="'${START}'"&&"'${START}'"<=$4' |
+awk '{print $2,"'${START}'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print $1$2"年"$3"月"$4"日"}'                          > $tmp-wareki_start
+cat $tmp-gengou_master |
+awk '$3<="'${END}'"&&"'${END}'"<=$4' |
+awk '{print $2,"'${END}'",substr($3,1,4)-1}'    |
+awk '{print $1,substr($2,1,4)-$3,int(substr($2,5,2)),int(substr($2,7,2))}'  |
+awk '{print "〜"$3"月"$4"日"}'                              > $tmp-wareki_end
+ycat $tmp-wareki_start $tmp-wareki_end          |
+awk '{print $1$2}'                              > $tmp-header_kikan
+
+# 日付
+echo "(日) (月) (火) (水) (木) (金) (土)" |
+tarr > $tmp-youbi
+ycat $tmp-kikan $tmp-youbi           |
+awk '{print substr($1,7,2)"日"$2,"@"}' |
+yarr > $tmp-date_data
+
+# 朝食
+awk '$2=="A"&&$3==1{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-tyoshoku_A
+
+awk '$2=="B"&&$3==1{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-tyoshoku_B
+
+# 昼食
+awk '$2=="A"&&$3==2{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-tyushoku_A
+
+awk '$2=="B"&&$3==2{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-tyushoku_B
+
+# 夕食
+awk '$2=="A"&&$3==3{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-yushoku_A
+
+awk '$2=="B"&&$3==3{print $0}' $tmp-searchfile  |
+awk '{print $4,$5,$6,$7,$8,$10"kcal/"$11"g"}'        |
+awk '{if($6~/_/){$6="@"};print}'    |
+tateyoko                            |
+awk '{print $0,"@"}' |
+sed 's/_/@/g'        |
+self 1 NF 2 NF 3 NF 4 NF 5 NF 6 NF 7 > $tmp-yushoku_B
+
+
+TEMPLA=${temp_dir}/KONDATE_TOUROKU_FORMAT.xls
+Ehexcel < ${TEMPLA} 1 c2 $tmp-shisetsu_name              \
+                    1 c4 $tmp-date_data                  \
+                    1 c5 $tmp-tyoshoku_A                 \
+                    1 c17 $tmp-tyushoku_A                \
+                    1 c29 $tmp-yushoku_A                 \
+                    1 c11 $tmp-tyoshoku_B                \
+                    1 c23 $tmp-tyushoku_B                \
+                    1 c35 $tmp-yushoku_B                 \
+                    1 h1 $tmp-header_kikan               > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/SHOKUJI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+rm -f ${tmp}-*
+exit 0
+

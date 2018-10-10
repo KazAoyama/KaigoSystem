@@ -1,0 +1,269 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.KESSHOKU 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+
+# ファイル初期化
+rm ${tmp}-err
+: > ${tmp}-while_kesshoku_keisan_result
+: > ${tmp}-while_kesshoku_count_result
+#---------------------------------------------------------------
+
+
+#---------------------------------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+# 処理月の欠食代の集計
+
+# 欠食のカウントを行う。
+# 前月末から連続して欠食している場合があるのでカウント処理月の前月と処理月のデータを使用して欠食カウントを行う
+# 参考：/home/hands/E-LIFE/SHOKUJI/CGI/KESSHOKUHYOU.SEARCH
+
+# ----------------------------------------
+# ファイルがなければここで終了
+[ ! -e ${seikyu_dir}/SHOKUJI/${shisetsu}/*/${seikyu_syori_month}/RIYOUSHA_KESSHOKU ] && exit 0
+[ $(cat ${seikyu_dir}/SHOKUJI/${shisetsu}/*/${seikyu_syori_month}/RIYOUSHA_KESSHOKU) = ":" ] && exit 0
+#[ $(awk '$(NF-2)!=9' ${seikyu_dir}/SHOKUJI/${shisetsu}/01/${seikyu_syori_month}/RIYOUSHA_KESSHOKU | gyo) = 0 ] && exit 0
+# ----------------------------------------
+
+# ----------------------------------------
+# 処理月の欠食データ
+ls -l ${seikyu_dir}/SHOKUJI/${shisetsu}/*/${seikyu_syori_month}/RIYOUSHA_KESSHOKU |
+self NF                |
+while read File ; do
+  cat ${File}   |
+  awk '$1!=":" && $(NF-2)!="9"'
+done                   |
+self 1/3 5 6           |
+# 1:利用者ID 2:施設ID 3:建屋ID 4:欠食年月日 5:欠食食事
+LANG=C sort            |
+awk '{print $0,"1"}' - > ${tmp}-this_month_kesshoku
+# 1:利用者ID    2:施設ID 3:建屋ID 4:欠食年月日 5:欠食食事種別
+# 6:欠食判定(1)
+# ----------------------------------------
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------------------------
+[ $(gyo ${tmp}-this_month_kesshoku) = 0 ] && echo ":" > ${tmp}-this_month_kesshoku
+cp ${tmp}-this_month_kesshoku ${work}/this_month_kesshoku
+# ----------------------------------------
+# 処理月前月最終日を取得
+last_month_date="$(mdate ${seikyu_syori_month}01/-1)"
+
+# 処理月前月最終日の欠食データ
+ls -l ${seikyu_dir}/SHOKUJI/${shisetsu}/*/${seikyu_syori_last_month}/RIYOUSHA_KESSHOKU_KAKUTEI |
+self NF                                      |
+while read File ; do
+  s_id="$(echo "${File}" | tr "/" " " | self NF-3)"
+  t_id="$(echo "${File}" | tr "/" " " | self NF-2)"
+  cat ${File}                  |
+  awk '{print $0,"'${s_id}'","'${t_id}'"}' - |
+  # 1:利用者ID 2:欠食年月日 3:欠食食事区分 4:欠食 5:施設ID
+  # 6:建屋ID
+  self 1 5/6 2/4               |
+  # 1:利用者ID 2:施設ID 3:建屋ID 4:欠食年月日 5:欠食食事区分
+  # 6:欠食
+  # -
+  # 6フィールド目の値を変換する
+  # ＠は除く、1と2(欠食カウント)は1に変換、KESSHOKU(欠食返金)は2に変換
+  awk '$6!="@"'                |
+  awk '{if($6=="1" || $6=="2")
+          {$6="1"}
+        else
+          {$6="2"};
+        print}'                >> ${tmp}-while_kesshoku_keisan_result
+
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(KESSHOKU)"
+
+# 処理月前月最終日の日付に絞る
+cjoin0 key=4 <(echo "${last_month_date}") ${tmp}-while_kesshoku_keisan_result |
+LANG=C sort                                                                  > ${tmp}-last_month_kesshoku
+# 1:利用者ID    2:施設ID 3:建屋ID 4:欠食年月日 5:欠食食事
+# 6:欠食判定(1か2)
+# ----------------------------------------
+cp ${tmp}-last_month_kesshoku ${work}/last_month_kesshoku__
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------------------------
+
+# ----------------------------------------
+# 欠食基本データの完成
+cat ${tmp}-this_month_kesshoku ${tmp}-last_month_kesshoku |
+LANG=C sort                                               > ${tmp}-kesshoku_kihon
+# 1:利用者ID    2:施設ID 3:建屋ID 4:欠食年月日 5:欠食食事種別
+# 6:欠食判定(1か2)
+# ----------------------------------------
+
+# ----------------------------------------
+# 欠食の回数を数える用意
+# -
+# キー(利用者IDから建屋まで)の処理月＋処理月前月最終日の日付食事種別一覧をつくる
+self 1/3 ${tmp}-kesshoku_kihon     |
+# 1:利用者ID 2:施設ID 3:建屋ID
+LANG=C sort -u                     |
+while read key s_id t_id; do
+  mdate ${seikyu_syori_month}m     |
+  tarr                             |
+  cat - <(echo "${last_month_date}") |
+  awk '{print "'${key}'","'${s_id}'","'${t_id}'",$0,"1","2","3"}' |
+  # 1:利用者ID    2:施設ID      3:建屋ID 4:年月日 5:食事種別(1)
+  # 6:食事種別(2) 7:食事種別(3)
+  LANG=C sort                      >> ${tmp}-while_kesshoku_count_result
+
+  # エラー判定
+  [ $(plus ${PIPESTATUS[@]}) -eq 0 ] || : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました(KESSHOKU)"
+cp ${tmp}-while_kesshoku_count_result ${work}/while_kesshoku_count_result
+
+tarr num=4 ${tmp}-while_kesshoku_count_result |
+# 1:利用者ID 2:施設ID 3:建屋ID 4:年月日 5:食事種別
+LANG=C sort                                   > ${tmp}-k_date_ichiran
+# ----------------------------------------
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------------------------
+
+# ----------------------------------------
+join2 +0 key=1/5 ${tmp}-kesshoku_kihon ${tmp}-k_date_ichiran |
+LANG=C sort                        |
+# 1:利用者ID 2:施設ID 3:建屋ID 4:欠食年月日 5:食事種別
+# 6:欠食判定
+
+# 欠食判定
+#   1:欠食
+#   2:欠食(返金が確定)
+#   0:欠食じゃない
+# 1:利用者ID 2:施設ID 3:建屋ID 4:欠食年月日 5:欠食判定
+
+##delf 4/5                           |
+## キーで横展開
+##yarr num=3                         |
+## 1:利用者ID                 2:施設ID                   3:建屋ID                   4:欠食判定(前月最終日朝食)       5:欠食判定(前月最終日昼食)
+## 6:欠食判定(前月最終日夕食) 7:欠食判定(処理月月初朝食) 8:欠食判定(処理月月初昼食) 9:欠食判定(処理月月初夕食)・・・
+
+#-------------
+
+# 20140415奥田修正 : 前月の最終日データを計算後、金額計算対象からはずす
+
+delf 5   |
+# 1:利用者ID 2:施設ID 3:建屋ID 4:欠食判定
+tateyoko |
+# 欠食3回目の欠食判定を2にする(返金対象)
+sed 's/ 1 1 1/ 1 1 2/g'            |
+tateyoko |
+# 対象月のみにする
+awk '$4~/^'${seikyu_syori_month}'/{print $1,$2,$3,$5}' |
+
+## キーで縦展開
+##tarr num=3                         |
+
+#--------
+
+cjoin0 key=4 <(echo "2") -         |
+# キーが利用者施設になる(利用者と建屋ごとに欠食カウント=>利用者ごとにまとめる)
+delf 3                             |
+# 1:利用者ID 2:施設ID 3:欠食判定
+LANG=C sort                        |
+count 1 3                          > ${tmp}-kesshoku_zeimae
+# 1:利用者ID 2:施設ID 3:欠食判定 4:返金回数
+# ----------------------------------------
+cp ${tmp}-kesshoku_zeimae ${work}/kesshoku_zeimae
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------------------------
+
+# ----------------------------------------
+# 欠食の明細データ作成
+# -
+# レコードの発生した年月日：代表して請求年月の月初とする
+# 行分類フラグ：10施設利用料明細行(実績だが施設利用料の食事と合わせて表示したいので)
+# 項目ID：食事実績はkesshoku
+# 金額：税抜1000円*回数*税
+# -
+# 処理月月初の税を適用(月額利用料でも月初を採用しているため)
+kesshoku_zei="$(awk '$2<="'${seikyu_syori_month}'" && "'${seikyu_syori_month}'"<=$3{print $1+1}' ${tmp}-ZEIRITSU)"
+
+cat ${tmp}-kesshoku_zeimae         |
+awk '{henkin_zeinuki=$4*1000*-1;
+      henkin_zeikomi=int(henkin_zeinuki*"'${kesshoku_zei}'");
+      henkin_zeigaku=henkin_zeikomi-henkin_zeinuki;
+      print $0,\
+            henkin_zeinuki,henkin_zeikomi,henkin_zeigaku,\
+            substr("'${seikyu_syori_month}'",1,4)"年"substr("'${seikyu_syori_month}'",5,2)"月分　3食連続欠食回数"$4"回"}' |
+# 1:利用者ID   2:施設ID   3:欠食判定 4:返金回数 5:税抜返金額
+# 6:税込返金額 7:返金税額 8:内訳1
+awk '{print $0,"kesshoku","'${seikyu_syori_month}'",\
+           "'${seikyu_syori_month}'01","10","0","1","'${current_time}'",\
+           "'${userid}'","_"}'     |
+# 1:利用者ID    2:施設ID        3:欠食判定 4:返金回数 5:税抜返金額
+# 6:税込返金額  7:返金税額      8:内訳1    9:項目ID   10:処理月
+# 11:請求年月日 12:行分類フラグ 13:0       14:1       15:更新時間
+# 16:更新者     17:_
+self 10 1  12 NF 9  NF 11 14 5  6  \
+     7  8  NF 13 NF NF NF NF NF NF \
+     NF NF NF NF 14 15 16          |
+# 1:処理月    2:利用者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額(税抜)      10:金額(税込)
+# 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備      18:予備        19:予備           20:予備
+# 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+LANG=C sort                        > ${tmp}-KESSHOKU_INPUT #集計対象!!
+# ------------------------------------------
+cp ${tmp}-KESSHOKU_INPUT ${work}/KESSHOKU_INPUT
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------------------------
+
+# --------------------
+# 列チェック
+
+[ "$(retu ${tmp}-KESSHOKU_INPUT)" != "27" ] && error_exit "処理中にエラーが発生しました(KESSHOKU)"
+[ "$(retu ${tmp}-KESSHOKU_INPUT | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(KESSHOKU)"
+[ "$(awk 'NF!="27"' ${tmp}-KESSHOKU_INPUT | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(KESSHOKU)"
+# --------------------
+#---------------------------------------------------------------
+exit 0
+

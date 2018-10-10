@@ -1,0 +1,209 @@
+#!/bin/bash
+#
+# NYUUINGAIHAKU_ICHIRAN.EXCEL
+# 入院外泊情報一覧検索
+#
+# Written by Y.kashiyama  : 2014/03/14
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namedata=$1
+searchfile=$2
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+data_dir="/DATA/E-LIFE"
+tbl_dir="${home_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+cat ${searchfile}                 |
+# 1:入院外泊ID         2:種別     3:種別名    4:居室        5:利用者(入居者)ID
+# 6:利用者(入居者)氏名 7:期間FROM 8:期間TO    9:出発地      10:帰宅先
+# 11:入院外泊先        12:備考    13:欠食登録 14:欠食登録名
+
+# 日付
+dayslash yyyy/mm/dd 7             |
+dayslash yyyy/mm/dd 8             |
+self 3 4 6/8 11/12 14             > $tmp-search_data
+# 1:種別名     2:居室 3:利用者(入居者)氏名 4:期間FROM 5:期間TO
+# 6:入院外泊先 7:備考 8:欠食登録
+
+# 施設の取得
+if [ -n "${Shisetsu}" -a "${Shisetsu}" != "_" ];then
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Shisetsu})                              |
+  self 2                                                       > ${tmp}-shisetsu_name
+else
+  echo "全て"
+  :                                                            > ${tmp}-shisetsu_name
+fi
+
+# 建屋の取得
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ];then
+  echo "${Tateya}"                                              |
+  awk '{if($1=="01"){print "シニア"}else{print "ケア"}}'        > ${tmp}-tateya_name
+else
+  :                                                             > ${tmp}-tateya_name
+fi
+
+# フロアの取得
+if [ -n "${Floor}" -a "${Floor}" != "_" ];then
+  echo "${Floor}" |
+  awk '{print $1"F"}'                                          > ${tmp}-floor_name
+else
+  echo "全て"                                                  > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${Unit}" -a "${Unit}" != "_" ];then
+  cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Unit})                                  |
+  self 2                                                       > ${tmp}-unit_name
+else
+  echo "全て"                                                  > ${tmp}-unit_name
+fi
+
+# 居室の取得
+if [ -n "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ];then
+  echo "${Kyoshitsu}" |
+  awk '{print $1}'                                             > ${tmp}-kyoshitsu
+else
+  echo "全て"                                                  > ${tmp}-kyoshitsu
+fi
+
+# 入居者の取得
+if [ -n "${Nyuukyosha}" -a "${Nyuukyosha}" != "_" ];then
+  cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Nyuukyosha})                            |
+  self 2                                                       > ${tmp}-nyuukyosya_name
+else
+  echo "全て"                                                  > ${tmp}-nyuukyosya_name
+fi
+
+
+##################
+# 種別
+###################
+#cat << FIN | LANG=C sort > ${tmp}-syubetsu_kari
+#0 全て
+#1 入院
+#2 外泊
+#FIN
+
+cat ${tbl_dir}/CONFIG/NYUUINGAIHAKU_SHUBETSU |
+awk 'BEGIN{print "_","全て"}{print $0}'      |
+LANG=C sort -k1,1 > ${tmp}-syubetsu_kari
+echo ${Shubetsu}                  |
+join1 key=1 ${tmp}-syubetsu_kari  |
+self 2                            > ${tmp}-syubetsu_status
+
+##################
+# 欠食登録
+###################
+cat << FIN | LANG=C sort > ${tmp}-kesshoku_kari
+_ 全て
+0 未登録
+1 登録済
+FIN
+echo ${Kesshoku} |
+join1 key=1 ${tmp}-kesshoku_kari |
+self 2                           > ${tmp}-kesshoku_status
+
+##################
+# 表示順
+###################
+cat << FIN | LANG=C sort > ${tmp}-hyouji_jun_kari
+1 居室番号
+2 入居者名
+3 期間（自）
+FIN
+echo ${Hyouji}                     |
+join1 key=1 ${tmp}-hyouji_jun_kari |
+self 2                             > ${tmp}-hyouji_jun
+
+##################
+# 昇順・降順
+###################
+cat << FIN | LANG=C sort > ${tmp}-shoujun_koujun_kari
+_ 全て
+1 昇順
+2 降順
+FIN
+echo ${Shoujyun}                       |
+join1 key=1 ${tmp}-shoujun_koujun_kari |
+self 2                                 > ${tmp}-shoujun_koujun
+
+
+# エクセル用に小分け
+# 施設名、建屋、フロア
+ycat ${tmp}-shisetsu_name ${tmp}-tateya_name ${tmp}-floor_name   |
+awk '{print $1,"@",$2,"@",$3}'                                   > $tmp-b4
+# ユニット、 居室、 入居者
+ycat ${tmp}-unit_name ${tmp}-kyoshitsu ${tmp}-nyuukyosya_name    |
+awk '{print $1,"@",$2,"@",$3}'                                   > $tmp-b5
+# 種別、欠食登録
+ycat ${tmp}-syubetsu_status ${tmp}-kesshoku_status               |
+awk '{print $1,"@",$2}'                                          > $tmp-b6
+# 契約開始日
+echo "${NyuuingaihakuKikanFrom} ${NyuuingaihakuKikanTo}"         |
+awk '{print $1,"@",$2}'                                          > $tmp-b7
+
+TEMPLA=${template_dir}/NYUUINGAIHAKU_ICHIRAN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-b4                 \
+                    1 b5 ${tmp}-b5                 \
+                    1 b6 ${tmp}-b6                 \
+                    1 b7 ${tmp}-b7                 \
+                    1 b8 ${tmp}-hyouji_jun         \
+                    1 b9 ${tmp}-shoujun_koujun     \
+                    1 a14 $tmp-search_data         > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/UNEI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+echo "${userid}_$$.download.xls"
+
+# 終了
+rm -f $tmp-*
+exit 0

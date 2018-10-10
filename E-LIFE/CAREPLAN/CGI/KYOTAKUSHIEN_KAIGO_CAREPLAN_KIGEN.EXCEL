@@ -1,0 +1,120 @@
+#!/bin/bash
+#
+# KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.EXCEL : ケアプラン再作成一覧EXCEL出力
+#
+# Usage : KYOTAKUSHIEN_KAIGO_CAREPLAN_KIGEN.EXCEL namefile datafile
+#
+# Written by J.mikmai(hands lab.inc)
+
+exec 2> /home/hands/E-LIFE/CAREPLAN/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/CAREPLAN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+temp_dir=${app_dir}/TEMPLATE
+download_dir=${app_dir}/DOWNLOAD
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+# 出力日
+day="$(date "+%Y%m%d")"
+echo 平成 ${day}  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-print_day
+
+# 抽出期間///////////////////////////////////////////////////////////
+lastyearmonth=$(mdate ${this_month}m/-11)
+gesho=$(mdate ${lastyearmonth}m |tateyoko |head -1)
+echo 平成 $gesho  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-gesho
+getumatu=$(mdate ${lastyearmonth}m |tateyoko |tail -1)
+echo 平成 $getumatu  |
+self 1 2.1.4 2.5.2 2.7 |
+awk '{print $1$2-1988"年"$3"月"$4"日"}' >${tmp}-getumatu
+
+cat ${tmp}-getumatu >>${tmp}-gesho
+cat ${tmp}-gesho |
+tateyoko |
+awk '{print $1"～"$2}'  >${tmp}-kikan
+
+# 対象者抽出///////////////////////////////////////////////////////
+# 作成日を抽出
+mdate ${lastyearmonth}m |
+tateyoko |
+join1 key=5 - $pompa_dir/CAREPLAN_KIGEN/CAREPLAN_DUMMY_DATA |
+tee $tmp-kari   |
+sed s/_/　/g |
+self 1 2 3 4  5.1.4 5.5.2 5.7 |
+awk '{print $1,$2,$3,$4,"平成"$5-1988"年"$6"月"$7"日"}' >${tmp}-dummy_data
+# 有効期限（３ヶ月後）を抽出
+for day in $(cat $tmp-kari |self 5);do
+  date --date "${day} + 3month" +"%F";
+done                                  |
+self 1.1.4 1.6.2 1.9 |
+awk '{print "～ ""平成"$1-1988"年"$2"月"$3"日"}'  >${tmp}-kigen
+ 
+# eval
+eval $(name-source ${namefile})
+
+#echo ${userid}  > ${tmp}-user
+echo "000056" >${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# ダミー領域、あとで書き直す部分//////////////////////////////////
+userid="000056"
+echo "グランクレール青葉台二丁目" >${tmp}-shisetu_name
+#//////////////////////////////////////////////////////////////////
+
+TEMPLA=${temp_dir}/CAREPLAN_KAIGO_KIGEN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-shisetu_name                 \
+                    1 h4 ${tmp}-print_day                    \
+                    1 b5 ${tmp}-kikan                        \
+                    1 a9 ${tmp}-dummy_data                   \
+                    1 f9 ${tmp}-kigen                        > ${download_dir}/${userid}_$$.download.xls
+#echo -e 'Content-Type: text/html; charset=UTF-8;\n\n'
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/CAREPLAN/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+# ファイル名をはく
+cat ${tmp}-html.html
+#echo "${userid}_$$.download.xls"
+rm -f ${tmp}-*
+exit 0
+

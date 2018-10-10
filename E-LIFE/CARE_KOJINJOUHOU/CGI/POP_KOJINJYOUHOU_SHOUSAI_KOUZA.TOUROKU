@@ -1,0 +1,563 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KOUZA.TOUROKU
+# 個人情報詳細　口座POPUP
+#
+# Written by E.Okuda 2013/12/16
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+thismonth=$(date +%Y%m)
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+data_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "result ng"
+  echo "message ${message}"
+  rm -f $tmp-*
+  exit 1
+}
+
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+#eval $(name-source ${namedata})
+name-source $namedata > $tmp-source
+source $tmp-source
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 利用者番号など
+RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+KOUZAID="$(nameread "KOUZAID" ${namedata})"
+KouzaSentaku=$(nameread     "KouzaSentaku"      $namedata)
+SeikyuuNaiyou=$(nameread "SeikyuuNaiyou" $namedata)
+
+awk '$6=="'${RIYOUSHAID}'"&&$8>="'${today}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/SHISETSU_RIYOUSHA_STATUS   > $tmp-shisetsu_riyousha_status
+Shisetsu=$(awk '$1=="'${shisetsu}'"{print $1}' $tmp-shisetsu_riyousha_status |head -1)
+
+if [ -z "${Shisetsu}" -a -s "$tmp-shisetsu_riyousha_status" ] ; then
+  Shisetsu=$(LANG=C sort -k7,8nr $tmp-shisetsu_riyousha_status | head -1)
+else
+  :
+fi
+
+# 口座選択で他入居者一括請求を選択している場合は、請求内容は選択不可なので"_"にする
+[ "${KouzaSentaku}" = "2" ] && SeikyuuNaiyou="_"
+
+NYUUKYOSHISETSUID=$(nameread "NYUUKYOSHISETSUID" $namedata)
+NYUUKYOTATEYAID=$(nameread   "NYUUKYOTATEYAID"      $namedata)
+NYUUKYOFLOOR=$(nameread      "NYUUKYOFLOOR"      $namedata)
+NYUUKYOUNITID=$(nameread     "NYUUKYOUNITID"      $namedata)
+
+# 日付と請求内容のチェック
+SeikyuuNaiyou=$(nameread "SeikyuuNaiyou" $namedata)
+SeikyuuYearFrom=$(nameread "SeikyuuYearFrom" $namedata)
+SeikyuuMonthFrom=$(nameread "SeikyuuMonthFrom" $namedata)
+SeikyuuYearTo=$(nameread "SeikyuuYearTo" $namedata)
+SeikyuuMonthTo=$(nameread "SeikyuuMonthTo" $namedata)
+
+SeikyuuFrom="$(echo "${SeikyuuYearFrom}${SeikyuuMonthFrom}" | sed 's/__*/_/g')"
+SeikyuuTo="$(echo "${SeikyuuYearTo}${SeikyuuMonthTo}" | sed 's/__*/_/g')"
+
+KokyakuNumber=$(nameread "KokyakuNumber" $namedata | han)
+[ "${KokyakuNumber}" = "_" ] && KokyakuNumber=""
+[ "${KouzaSentaku}" = "2" ] && KokyakuNumber="_"
+#--------------------------------------------------------------
+# 入力データのチェック
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者データが異常です。"
+#  [ -z "${NYUUKYOSHISETSUID}" -o "${NYUUKYOSHISETSUID}" = "_" ] && error_exit "利用者データが異常です。"
+#  [ -z "${NYUUKYOTATEYAID}" -o "${NYUUKYOTATEYAID}" = "_" ] && error_exit "利用者データが異常です。"
+  [ -z "${SeikyuuYearFrom}" -o "${SeikyuuYearFrom}" = "_" ] && error_exit "開始年月をを選択してください。"
+  [ -z "${SeikyuuMonthFrom}" -o "${SeikyuuMonthFrom}" = "_" ] && error_exit "開始年月をを選択してください。"
+  [ -z "${KokyakuNumber}" ] && error_exit "顧客番号を入力してください。"
+
+#--------------------------------------------------------------
+if [ "${SeikyuuTo}" != "_" ] ; then
+  echo "${SeikyuuFrom}" |
+  awk '{if($1!="_"&&$1>"'${SeikyuuTo}'"){print $0}}' > $tmp-nyuuryoku_nengetsu_error
+fi
+  [ -s $tmp-nyuuryoku_nengetsu_error ] && error_exit "請求期間終了月は請求開始月より後の月のみ入力可能です。"
+
+[ -z ${SeikyuuTo} -o ${SeikyuuTo} = "_" ] && SeikyuuTo="999999"
+
+cat ${pompa_dir}/RIYOUSHA_KOUZA |
+# 1:利用者(入居者)ID      2:口座ID                3:金融機関コード    4:支店コード          5:請求内容コード
+# 6:口座種類              7:口座番号              8:請求期間From      9:請求期間To          10:名義人
+# 11:備考                 12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求入居者施設 15:一括請求入居者建屋
+# 16:一括請求入居者口座ID 17:一括請求書フラグ
+
+# 利用者IDと施設・建屋が同じものを抽出
+#awk '$1=="'${RIYOUSHAID}'"&&$2=="'${NYUUKYOSHISETSUID}'"&&$3=="'${NYUUKYOTATEYAID}'"{print $0}' |
+# 口座IDが同じ(今回更新データ)は比較の対象にはならないのではずす
+#awk '$4!="'${KOUZAID}'"{print $0}'      > $tmp-riyousha_nyuukyosha_now
+
+# 利用者ＩＤが同じ方の口座データ(ただし自分の口座番号は除く)を取得
+awk '$1=="'${RIYOUSHAID}'"&&$2!="'${KOUZAID}'"&&$(NF-2)!="9"{print $0}'      > $tmp-riyousha_nyuukyosha_now
+
+# 登録済みデータがあり、今回の登録内容が1:全請求の場合、日付がかぶらないかチェック
+if [ -s $tmp-riyousha_nyuukyosha_now  -a  "${SeikyuuNaiyou}" = "1" ] ; then
+
+  cat $tmp-riyousha_nyuukyosha_now |
+  # 請求年月Fromが既存データの請求年月Toより前、あるいは既存データに請求年月Toが設定されていない
+  awk '{if($8=="'${SeikyuuFrom}'"){print $0}
+        else if($8<"'${SeikyuuFrom}'"&&$9>="'${SeikyuuFrom}'"){print $0}
+        else if($8>"'${SeikyuuFrom}'"&&$8<="'${SeikyuuTo}'"){print $0}
+        }' > $tmp-nengetsu_error
+  # 請求年月FROMが既存データFROMと同じ年月の場合エラー
+  # 請求年月FROMが既存データFROMより後で、既存データの終了年月より請求年月FROMが前の場合エラー
+  # 請求年月FROMが既存データFROMより前で、既存データの請求年月FROMが請求年月Toより前の場合エラー
+
+# 登録済みデータがあり、今回の登録内容が2:施設請求の場合、1全請求・2施設請求のデータで日付チェック
+elif [ -s $tmp-riyousha_nyuukyosha_now  -a "${SeikyuuNaiyou}" = "2" ] ; then
+  cat $tmp-riyousha_nyuukyosha_now |
+  # 請求内容が1か2で、請求年月Fromが既存データの請求年月Toより前、あるいは既存データに請求年月Toが設定されていない
+  awk '$5!="3"{print $0}' |
+  awk '{if($8=="'${SeikyuuFrom}'"){print $0}
+        else if($8<"'${SeikyuuFrom}'"&&$9>="'${SeikyuuFrom}'"){print $0}
+        else if($8>"'${SeikyuuFrom}'"&&$8<="'${SeikyuuTo}'"){print $0}
+        }' > $tmp-nengetsu_error
+
+# 登録済みデータがあり、今回の登録内容が3:居宅訪問介護請求の場合、1全請求・3居宅訪問介護のデータで日付チェック
+elif [ -s $tmp-riyousha_nyuukyosha_now  -a "${SeikyuuNaiyou}" = "3" ] ; then
+  cat $tmp-riyousha_nyuukyosha_now |
+  # 請求内容が1か3で、請求年月Fromが既存データの請求年月Toより前、あるいは既存データに請求年月Toが設定されていない
+  awk '$5!="2"{print $0}' |
+  awk '{if($8=="'${SeikyuuFrom}'"){print $0}
+        else if($8<"'${SeikyuuFrom}'"&&$9>="'${SeikyuuFrom}'"){print $0}
+        else if($8>"'${SeikyuuFrom}'"&&$8<="'${SeikyuuTo}'"){print $0}
+        }' > $tmp-nengetsu_error
+fi
+
+
+  [ -s $tmp-nengetsu_error ] && error_exit "請求年月に重複するデータがあります。"
+
+# 口座選択で新規だった場合
+if [ ${KouzaSentaku} = "0" ] ; then
+
+  KinyuuKikanName=$(nameread "KinyuuKikanName" $namedata)
+  ShitenName=$(nameread "ShitenName" $namedata)
+  KouzaShurui=$(nameread "KouzaShurui" $namedata)
+  KouzaNumber=$(nameread "KouzaNumber" $namedata | sed 's/口座番号//g' |awk '$1~/^[0-9]*$/{print $0}')
+  KouzaName=$(nameread "KouzaName" $namedata| sed 's/　/_/g'| sed 's/ /_/g' | sed 's/ﾄｷｭｳﾀﾛｳ(半角カナ)//g'  | han )
+# awk '$1~/^[ｱ-ﾝ,ｦ,-,0-9,A-Z,ﾞ,ﾟ,｢,｣, ,.,(,),\/,\\]+$/')
+  KouzaBikou="_" 
+  KouzaNameKanji1=$(nameread "KouzaNameKanji1" $namedata)
+  KouzaNameKanji2=$(nameread "KouzaNameKanji2" $namedata)
+
+  [ -z "${KinyuuKikanName}" -o "${KinyuuKikanName}" = "_" ] && error_exit "金融機関を選択してください。"
+  [ -z "${ShitenName}" -o "${ShitenName}" = "_" ] && error_exit "金融機関支店を選択してください。"
+  [ "${KouzaNumber}" = "_" ] && error_exit "口座番号を入力してください。"
+  [ -z "${KouzaNumber}" ] && error_exit "口座番号の値が不正です。"
+#  [ -z $(echo "${KouzaNumber}" | awk 'length($0)==7{print $0}') ] && error_exit "口座番号の桁数を確認してください。"
+  [ -z "${KouzaName}" -o "${KouzaName}" = "_" ] && error_exit "名義人名を入力してください。"
+  [ -z "${KouzaNameKanji1}" -o "${KouzaNameKanji1}" = "_" ] && error_exit "名義人名(苗字漢字)を入力してください。"
+  [ -z "${KouzaNameKanji2}" -o "${KouzaNameKanji2}" = "_" ] && error_exit "名義人名(名前漢字)を入力してください。"
+
+  KouzaNameKanji=$(echo "${KouzaNameKanji1}　${KouzaNameKanji2}")
+  IkkatsuNyuukyoshaID="_"
+#IkkatsuNyuukyoshaShisetsu="_"
+#IkkatsuNyuukyoshaTateya="_"
+  IkkatsuNyuukyoshaKouzaID="_"
+  SeikyuushoFlg="0"
+  TaRiyoushaId="_"
+
+# 他入居者口座選択
+elif [ "${KouzaSentaku}" = "1" ] ; then
+
+  SeikyuushoFlg="0"
+  TaRiyoushaId=$(nameread "SelectTashaKouza1" $namedata | awk '{if($1!="_"){print substr($1,1,8)}else{print $1}}')
+  TaRiyoushaKouzaId=$(nameread "SelectTashaKouza1" $namedata | awk '{if($1!="_"){print substr($1,9,3)}else{print $1}}')
+
+  [ -z "${SeikyuushoFlg}" -o "${SeikyuushoFlg}" = "_" ] && SeikyuushoFlg="0"
+
+  cat ${pompa_dir}/RIYOUSHA_KOUZA |
+  awk '$1=="'${TaRiyoushaId}'"&&$2=="'${TaRiyoushaKouzaId}'"{print $0}' > $tmp-tanyuukyosha_kouza
+# 1:利用者(入居者)ID      2:口座ID                3:金融機関コード    4:支店コード          5:請求内容コード
+# 6:口座種類              7:口座番号              8:請求期間From      9:請求期間To          10:名義人
+# 11:備考                 12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ
+
+  [ -s $tmp-tanyuukyosha_kouza ] || error_exit "他入居者の口座を選択してください。"
+
+  KinyuuKikanName=$(awk '{print $3}' $tmp-tanyuukyosha_kouza)
+  ShitenName=$(awk '{print $4}' $tmp-tanyuukyosha_kouza)
+  KouzaShurui=$(awk '{print $6}' $tmp-tanyuukyosha_kouza)
+  KouzaNumber=$(awk '{print $7}' $tmp-tanyuukyosha_kouza)
+  KouzaName=$(awk '{print $10}' $tmp-tanyuukyosha_kouza)
+  KouzaBikou="_"
+#  KouzaBikou=$(nameread "KouzaBikou" $namedata) 
+  KouzaNameKanji=$(awk '{print $15}' $tmp-tanyuukyosha_kouza)
+
+# 他入居者一括請求
+elif [ "${KouzaSentaku}" = "2" ] ; then
+
+ SeikyuushoFlg=$(nameread "SeikyuushoFlg" $namedata)
+ TaRiyoushaId=$(nameread "SelectTashaKouza2" $namedata | awk '{if($1!="_"){print substr($1,1,8)}else{print $1}}')
+
+ [ -z "${TaRiyoushaId}" -o "${TaRiyoushaId}" = "_" ] && error_exit "一括請求する相手（入居者）を選択してください。"
+
+  cat ${pompa_dir}/RIYOUSHA_KOUZA |
+  awk '$1=="'${TaRiyoushaId}'"{print $0}' |
+# 1:利用者(入居者)ID      2:口座ID                3:金融機関コード    4:支店コード          5:請求内容コード
+# 6:口座種類              7:口座番号              8:請求期間From      9:請求期間To          10:名義人
+# 11:備考                 12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ   
+  self 8 9  >  $tmp-tanyuukyosha_kouza_kikan
+
+  ok_seikyuutaishou_from=$(self 1 $tmp-tanyuukyosha_kouza_kikan | LANG=C sort | head -1)  
+  ok_seikyuutaishou_to=$(self 2 $tmp-tanyuukyosha_kouza_kikan | LANG=C sort | tail -1)
+
+  [ "${ok_seikyuutaishou_from}" -le "${SeikyuuFrom}" ] || error_exit "請求開始年月が選択した入居者の口座期間より前のため登録できません。"
+  [ "${ok_seikyuutaishou_to}" -ge "${SeikyuuTo}" ] || error_exit "請求終了年月が選択した入居者の口座期間より先のため登録できません。"
+
+fi
+
+# 請求確定チェック
+if [ -s $tmp-shisetsu_riyousha_status ] ; then
+   kakutei_nengetsu="$(cat /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |LANG=C sort -k1,1 | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+#  kakutei_nengetsu_2="$(mdate "${kakutei_nengetsu}"m/-1)"
+else
+  :
+fi
+
+[ -z "${kakutei_nengetsu}" ] && kakutei_nengetsu="190001"
+# 新規の口座データ
+#  [ "${SeikyuuFrom}" -lt "${kakutei_nengetsu}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"
+#  [ "${SeikyuuTo}" -lt "${kakutei_nengetsu_2}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"
+
+cat ${pompa_dir}/RIYOUSHA_KOUZA |
+awk '$1=="'${RIYOUSHAID}'"&&$2=="'${KOUZAID}'"{print $0}' > $tmp-now_kouza
+
+## 口座選択が居宅でなく請求確定年月の値が取得できていたら確定チェック
+#if [ "${SeikyuuNaiyou}" != "3" -a ! -z "${kakutei_nengetsu}" ] ; then
+#  # 口座変更
+#  if [ -s $tmp-now_kouza ] ; then
+#    Now_SeikyuuFrom="$(awk '{print $8}' $tmp-now_kouza)"
+#    Now_SeikyuuTo="$(awk '{print $9}' $tmp-now_kouza)"
+#
+#    [ "${Now_SeikyuuFrom}" != "${SeikyuuFrom}" -a "${SeikyuuFrom}" -le "${kakutei_nengetsu}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"
+#    [ "${Now_SeikyuuTo}" != "${SeikyuuTo}" -a "${SeikyuuTo}" -lt "${kakutei_nengetsu}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"  
+#
+#    :
+#   # 口座新規
+# else
+#
+#   [ "${SeikyuuFrom}" -le "${kakutei_nengetsu}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"
+#   [ "${SeikyuuTo}" -lt "${kakutei_nengetsu}" ] && error_exit "請求確定済み期間の口座は登録・変更することができません。"
+#
+#   :
+#  fi
+#else
+# :
+#fi
+
+
+
+#-------------------
+# 顧客番号チェック   #20141031追記
+#--------------------
+# 他入居者一括請求以外なら
+if [ "${KouzaSentaku}" != "2" ] ; then
+# # 顧客番号が6桁の数字じゃなかったらエラー
+# echo "${KokyakuNumber}"  |
+# awk '$1~/^[0-9][0-9][0-9][0-9][0-9][0-9]$/'      > $tmp-kokyaku_number_ok
+
+# 顧客番号が数字じゃなかったらえらー
+echo "${KokyakuNumber}"  |
+awk '$1~/^[0-9]*$/'      > $tmp-kokyaku_number_ok
+
+ [ -s $tmp-kokyaku_number_ok ] || error_exit "顧客番号は数字のみ入力可能です。"
+
+  # 顧客番号が"0"以外だったら
+  if [ "${KokyakuNumber}" != "0" ] ; then
+   # 顧客番号重複チェック(顧客番号が同じで削除フラグじゃない)
+    awk '$16=="'${KokyakuNumber}'"&&$(NF-2)!="9"' ${pompa_dir}/RIYOUSHA_KOUZA > $tmp-kokyaku_number_choufuku
+   # 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+   # 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+   # 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+   # 16:顧客番号
+  else
+    :
+  fi
+  
+   # 重複する口座があったら、同じ口座か(金融機関・支店・口座種類・口座番号)チェック
+   if [ -s $tmp-kokyaku_number_choufuku ] ; then
+     # 同じ口座のものは登録おｋ
+     cat $tmp-kokyaku_number_choufuku |
+  # 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+  # 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+  # 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+  # 16:顧客番号
+  
+     awk '{print $1$2,$3$4$6$7,$0}'   |
+     # 編集元口座はもちろん対象からはずす
+     awk '$1!="'${RIYOUSHAID}'""'${KOUZAID}'"'  |
+  #   awk '$1!="'${RIYOUSHAID}'"&&$2!="'${KOUZAID}'"'    |
+     # 同じ口座(金融機関・支店・口座種類・口座番号)だったら対象からはずす
+     awk '$2!="'${KinyuuKikanName}'""'${ShitenName}'""'${KouzaShurui}'""'${KouzaNumber}'"' |
+     delf 1 2                         >  $tmp-kokyaku_number_choufuku2
+  #   awk '$3!="'${KinyuuKikanName}'"&&$4!="'${ShitenName}'"&&$6!="'${KouzaShurui}'"&&$7!="'${KouzaNumber}'"' > $tmp-kokyaku_number_choufuku2
+     
+     # それでも顧客番号が重複していたら、請求期間のチェック
+     if [ -s $tmp-kokyaku_number_choufuku2 ] ; then
+       cat $tmp-kokyaku_number_choufuku2 |
+#       awk '$9>="'${SeikyuuFrom}'"&&$$8<="'${SeikyuuTo}'"'  |
+       awk '{if($8>="'${SeikyuuFrom}'"&&$8<="'${SeikyuuTo}'"){print}
+        else if($9>="'${SeikyuuFrom}'"&&$9<="'${SeikyuuTo}'"){print}
+        else if($8<="'${SeikyuuFrom}'"&&$9>="'${SeikyuuTo}'"){print}
+            }'  |
+         if [ -z ${TaRiyoushaId} -o ${TaRiyoushaId} = "_" ] ; then
+           cat -  > $tmp-kokyaku_number_error
+         else
+           awk '$1!="'${TaRiyoushaId}'"'   > $tmp-kokyaku_number_error
+         fi 
+  
+#cp $tmp-* /home/hands/work/okuda
+       [ ! -s $tmp-kokyaku_number_error ] || kokyakumei="$(head -1 $tmp-kokyaku_number_error | join1 key=1 ${pompa_dir}/RIYOUSHA_MASTER - | self 2)"
+       [ ! -s $tmp-kokyaku_number_error ] || error_exit "顧客番号が"${kokyakumei}"様と重複しているため登録できません。"
+     else
+      :
+     fi
+   else
+    :
+   fi
+  else
+    :
+  fi
+
+
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+#--------------------------------------------------------------
+# 作成テーブル  利用者口座テーブル
+#--------------------------------------------------------------
+
+# 口座IDが空(新規)の場合
+if [ -z "${KOUZAID}" -o "${KOUZAID}" = "_" ] ; then
+  ## 口座IDの発番 ##
+   # 今回取得するID数
+   last_no="1"
+
+  mkdir -p ${kanri_dir}/RIYOUSHA_KOUZA_ID
+  [ -e ${kanri_dir}/RIYOUSHA_KOUZA_ID/${RIYOUSHAID} ] || echo "001" > ${kanri_dir}/RIYOUSHA_KOUZA_ID/${RIYOUSHAID}
+  get_no ${last_no} ${kanri_dir}/RIYOUSHA_KOUZA_ID/${RIYOUSHAID} > $tmp-kouza_id
+  kouza_id="$(cat $tmp-kouza_id)"
+
+else
+  kouza_id="$(echo "${KOUZAID}")"
+fi
+
+
+  #######################
+  # 1:利用者口座テーブル
+  #######################
+
+# 郵貯の時は強制的に口座を0(普通当座なし)にする
+if [ "${KinyuuKikanName}" = "9900" ] ; then
+  KouzaShurui="0"
+elif [ "${KinyuuKikanName}" != "9900" -a "${KouzaShurui}" = "0" ] ; then
+  KouzaShurui="1"
+else
+  :
+fi
+
+# 新規
+if [ "${KouzaSentaku}" = "0" ] ; then
+  # 追加データの作成
+  echo "${RIYOUSHAID}" "${kouza_id}" "${KinyuuKikanName}" "${ShitenName}" "${SeikyuuNaiyou}" "${KouzaShurui}" "${KouzaNumber}" "${SeikyuuFrom}" "${SeikyuuTo}" "${KouzaName}" "${KouzaBikou}" "0" "_" "${SeikyuushoFlg}" "${KouzaNameKanji}" "${KokyakuNumber}" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_kouza_input
+# 1:利用者(入居者)ID 2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類         7:口座番号              8:請求期間From      9:請求期間To        10:名義人
+# 11:備考            12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字)
+# 16:予備1           17:予備2                18:予備3            19:予備4            20:予備5
+# 21:削除フラグ      22:更新時間             23:更新者
+
+#cp $tmp-* /home/hands/work/okuda
+
+# 他入居者口座
+elif [ "${KouzaSentaku}" = "1" ] ; then
+
+  echo "${RIYOUSHAID}" "${kouza_id}" "${KinyuuKikanName}" "${ShitenName}" "${SeikyuuNaiyou}" "${KouzaShurui}" "${KouzaNumber}" "${SeikyuuFrom}" "${SeikyuuTo}" "${KouzaName}" "${KouzaBikou}" "0" "${TaRiyoushaId}" "${SeikyuushoFlg}" "${KouzaNameKanji}" "${KokyakuNumber}" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_kouza_input
+
+# 他入居者一括請求
+elif [ "${KouzaSentaku}" = "2" ] ; then
+
+  echo "${RIYOUSHAID}" "${kouza_id}" "_" "_" "2" "_" "_" "${SeikyuuFrom}" "${SeikyuuTo}" "_" "_" "1" "${TaRiyoushaId}" "${SeikyuushoFlg}" "1" "_" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}" > $tmp-riyousha_kouza_input
+
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_KOUZA RIYOUSHA_KOUZA
+FIN
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_kouza RIYOUSHA_KOUZA 2 22 23 ${pompa_dir} ${input_dir} 
+FIN
+
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+ error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+#cp $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+ cp -p ${pompa_dir}/RIYOUSHA_KOUZA ${data_dir}/RIYOUSHA_KOUZA
+
+#----------------------
+# 顧客番号の更新
+cat /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/KOKYAKU_NUMBER_LIST |
+awk '$NF=="'${KokyakuNumber}'"{print $0,$NF+1}' |
+delf NF-1                                       > $tmp-new_kokyakunumber_gyo
+
+if [ -s $tmp-new_kokyakunumber_gyo ] ; then
+  cat /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/KOKYAKU_NUMBER_LIST $tmp-new_kokyakunumber_gyo |
+  LANG=C sort                                     |
+  getlast 1 2                                     > $tmp-kokyaku_number_list_new
+
+  mkdir -p /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/back/KOKYAKU_NUMBER_LIST
+  cp -p /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/KOKYAKU_NUMBER_LIST /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/back/KOKYAKU_NUMBER_LIST/KOKYAKU_NUMBER_LIST_${cur_time}
+  cat $tmp-kokyaku_number_list_new > /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/KOKYAKU_NUMBER_LIST
+else
+ :
+fi
+#---------------------------
+
+
+  echo "result ok"
+
+## 終了
+rm -f $tmp-*
+exit 0

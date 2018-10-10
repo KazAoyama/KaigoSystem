@@ -1,0 +1,106 @@
+#!/bin/bash
+#
+# DENKI_SUIDOU_TORIKOMI.SEARCH : 電気水道課金
+#
+# Written by Mikami
+
+
+
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/DENKI_SUIDOU_JYOUHOU.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#function error_exit {
+#  rm -f $tmp-*
+#  exit 0
+#}
+
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+
+# 引数設定
+namefile=${1}
+checkfile=${2}
+searchfile=${3}
+downloadfile=${4}
+
+# パラメータの取得
+dd bs=${CONTENT_LENGTH} > ${tmp}-param
+if ismime ${tmp}-param ; then
+  cat << FIN | self 1/NF > ${tmp}-id_list
+  MODE
+  userid
+  Shisetsu_select
+  Tateya_select
+  Floor_select
+  Unit_select
+  kikan_month_select
+FIN
+
+  # リストに従いしゅとく
+  : > ${tmp}-name
+  while read ID ; do
+    echo "${ID} $(mime-read ${ID} ${tmp}-param)" >> ${tmp}-name
+  done < ${tmp}-id_list
+else
+  cgi-name -d_ -i_ ${tmp}-param > $tmp-name
+fi
+
+eval $(name-source ${tmp}-name)
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+echo ${kikan_month_select} >${tmp}-select_month
+echo ${syubetsu_select} >${tmp}-syubetsu_select
+#--------------------------------------------------------------
+select_month="$(cat ${tmp}-select_month)"
+
+
+#--------------------------------------------------------------
+# 検索処理
+if [ ${syubetsu_select} = "1"  ]; then 
+  cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/DENKI_CYOUHYOU.0003.${select_month} | 
+  comma  4 5 6 7 8 9 10                                                         > ${tmp}-riyousha_hyouji
+  # calsed
+  check_list_display=""
+cat << FIN > ${tmp}-calsed
+###check_list_display### ${check_list_display}
+FIN
+  # HTMLの作成
+  awk '/ajax_check_list_table_start/,/ajax_check_list_table_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f ${tmp}-calsed - |
+  mojihame -l"Check_list_table" - ${tmp}-riyousha_hyouji > ${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+
+else
+
+  cat /home/hands/E-LIFE/KEIRI/POMPA/DENKI_SUIDOU/0003/MAIN-DATA/SUIDOU_CYOUHYOU.0003.${select_month} |
+  comma  4 5 6 7 8 9                                                             > ${tmp}-riyousha_hyouji2
+  # calsed
+  check_list_display_2=""
+cat << FIN > ${tmp}-calsed
+###check_list_display_2### ${check_list_display_2}
+FIN
+  # HTMLの作成
+  awk '/ajax_check_list_table_2_start/,/ajax_check_list_table_2_end/' ${html_dir}/DENKI_SUIDOU_TORIKOMI2.html |
+  calsed -f ${tmp}-calsed - |
+  mojihame -l"Check_list_table_2" - ${tmp}-riyousha_hyouji2 > ${tmp}-html
+  echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+  cat - ${tmp}-html
+
+fi
+# --------------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0

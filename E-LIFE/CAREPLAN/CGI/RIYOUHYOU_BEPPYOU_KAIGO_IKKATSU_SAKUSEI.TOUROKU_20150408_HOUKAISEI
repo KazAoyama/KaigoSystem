@@ -1,0 +1,954 @@
+#!/bin/bash
+#
+# RIYOUHYOU_BEPPYOU_KAIGO_IKKATSU_SAKUSEI.TOUROKU
+# 利用票、利用要別表一括作成（介護）用CGI
+#
+# Written by K.Aoyama :20140422
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+
+#--------------------------------------------------------------
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+kyufuwariai=90
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth=$curmonth
+
+curday=$hdTaishouYear$taishoumonth"01"
+
+# 日付週設定
+mdate -a ${hdTaishouYear}${taishoumonth}m |
+delf NF |
+awk '{print substr($1,7,8),$2}' |
+lcalc '$1,$2,$1/7-1' |
+awk '{if($3<0){$3="0"};print $0}' |
+marume +age 3.0 |
+lcalc '$1,$2,$3+1' |
+awk '{if($2=="7"){$2="0"};if($3=="1"){$3="a"}else if($3=="2"){$3="b"}else if($3=="3"){$3="c"}else if($3=="4"){$3="d"}else{$3="e"};print $0}' |
+# 1:日にち 2:週曜日設定値
+awk '{print $1,$3$2}' |
+delf 1 |
+# 日数分の週曜日設定
+yarr   > $tmp-week_youbi
+
+# 展開情報にくっつけるため、変数にセットする
+week_youbi_fmt=$(cat $tmp-week_youbi | sed 's/ /@/g')
+
+mdate ${hdTaishouYear}${taishoumonth}m |
+tateyoko |
+awk '{print $0,"_"}' |
+delf 1 |
+tateyoko |
+sed 's/ /,/g'    > $tmp-kara_jisseki_fmt
+
+kara_jisseki_fmt=$(cat $tmp-kara_jisseki_fmt)
+
+
+
+# 地域単価を抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGOHOKEN_TIIKI_TANKA          |
+awk '$4<="'$curday'"&&$5>="'$curday'"{print $1,$2,$3}'    |
+LANG=C sort -k1,2                                         > ${tmp}-base_tiikitanka
+
+# 時期によって有効な事業所マスタの年月日を出す。
+ls -F ${KYOUTSU_TBL}/JIGYOUSHO_MASTER |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-master_dir_date
+
+master_dir_date=$(cat $tmp-master_dir_date)
+
+# 事業所マスタを抽出
+cat ${KYOUTSU_TBL}/JIGYOUSHO_MASTER/${master_dir_date}/JIGYOUSHO_MASTER             |
+# 1:事業者コード 2:サービス事業者タイプ 3:地域区分 4:事業所名 5:割引率
+self 1 4 7 3 9                                               |
+LANG=C sort -k2,3 > ${tmp}-jigyousho_base
+
+cat ${tmp}-jigyousho_base                                 |
+# 1:事業者コード 2:サービス事業者タイプ 3:地域区分 4:地域単価 5:事業所名 6:割引率
+join1 key=2/3 ${tmp}-base_tiikitanka -                    |
+LANG=C sort -k1,3  |
+self 1 4 5 6  > ${tmp}-jigyousho_master
+
+# 展開情報設定の加算部分を抽出(通所介護)
+cat ${data_dir}/CAREPLAN/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO |
+awk '$19!="9"'        |
+LANG=C sort -k1n,2n   |
+getlast 1 1           |
+awk '{print $2}' > ${tmp}-latest_date
+
+cat ${data_dir}/CAREPLAN/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO |
+awk '$19!="9"'        |
+LANG=C sort -k2,2     |
+join1 key=2 ${tmp}-latest_date      |
+# 1:事業者ID 2:加算
+awk '$1=="'$Riyoushaid'"&&$3!="_"{print $8,$12}'   |
+LANG=C sort -k1,1                                  > $tmp-tsusho_add
+
+# サービス加算マスタを抽出
+cat ${KYOUTSU_TBL}/JIGYOUSHO_MASTER/${master_dir_date}/JIGYOUSHO_ADD |
+LANG=C sort -k1,1                          |
+# 1:事業所ＩＤ 2:加算サービスコード 3:加算サービス名 4:集計単位 5:計算単位
+# 6:単位数
+delf NF-2/NF                               > $tmp-service_add_master
+# 集計単位によって分ける
+cat $tmp-service_add_master                |
+awk '$4=="m"'                              |
+delf NF                                    > $tmp-service_add_master_monthly
+cat $tmp-service_add_master                |
+awk '$4=="d"&&$8=="0"'                     |
+delf NF                                    > $tmp-service_add_master_taishougai_daily
+cat $tmp-service_add_master                |
+awk '$4=="d"&&$8=="1"'                     |
+LANG=C sort -k1,1                          |
+join2 +_ key=1 $tmp-tsusho_add             |
+# 以下の加算は展開情報設定で設定済みのため除く
+# 通所介護機能訓練加算
+awk '$3!="5050"&&$3!="5051"&&$3!="5052"'     |
+# 通所介護入浴加算
+awk '$3!="5301"'     |
+# 通所栄養改善加算
+awk '$3!="5605"'     |
+# 通所口腔機能向上加算
+awk '$3!="5606"'     |
+awk '$3!="5607"'     |
+# 通所若年性認知症加算
+awk '$3!="6109"'     |
+delf 2 NF                                   > $tmp-service_add_master_taishounai_daily
+
+# 日ごとの対象内加算は事業所マスタは考慮しない(2014/10/15) -> 外した（2014/10/16）
+#echo "_" "_" "_" "_" "_" "_" "_" > $tmp-service_add_master_taishounai_daily
+
+
+# 時期によって有効なサービスコードの年月日を出す。
+ls -F ${KYOUTSU_TBL}/SERVICECODE |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-dir_date
+
+dir_date=$(cat $tmp-dir_date)
+
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKAIGO    |
+self 2 3 4 NF > ${tmp}-servicecode
+
+# 訪問入浴サービス区分レコード取得
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_HOUMONNYUYOKU    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 訪問看護
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKANGO    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 通所介護
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TSUSHOKAIGO    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 短期入所生活介護
+# 1:ID     2:事業所タイプ     3:サービスコード   4:サービス名   5:施設等の区分
+# 6:多床室 7:ユニット型準個室 8:ユニットケア減算 9:夜間体制減算 10:超過
+# 11:欠員  12:介護度          13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TANKI_NYUKYO_SEIKATSU_KAIGO    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 短期入所療養介護老短
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTAN    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 短期入所療養介護療養型
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTANIGAI    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 訪問リハビリ
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONRIHABIRI    |
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:施設タイプ 6:同一
+self 2 3 4 NF >> ${tmp}-servicecode
+# 通所リハビリ
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名 5:最小時間
+# 6:最大時間 7:超過フラグ   8:人欠フラグ     9:施設タイプ 10:介護度
+# 11:単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TSUSHORIHABIRI    |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 福祉用具レンタル
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_FUKUSHIYOUGU_TAIYO   |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 居宅療養管理
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_KYOTAKU_RYOUYOU_KANRI |
+self 2 3 4 NF >> ${tmp}-servicecode
+# 定期巡回・随時対応
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設タイプ
+# 6:介護度 7:単位               8:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TEIKI_ZUIJI_HOUMONKAIGO |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 夜間訪問介護
+# 1:ID   2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設タイプ
+# 6:単位 7:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_YAKAN_HOUMONKAIGO |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 認知症通所介護
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:最小時間
+# 6:最大時間 7:施設等の区分       8:超過               9:欠員             10:介護度
+# 11:単位    12:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHI_TSUSHOKAIGO |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 小規模多機能
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:同一
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_SHOUKIBO_TAKINOU  |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 認知症対応型（短期利用外）
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設等の区分
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHISHOU_TAIOU_TANKIGAI   |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 認知症対応型（短期利用）
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設等の区分
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHISHOU_TAIOU_TANKI |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 複合型サービス
+# 1:ID   2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:介護度
+# 6:超過 7:欠員               8:単位               9:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_FUKUGOUGATA |
+self 2 3 4 NF-1 >> $tmp-servicecode
+# 加算
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_ADD_KAIGO            |
+self 1 2 3 NF-1 >> ${tmp}-servicecode
+
+cat ${tmp}-servicecode |
+LANG=C sort -k1,2      > $tmp-servicecode_sort
+
+
+
+# 今月の最初の日付
+firstday=$(mdate ${hdTaishouYear}${hdTaishouMonth}m | tateyoko | head -1)
+# 今月の最後の日付
+lastday=$(mdate ${hdTaishouYear}${hdTaishouMonth}m | tateyoko | tail -1)
+
+#--------------------------------------------------------------
+# マスター取得
+#--------------------------------------------------------------
+# ケアマネ情報
+cat ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KYOTAKU_JIGYOUSHO        |
+awk '$1=="'$Riyoushaid'"&&$6<="'$lastday'"&&$7>="'$lastday'"&&$(NF-2)!="9"{print $4}'  |
+tail -1    > $tmp-user_caremanager
+
+if [ "$(gyo $tmp-user_caremanager)" = "0" ] ; then
+  CareManager=$USER_ID
+else
+  CareManager=$(cat $tmp-user_caremanager)
+fi
+
+
+# 介護保険情報
+# 1:利用者ID            2:介護度              3:保険者名                    4:認定年和暦              5:認定年
+# 6:認定月              7:認定日              8:認定年月日西暦              9:認定有効期間開始年和暦  10:認定有効期間開始年
+# 11:認定有効期間開始月 12:認定有効期間開始日 13:認定有効期間開始年月日西暦     14:認定有効期間>終了年和暦 15:認定有効期間終了年
+# 16:認定有効期間終了月 17:認定有効期間終了日 18:認定有効期間終了年月日西暦
+#self 1 3 5 14/28 ${home_dir}/CAREPLAN/TMP/RIYOUSHA_KAIGOHOKEN   |
+self 1 3 5 14/28 ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN   |
+awk '$1=="'$Riyoushaid'"{print $0}'   >     $tmp-riyousha_kaigohoken_master
+
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${curday}'"&&$18>="'${curday}'"'                  |
+# 1:利用者ID               2:介護度 3:保険者名 4:認定年月日 5:有効期間開始年月日
+# 6:認定有効期間終了年月日
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-cur_riyousha_kaigohoken
+
+# 月初めの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${firstday}'"&&$18>="'${firstday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-first_riyousha_kaigohoken
+
+# 月終わりの介護度を取得
+cat $tmp-riyousha_kaigohoken_master                           |
+awk '$13<="'${lastday}'"&&$18>="'${lastday}'"'              |
+self 1/3 8 13 18                        |
+LANG=C sort -k5,6                       |
+getlast 1 1                             > $tmp-last_riyousha_kaigohoken
+
+prekaigodo=$(self 2 $tmp-first_riyousha_kaigohoken)
+curkaigodo=$(self 2 $tmp-cur_riyousha_kaigohoken)
+postkaigodo=$(self 2 $tmp-last_riyousha_kaigohoken)
+
+
+flg="0"
+if [ ${prekaigodo} -eq ${postkaigodo} ] ; then
+   kaigodo=$curkaigodo
+elif [ ${prekaigodo} -gt ${postkaigodo}  ] ; then
+   kaigodo=$prekaigodo
+   flg="1"
+else
+   kaigodo=$postkaigodo
+   flg="1"
+fi
+# 介護度マスタを抽出
+cat ${KYOUTSU_TBL}/CONFIG/KAIGODO_MASTER                  |
+awk '$4<="'$curday'"&&$5>"'$curday'"{print $1,$2,$3}'     |
+LANG=C sort -k1,1                                         > ${tmp}-base_kaigodo
+
+kaigokijungendogaku=$(awk '$1=="'${kaigodo}'"{print $3}' ${tmp}-base_kaigodo)
+
+
+: > ${tmp}-riyouhyou_base
+
+
+# 展開情報の取得
+# データの最新日付を取得
+cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+awk '$19!="9"'        |
+LANG=C sort -k1n,2n   |
+getlast 1 1           |
+awk '{print $2}'      > ${tmp}-latest_date
+
+cat ${apdata_dir}/CAREPLAN_KAIGO/${Riyoushaid}/TENKAIJOUHOU_SETTEI_KAIGO   |
+awk '$19!="9"'        |
+LANG=C sort -k1n,2n   |
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'      |
+join1 key=2 ${tmp}-latest_date - |
+tee $tmp-tsusho_kasan_rec |
+# 1:利用者ID          2:作成日付         3:サービスコード種類 4:サービスコード項目 5:表示順
+# 6:サービス内容      7:介護保険対象区分 8:供給者ID           9:サービス実施週曜日 10:サービス開始時刻
+# 11:サービス終了時刻 12:加算            13:サービス回数      14:単位              15:単位総数
+# 16:利用者負担額     17:総請求額        18:付随費用
+LANG=C sort -k5n,5n              > ${tmp}-riyouhyou_record
+
+# 通所介護事業所の追加レコード
+self 1 2 3 ${home_dir}/TBL/JIGYOUSHO_MASTER/${master_dir_date}/JIGYOUSHO_ADD   |
+# 1:事業所ID 2:サービスコード 3:加算名 4:加算区分
+# 認知通所介護対応（2014/10/16）
+awk '{if($2=="5050"||$2=="5051"||$2=="5052"){$4="機"}else if($2=="5605"){$4="栄"}else if($2=="5606"&&$3~"栄養"){$4="栄"}else if($2=="5606"&&$3~"口腔"){$4="口"}else if($2=="5607"){$4="口"}else if($2=="6109"){$4="若"}else if($2=="5301"){$4="入"}else{$4="_"};print $1,$2,$4}'  |
+self 1 3 2 |
+LANG=C sort -k1,2  > $tmp-jigyousho_add_tsusho
+
+cp $tmp-jigyousho_add_tsusho $work_dir/jigyousho_add_tsusho
+cp $tmp-tsusho_kasan_rec $work_dir/kasan_rec
+
+: > $tmp-tsusho_kaigo_add
+# 通所介護加算レコード
+# 通所介護機能訓練加算
+cat $tmp-tsusho_kasan_rec |
+awk '$12~"機"{print $8,"機",$0}' >> $tmp-tsusho_kaigo_add
+# 通所介護機能訓練加算
+cat $tmp-tsusho_kasan_rec |
+awk '$12~"栄"{print $8,"栄",$0}' >> $tmp-tsusho_kaigo_add
+# 通所介護機能訓練加算
+cat $tmp-tsusho_kasan_rec |
+awk '$12~"口"{print $8,"口",$0}' >> $tmp-tsusho_kaigo_add
+# 通所介護機能訓練加算
+cat $tmp-tsusho_kasan_rec |
+awk '$12~"若"{print $8,"若",$0}' >> $tmp-tsusho_kaigo_add
+# 通所介護機能訓練加算
+cat $tmp-tsusho_kasan_rec |
+awk '$12~"入"{print $8,"入",$0}' >> $tmp-tsusho_kaigo_add
+
+cp $tmp-tsusho_kaigo_add $work_dir/tsusho_kaigo_add
+
+cat $tmp-tsusho_kaigo_add |
+LANG=C sort -k1,2         |
+# 1:供給者ID           2:加算区分            3:加算サービスコード 4:利用者ID          5:作成日付
+# 6:サービスコード種類 7:サービスコード項目  8:表示順             9:サービス内容      10:介護保険対象区分
+# 11:供給者ID          12:サービス実施週曜日 13:サービス開始時刻  14:サービス終了時刻 15:加算
+# 16:サービス回数      17:単位               18:単位総数          19:利用者負担額     20:総請求額
+# 21:付随費用
+join1 key=1/2 $tmp-jigyousho_add_tsusho   |
+self 4/6 3 8/21 |
+awk '{print $0,"1","'${sdaytime}'","'${USER_ID}'"}'  |
+LANG=C sort -k1n,1n  >> ${tmp}-riyouhyou_record
+
+cp ${tmp}-riyouhyou_record $work_dir/kasan_org_record
+
+cat ${tmp}-riyouhyou_record   |
+self 1/8 10/NF 9              |
+# 週曜日フォーマットをくっつける
+awk '{print $0,"'${week_youbi_fmt}'"}'    |
+tee $work_dir/ikkatsu_work0         |
+# フォーマットを値にする
+sed 's/@/ /g'                 |
+# 展開情報設定の値とフォーマットを比較するため、縦に
+tarr num=21                   |
+tee $work_dir/ikkatsu_work1         |
+# 展開情報設定とフォーマットの比較
+awk '{if($21~$22){$23="1"}else{$23="_"};print $0}'   |
+# 福祉用具レンタル対応（展開情報設定でチェックがなくても自動的に1日目にチェック）
+rank ref=1/8                  |
+tee $work_dir/ikkatsu_work2         |
+awk '{if($4=="17"&&$1=="1"){$24="1"};print $0}' |
+awk '{if($4=="17"){$13="1"};print $0}' |
+tee $work_dir/ikkatsu_work3         |
+delf 1                        |
+delf 21 22                    |
+yarr num=20                   |
+# 利用票用に整形
+sed 's/ /,/21g'               |
+# 1:利用者ID     2:ケアプラン作成日   3:サービス種類      4:サービスコード 5:順番
+# 6:サービス内容 7:介護保険対象フラグ 8:事業者ID          9:開始時間       10:終了時間
+# 11:加算        12:回数              13:限度額内対象単位 14:総単位        15:利用者費用
+# 16:請求額      17:付随費用 18:有効フラグ 19:処理日付 20:ユーザID 21:週曜日設定
+tee $work_dir/riyouhyou_record1    |
+# 1:利用者ID          2:対象年             3:対象月             4:サービスコード種類 5:サービスコード項目
+# 6:実績確定フラグ    7:サービス予定日回数 8:サービス予定月回数 9:サービス実績日回数 10:サービス実績月回数
+# 11:サービス開始時間 12:サービス終了時間  13:供給者コード      14:介護保険フラグ    15:付随費用
+# 16:日割り開始日     17:日割り終了日      18:予定確定フラグ
+awk '{print $1,"'${hdTaishouYear}'","'${taishoumonth}'",$3,$4,$13,"_",$21,$12,
+"'${kara_jisseki_fmt}'","_",$9,$10,$8,$7,$17,"_","_","_"}' |
+LANG=C sort -k4,5             |
+join1 key=4/5 $tmp-servicecode_sort |
+# 名前ははじく
+delf 6                              |
+awk '{if($6!="0"){$7=$6};print $0}' |
+delf 6                              |
+# 1:利用者ID            2:対象年            3:対象月             4:サービスコード種類 5:サービスコード項目
+# 6:単位                7:実績確定フラグ    8:サービス予定日回数 9:サービス予定月回数 10:サービス実績日回数
+# 11:サービス実績月回数 12:サービス開始時間 13:サービス終了時間  14:供給者コード      15:介護保険フラグ
+# 16:付随費用           17:日割り開始日     18:日割り終了日      19:予定確定フラグ
+rank                                |
+# 1:順番                2:利用者ID            3:対象年            4:対象月             5:サービスコード種類
+# 6:サービスコード項目  7:単位                8:実績確定フラグ    9:サービス予定日回数 10:サービス予定月回数
+# 11:サービス実績日回数 12:サービス実績月回数 13:サービス開始時間 14:サービス終了時間  15:供給者コード
+# 16:介護保険フラグ     17:付随費用           18:日割り開始日     19:日割り終了日      20:予定確定フラグ
+self 1/6 8/16 7 17/NF               |
+# 1:順番                2:利用者ID          3:対象年             4:対象月             5:サービスコード種類
+# 6:サービスコード項目  7:実績確定フラグ    8:サービス予定日回数 9:サービス予定月回数 10:サービス実績日回数
+# 11:サービス実績月回数 12:サービス開始時間 13:サービス終了時間  14:供給者コード      15:介護保険フラグ
+# 16:単位               17:付随費用         18:日割り開始日      19:日割り終了日      20:予定確定フラグ
+awk '{print $0,"1","'$sdaytime'","'${USER_ID}'"}' > $tmp-ikkatu_riyouhyou_record
+# 利用票レコード作成完了
+cp $tmp-ikkatu_riyouhyou_record $tmp-riyouhyou_record_kaigo_input
+cp $tmp-ikkatu_riyouhyou_record $tmp-riyouhyou_kyoutsu_kaigo_input
+cp $tmp-ikkatu_riyouhyou_record $work_dir/riyouhyou_record_ikkatsu
+
+echo "${Riyoushaid}" "${hdTaishouYear}" "${taishoumonth}" "_" "_" "${CareManager}" "1" "$sdaytime" "${USER_ID}" > $tmp-ikkatu_riyouhyou_base
+# 利用票基本作成完了
+cp $tmp-ikkatu_riyouhyou_base $tmp-riyouhyou_base_kaigo_input
+
+
+cat $tmp-ikkatu_riyouhyou_record    |
+# 1:利用者ID           2:対象年 3:対象月             4:サービスコード種類 5:供給者コード
+# 6:サービスコード項目 7:単位   8:サービス予定月回数 9:付随費用           10:介護保険フラグ
+self 2 3 4 5 14 6 16 9 17 15        |
+lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$7*$8,$9,$10'   |
+self 4 6 0                    |
+LANG=C sort -k1,2             |
+tee ${work_dir}/beppyou0      |
+join1 key=1/2 ${tmp}-servicecode_sort -  |
+# 単位をはじく
+delf 1 2 4                     |
+# 1:サービスコード名 2:利用者ID       3:利用年 4:利用月 5:事業者サービス区分
+# 6:事業者ID         7:サービスコード 8:単位   9:回数   10:単位合計
+# 11:付随費用 12:介護保険
+self 2 3 4 5 6 7 1 8 9 10 11 12  |
+# 1:利用者ID       2:利用年           3:利用月 4:事業者サービス区分 5:事業者ID
+# 6:サービスコード 7:サービスコード名 8:単位   9:回数               10:単位合計
+# 11:付随費用 12:介護保険
+tee ${work_dir}/beppyou1 |
+LANG=C sort -k5,5 |
+join1 key=5 ${tmp}-jigyousho_master -   |
+# 1:利用者ID 2:利用年     3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名称 8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位    12:回数      13:単位合計 14:付随費用 15:介護保険対象
+LANG=C sort -k1,5 |
+awk '{if($8=="_"){$8=0};print $0}'      |
+lcalc '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13*(100-$8)/100,$14,$15'      |
+marume 13.0       > $tmp-beppyou_add_work0
+
+cp $tmp-beppyou_add_work0 $work_dir/beppyou_add_work0
+
+# 加算レコードの追加（基準内回数単位）
+cat $tmp-beppyou_add_work0    |
+# 1:利用者ID 2:利用年   3:利用月 4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名 8:割引率 9:単位               10:回数
+self 1 2 3 4 5 6 7 8 11 12         |
+sm2 1 8 9 10                   |
+LANG=C sort -k5,5             |
+# 1:利用者ID           2:利用年         3:利用月   4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位 9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:単位    14:回数
+tee $work_dir/kasan_daily_tmp1   |
+self 5 1/NF                      |
+join1 key=1 - $tmp-service_add_master_taishounai_daily       |
+# 1:利用者ID            2:利用年          3:利用月     4:事業者サービス区分 5:事業者ID
+# 6:地域単価            7:事業所名        8:割り引き率 9:単位               10:回数
+# 11:加算サービスコード 12:加算サービス名 13:集計単位  14:計算単位          15:単位数
+delf 1                                            |
+self 1/5 11/15 6/10                               |
+# 1:利用者ID           2:利用年         3:利用月      4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位    9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:割り引き率 14:単位              15:回数
+# 16:新合計単位数
+tee $work_dir/numly_check                       |
+#awk '{if($9=="a"){tmpg=$10*(100-$13)/100;tmpg1=int(tmpg*10);if(substr(tmpg1,length(tmpg1),1)<5){goukeitani=int(tmpg)*$15;}else{goukeitani=int(tmpg+1)*$15;}}else{tmpg=$10*$14*(100-$13)/100;tmpg1=int(tmpg*10);if(substr(tmpg1,length(tmpg1),1)<5){goukeitani=int(tmpg)*$15;$10=int($10*$14)}else{goukeitani=int(tmpg+1)*$15;$10=int($10*$14)+1}};print $0,goukeitani}'   |
+awk '{if($9=="p"){$10=$10*$14};print $0}'   |
+marume 10.0                      |
+awk '{$16=$10*(100-$13)/100;print $0}'   |
+tee $work_dir/kasan_check0       |
+marume 16.0        |
+tee $work_dir/kasan_check1       |
+awk '{$17=$16*$15; print $0}'    |
+delf 16            |
+marume 16.0        |
+self 1/5 11/13 6 7 10 15 16 |
+awk '{print $0,"0","1"}'    > $tmp-kasan_numly_record_kijunnai
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー"
+
+# 加算レコードの追加（基準外回数単位）
+cat $tmp-beppyou_add_work0    |
+# 1:利用者ID 2:利用年   3:利用月 4:事業者サービス区分 5:事業者ID
+# 6:地域単価 7:事業所名 8:割引率 9:単位               10:回数
+self 1 2 3 4 5 6 7 8 11 12         |
+sm2 1 8 9 10                   |
+LANG=C sort -k5,5             |
+# 1:利用者ID           2:利用年         3:利用月   4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位 9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:単位    14:回数
+tee $work_dir/kasan_daily_tmp2   |
+self 5 1/NF                      |
+join1 key=1 - $tmp-service_add_master_taishougai_daily       |
+# 1:利用者ID            2:利用年          3:利用月     4:事業者サービス区分 5:事業者ID
+# 6:地域単価            7:事業所名        8:割り引き率 9:単位               10:回数
+# 11:加算サービスコード 12:加算サービス名 13:集計単位  14:計算単位          15:単位数
+# 加算計算時に既にある加算は省く（4000は緊急時加算）
+awk '$11!="4000"&&$11!="4001"&&$11!="4002"'  |
+# 加算計算時に既にある加算は省く（610*は提供体制強化）
+awk '$4=="15"&&($11!="6101"&&$11!="6102"&&$11!="6103")'  |
+delf 1                                            |
+self 1/5 11/15 6/10                               |
+# 1:利用者ID           2:利用年         3:利用月      4:事業者サービス区分 5:事業者ID
+# 6:加算サービスコード 7:加算サービス名 8:集計単位    9:計算単位           10:単位数
+# 11:地域単価          12:事業所名      13:割り引き率 14:単位              15:回数
+# 16:新合計単位数
+tee $work_dir/numly_check2                       |
+#awk '{if($9=="a"){tmpg=$10*(100-$13)/100;tmpg1=int(tmpg*10);if(substr(tmpg1,length(tmpg1),1)<5){goukeitani=int(tmpg)*$15;}else{goukeitani=int(tmpg+1)*$15;}}else{tmpg=$10*$14*(100-$13)/100;tmpg1=int(tmpg*10);if(substr(tmpg1,length(tmpg1),1)<5){goukeitani=int(tmpg)*$15;$10=int($10*$14)}else{goukeitani=int(tmpg+1)*$15;$10=int($10*$14)+1}};print $0,goukeitani}'   |
+awk '{if($9=="p"){$10=$10*$14};print $0}'   |
+marume 10.0                      |
+awk '{$16=$10*(100-$13)/100;print $0}'   |
+tee $work_dir/kasan_check2       |
+marume 16.0        |
+tee $work_dir/kasan_check3       |
+awk '{$17=$16*$15; print $0}'    |
+delf 16            |
+marume 16.0        |
+self 1/5 11/13 6 7 10 15 16 |
+# 限度額計算をスキップするため、基準内限度額を合計単位数、基準外限度額を０でセット。
+awk '{print $0,"0","1",$13,"0"}'    > $tmp-kasan_numly_record_kijungai
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー"
+
+cat $tmp-beppyou_add_work0 $tmp-kasan_numly_record_kijunnai  |
+LANG=C sort -k6nr,6nr    |
+# 1:利用者ID              2:利用年          3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価              7:事業所名        8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位                 12:回数           13:単位合計 14:付随費用          15:介護保険区分
+# 16:基準内限度額対象単位 17:基準外対象単位
+# 区分基準限度単位数を超えた場合、地域単価が高いサービスから単位数を割り振る
+# 介護保険外の場合は区分外支給限度額にそのまま単位をセットし、区分内支給限度額を０にする
+awk 'BEGIN {gendogaku='${kaigokijungendogaku}'};$15=="1"{gendogaku=gendogaku-$13;if(gendogaku>0){kijunnaigendogaku=$13;kijungaigendogaku=0}else{kijunnaigendogaku=$13+gendogaku;if(kijunnaigendogaku<0){kijunnaigendogaku=0};kijungaigendogaku=$13-kijunnaigendogaku}print $0,kijunnaigendogaku,kijungaigendogaku}'    > $tmp-gendogaku_anbun_syuuryou
+
+cat $tmp-gendogaku_anbun_syuuryou $tmp-kasan_numly_record_kijungai |
+# 1:利用者ID        2:利用年   3:利用月    4:事業者サービス区分 5:事業者ID
+# 6:地域単価        7:事業所名 8:割引率    9:サービスコード     10:サービスコード名
+# 11:単位           12:回数    13:単位合計 14:付随費用          15:基準内限度額対象単位
+# 16:基準外対象単位
+self 1/14 16/NF               |
+tee ${work_dir}/beppyou_gendo |
+LANG=C sort -k1,7  |
+# 介護保険対象は区分限度額内、利用者負担は10%＋区分限度額超の対象分。
+# 介護保険給付基準内限度額＝基準内限度対象単位*地域単価*90/100 切り下げ
+# 利用者請求基準内限度額＝基準内限度対象単位*地域単価－介護保険給付基準内限度額
+##awk '{$17=int($13*$6);kaigotaisho=int($15*$6*(100-'${kyufuwariai}')/100);$18=int($15*$6)-kaigotaisho;if($18-int($18)>0){$18=$18+1};$19=kaigotaisho;$20=kaigotaisho+int($16*$6);$21=int($11*(100-$8)/100);print $0}'  |
+#awk '{$17=int($13*$6);kijunnaigendogaku=int($15*$6);kaigotaisho=int(kijunnaigendogaku*'${kyufuwariai}'/100);$18=kaigotaisho;$19=kijunnaigendogaku-kaigotaisho;$20=int($16*$6);$21=$11*(100-$8)/100;print $0,"n"}'  |
+awk '{$17=int($13*$6);kijunnaigendogaku=int($15*$6);kaigotaisho=int(kijunnaigendogaku*'${kyufuwariai}'/100);$18=kaigotaisho;$19=kijunnaigendogaku-kaigotaisho;$20=$17-kijunnaigendogaku;$21=$11*(100-$8)/100;print $0,"n"}'  |
+tee $work_dir/kasan_check2  |
+marume 21.0              |
+tee ${work_dir}/beppyou4 |
+self 22 1/11 21 12/20   |
+sm4 2 9 10 13 14 22 |
+awk '{if(NF==21){print "j",$0}else{print $0}}'  |
+tee ${work_dir}/beppyou5 |
+# 1:明細表示コード                2:利用者ID              3:利用年          4:利用月  5:事業者サービス区分
+# 6:事業者ID                  7:地域単価              8:事業所名        9:割引率  10:サービスコード
+# 11:サービスコード名         12:単位                 13:単位（割引後） 14:回数   15:単位合計
+# 16:付随費用                 17:基準内限度額対象単位 18:基準外対象単位 19:請求額 20:介護保険給付額
+# 21:個人負担額（保険対象内） 22:個人負担額（全額） 23:種類限度額超 24:種類限度額内 25:パーセント
+###### 種類限度額内単位は単位額合計をセット
+awk '{print $0,"0",$15,"1"}'  >  $tmp-beppyou_add_work1
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表レコード作成エラー２"
+
+# 加算レコードの追加（月単位）
+cat $tmp-beppyou_add_work1    |
+getlast 2 6                   |
+self 6 1/NF                   |
+LANG=C sort -k1,1             |
+tee $work_dir/monthly_add1    |
+# 1:事業者コード       2:明細表示コード            3:利用者ID              4:利用年          5:利用月
+# 6:事業者サービス区分 7:事業者ID                  8:地域単価              9:事業所名        10:割引率
+# 11:サービスコード    12:サービスコード名         13:単位                 14:単位（割引後） 15:回数
+# 16:単位合計          17:付随費用                 18:基準内限度額対象単位 19:基準外対象単位 20:請求額
+# 21:介護保険給付額    22:個人負担額（保険対象内） 23:個人負担額（全額）   24:種類限度額超   25:種類限度額内
+# 26:パーセント        27:加算サービスコード       28:加算サービス名       29:集計単位       30:計算単位
+# 31:単位数 32:介護度
+join1 key=1 - $tmp-service_add_master_monthly      |
+tee $work_dir/monthly_add2    |
+self 2/7 27/NF 8/26           |
+# 1:明細表示コード  2:利用者ID                  3:利用年                4:利用月          5:事業者サービス区分
+# 6:事業者ID        7:加算サービスコード        8:加算サービス名        9:集計単位        10:計算単位
+# 11:単位数         12:介護度                   13:地域単価             14:事業所名       15:割引率
+# 16:サービスコード 17:サービスコード名         18:単位                 19:単位（割引後） 20:回数
+# 21:単位合計       22:付随費用                 23:基準内限度額対象単位 24:基準外対象単位 25:請求額
+# 26:介護保険給付額 27:個人負担額（保険対象内） 28:個人負担額（全額）   29:種類限度額超   30:種類限度額内
+# 31:パーセント
+# パーセンテージの場合の四捨五入計算
+awk '{if($10=="p"){addtani=$21*$11;$31=$11;}else{addtani=$11};$18=addtani;$1="a";$16=$7;$17=$8;print $0}' |
+marume 18.0                   |
+# 介護度チェックをここでしたほうがいいかも
+delf 12                       |
+self 1/6 12/NF                |
+# 1:明細表示コード            2:利用者ID              3:利用年          4:利用月        5:事業者サービス区分
+# 6:事業者ID                  7:地域単価              8:事業所名        9:割引率        10:サービスコード
+# 11:サービスコード名         12:単位                 13:単位（割引後） 14:回数         15:単位合計
+# 16:付随費用                 17:基準内限度額対象単位 18:基準外対象単位 19:請求額       20:介護保険給付額
+# 21:個人負担額（保険対象内） 22:個人負担額（全額）   23:種類限度額超   24:種類限度額内 25:パーセント
+# 加算レコードの計算、生成
+####### 種類限度額内単位は基準内限度単位をセット
+awk '{$13=int($12*(100-$9)/100);$14="1";$15=$13*$14;$16="0";if(($17-$15)>0){$17=$15;$18="0"}else{$17="0";$18=$15};$19=int($15*$7);$20=int($19*'${kyufuwariai}'/100);kaigotaisho=$19-$20;$21=kaigotaisho;$22=int($18*$7);$23="0";$24=$15;print $0}'                     >  $tmp-kasan_monthly_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー2"
+
+cat $tmp-beppyou_add_work1 $tmp-kasan_monthly_record |
+LANG=C sort -k7,7nr -k6,6 -k1,1r -k10,10    |
+awk '{if(NF==24){print $0,"1"}else{print $0}}'    |
+awk '{print $0,"'${kyufuwariai}'"}'   |
+self 2/26 1             |
+# 1:順番                    2:利用者ID              3:対象年                4:対象月        5:サービス種類
+# 6:事業者ID                7:地域単価              8:事業所名              9:割引率        10:サービスコード
+# 11:サービスコード名       12:単位                 13:単位(割引後)         14:回数         15:単位合計
+# 16:付随費用               17:基準内限度額対象単位 18:基準外限度額対象単位 19:請求額       20:介護保険給付額
+# 21:個人負担額(保険対象内) 22:個人負担額(全額)     23:種類限度額超         24:種類限度額内 25:介護保険対象フラグ
+# 26:給付割合               27:明細コード
+rank                    |
+# 1:順番                  2:利用者ID              3:対象年                4:対象月            5:サービス種類コード
+# 6:事業者ID              7:事業者名              8:サービスコード        9:サービスコード名  10:単位
+# 11:割引率               12:割引後単位           13:回数                 14:単位合計         15:種類支給内限度額単位
+# 16:種類支給超限度額単位 17:区分支給内限度額単位 18:区分支給超限度額単位 19:地域単価         20:請求額
+# 21:給付割合             22:介護保険給付額       23:個人請求額           24:個人負担額(全額) 25:明細コード
+self 1/5 6 8 10 11 12 9 13 14 15 17 18 23 24 7 19 26 20 21 22 27  |
+# sm4で付与された"@"をとる
+sed 's/@\+/_/g'    |
+awk '{print $0,"1","'$sdaytime'","'${USER_ID}'"}'                 >  ${tmp}-riyouhyoubeppyou_record
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "利用票別表加算レコード作成エラー3"
+
+# 利用票別表レコード作成完了
+cp ${tmp}-riyouhyoubeppyou_record $tmp-riyouhyoubeppyou_record_input
+cp ${tmp}-riyouhyoubeppyou_record $tmp-riyouhyoubeppyou_record2_input
+cp ${tmp}-riyouhyoubeppyou_record $work_dir/riyouhyoubeppyou_record
+
+echo "${Riyoushaid}" "${hdTaishouYear}" "${taishoumonth}" "$CareManager" "1" "$sdaytime" "${USER_ID}" > $tmp-riyouhyou_beppyou_base_input
+# 利用票別表基本作成完了
+cp $tmp-riyouhyou_beppyou_base_input $work_dir/riyouhyou_beppyou_input
+cp $tmp-riyouhyou_beppyou_base_input $tmp-riyouhyou_beppyou_base2_input
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_BASE_KAIGO   RIYOUHYOU_BASE_KAIGO
+GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOU_RECORD_KAIGO   RIYOUHYOU_RECORD_KAIGO
+GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOUBEPPYOU_RECORD_KAIGO   RIYOUHYOUBEPPYOU_RECORD_KAIGO
+GETSUGAKU_RIYOU_KAIGO/${Riyoushaid}/RIYOUHYOUBEPPYOU_KAIGO   RIYOUHYOUBEPPYOU_KAIGO
+FIN
+
+input_detail_dir=RIYOUHYOU_KAIGO/${Riyoushaid}
+input_detail2_dir=RIYOUHYOUBEPPYOU_KAIGO/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+
+cat <<- FIN > $tmp-koushin_pompa
+riyouhyou_base_kaigo RIYOUHYOU_BASE_KAIGO 3 8 9 ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+cat <<- FIN > $tmp-add_pompa
+riyouhyou_record_kaigo RIYOUHYOU_RECORD_KAIGO 4 22 23 ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+riyouhyou_kyoutsu_kaigo RIYOUHYOU_RECORD_KAIGO 4 22 23 ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+cat <<- FIN > $tmp-koushin_pompa2
+riyouhyou_beppyou_base RIYOUHYOUBEPPYOU_KAIGO 3 6 7 ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+riyouhyou_beppyou_base2 RIYOUHYOUBEPPYOU_KAIGO 3 6 7 ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+cat <<- FIN > $tmp-add_pompa2
+riyouhyoubeppyou_record RIYOUHYOUBEPPYOU_RECORD_KAIGO 4 27 28 ${pompa_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+riyouhyoubeppyou_record2 RIYOUHYOUBEPPYOU_RECORD_KAIGO 4 27 28 ${apdata_dir}/GETSUGAKU_RIYOU_KAIGO/${Riyoushaid} ${input_dir}
+FIN
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入替版作成
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$2!="'${Riyoushaid}'"||$3!="'${hdTaishouYear}'"||$4!="'${taishoumonth}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入替版作成
+cat $tmp-add_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$2!="'${Riyoushaid}'"||$3!="'${hdTaishouYear}'"||$4!="'${taishoumonth}'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-add_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) != "0" ] ; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "$(gyo $tmp-${input_name}_new)" != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail2_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail2_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa2         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ $(gyo $tmp-${input_name}_new) != "0" ] ; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail2_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail2_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,99 @@
+#!/bin/bash
+#
+# TATEKAEKIN.DELETE : 立替金削除
+#
+# Usage : TATEKAEKIN.DELETE namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+idkanri_dir="/DATA/E-LIFE/TATEKAEKIN/KANRI/ID"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/TATEKAEKIN"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# 削除データを呼び出し
+del_month=$(echo ${hd_tatekae_hiduke} | awk '{print substr($1,1,6)}')
+cat ${pompa_dir}/${shisetsu}/${del_month}/${del_month}.TATEKAEKIN   |
+# 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+# 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+LANG=C sort -k14,14n                                                |
+join0 +ng key=14 <(echo ${uwagaki_id})    > ${tmp}-del_data   2> ${tmp}-new_data
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+if [ -e ${tmp}-del_data ];then
+
+  # INPUTデータを保存
+  mkdir -p ${input_dir}/${today}
+  cp -p ${tmp}-del_data ${input_dir}/${today}/TATEKAEKIN_DELETE.${current_time}.${userid}.$(basename ${0}).${HOSTNAME}.${$}
+  # 1:立替日付 2:立替対象 3:対象者 4:入出金フラグ 5:立替方法 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額 11:ID 12:登録時間
+
+  # POMPA
+  lock_file=${pompa_dir}/TATEKAEKIN.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  cp -p ${tmp}-new_data ${pompa_dir}/${shisetsu}/${del_month}/${del_month}.TATEKAEKIN
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  # 請求データ
+  lock_file=${seikyu_dir}/TATEKAEKIN.LOCK
+  lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+  cp -p ${tmp}-new_data ${seikyu_dir}/${shisetsu}/${del_month}/${del_month}.TATEKAEKIN
+  # ロック解除
+  rm -f ${lock_file}
+  unset lock_file
+  
+  cat ${tmp}-del_data
+else
+  :
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || exit 1
+
+
+rm -f ${tmp}-*
+exit 0

@@ -1,0 +1,166 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_ICHIRAN_HYOJI.SEARCH : 介護実績一覧表示検索用CGI
+#
+# Usage : KAIGOJISSEKI_ICHIRAN_HYOJI.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+apptbl_dir="${app_dir}/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="search"
+fi
+
+# 年月日の取得
+search_month="$(echo ${hd_sakuseibi} | awk '{print substr($1,1,6)}')"
+echo ${hd_sakuseibi} > ${tmp}-sakuseibi
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 処理の分岐
+if [ -n "${hyojikomoku_kaigojisseki}" ];then
+# 介護実績データを取得
+  cat ${pompa_dir}/${shisetsu}/${search_month}/${search_month}.DISPLAY_KAIGOJISSEKI_IKKATSU               |
+  # 1:対象者 2:作成日 3:共有 4:介護分類 5:介護項目 6:開始時間 7:内容 8:場所 9:備考 10:終了時間 11:実施者 12登録日時間 13:ID
+  LANG=C sort -k1,1n                                                                  |
+  join0 key=1 ${tmp}-taishosha                                                        |
+  LANG=C sort -k2,2n                                                                  |
+  join0 key=2 ${tmp}-sakuseibi                                                        |
+  awk '{gsub(/+++/," ",$11);print}'                                                   |
+  delf 11                                                                             |
+  self 3 4 5 6 10 7 8 9 11 13                                                         |
+  # 1:共有 2:介護分類 3:介護項目 4:開始時間 5:終了時間 6:内容 7:場所 8:備考 9:実施者 10:ID
+  awk '{print "JISSEKI",$0}'                                                          |
+  # 1:目印 2:共有 3:介護分類 4:介護項目 5:開始時間 6:終了時間 7:内容 8:場所 9:備考 10:実施者 11:ID
+  awk '{fromhr=substr($5,1,2);frommt=substr($5,4,2);tohr=substr($6,1,2);tomt=substr($6,4,2);from=fromhr*60+frommt;to=tohr*60+tomt;time=to-from;print $1,$2,$5,$3,$4,$7"+++""【介助場所】"$8,$9,time,$10,"black",$11}'                                              > ${tmp}-kaigojisseki
+  # 1:目印 2:共有 3:開始時間 4:介護分類 5:介護項目 6:内容 7:備考 8:時間 9:実施者 10:色 11:ID
+else
+  :  >  ${tmp}-kaigojisseki
+fi
+# バイタルデータを取得
+if [ -n "${hyojikomoku_vital}" ];then
+  cat ${pompa_dir}/${shisetsu}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_VITAL               |
+  # 1:利用者 2:作成日  3:体温 4:血圧(上) 5:血圧(下) 6:脈拍 7:呼吸 8:SAT 9:体重 10:時刻 11:所要時間 12:備考 13:実施者 14:登録時間 15:ID
+  LANG=C sort -k1,1n                                                                        |
+  join0 key=1 ${tmp}-taishosha                                                              |
+  LANG=C sort -k2,2n                                                                        |
+  join0 key=2 ${tmp}-sakuseibi                                                              |
+  self 10 3 4 5 6 7 8 9 12 13 11 15                                                         |
+  awk '{gsub(/+++/," ",$10);print}'                                                         |
+  delf 10                                                                                   |
+  # 1:時刻 2:体温 3:血圧(上) 4:血圧(下) 5:脈拍 6:呼吸 7:SAT 8:体重 9:備考 10:実施者 11:所要時間 12:ID
+  awk '{print "VITAL","_",$1,"バイタル","測定","【体温】"$2"+++""【血圧(上)】"$3"+++""【血圧(下)】"$4"+++""【脈拍】"$5"+++""【呼吸】"$6"+++""【SAT】"$7"+++""【体重】"$8"+++",$9,$11,$10,"black",$12}'        > ${tmp}-vital
+  # 1:目印 2:共有 3:時刻 4:介護分類 5:介護項目 6:内容 7:備考 8:時間 9:実施者 10:色 11:ID
+else
+  : > ${tmp}-vital
+fi
+
+# 申し送りデータの取得
+if [ -n "${hyojikomoku_moushiokuri}" ];then
+  cat ${pompa_dir}/${shisetsu}/${search_month}/${search_month}.KAIGOJISSEKI_IKKATSU_MOUSHIOKURI              |
+  # 1:利用者 2:作成日 3:申送り種別 4:時刻 5:対象 6:項目 7:記入者 8:日誌共有 9:支援経過共有 10:内容 11:色 12:登録日時 13:ID
+  LANG=C sort -k1,1n                                                                  |
+  join0 key=1 ${tmp}-taishosha                                                        |
+  LANG=C sort -k2,2n                                                                             |
+  join0 key=2 ${tmp}-sakuseibi                                                                   |
+  # 申し送り種別で絞込み
+  if [ "${moushiokuri_select}" = "0" ];then
+    cat -
+  else
+    awk '$3=="'${moushiokuri_select}'"'
+  fi                                                                                             |
+  # 申し送り対象で絞込み
+  if [ "${moushiokuri_taisho}" = "0" ];then
+    cat -
+  else
+    awk '$5=="'${moushiokuri_taisho}'"'
+  fi                                                                                             |
+  # 検索項目で絞込み
+  if [ "${moushiokuri_koumoku}" = "0" ];then
+    cat -
+  else
+    awk '$6=="'${moushiokuri_koumoku}'"'
+  fi                                                                                             |
+  self 9 4 3 5 6 7 10 11 13                                                                      |
+  awk '{gsub(/+++/," ",$6);print}'                                                               |
+  delf 6                                                                                         | 
+  # 1:支援経過共有 2:時刻 3:申送り種別 4:対象 5:項目 6:記入者 7:内容 8:色 9:ID
+  LANG=C sort -k3,3n                                                                             |
+  join1 key=3 ${apptbl_dir}/MOUSHIOKURI_SELECT                                                   |
+  delf 3                                                                                         |
+  LANG=C sort -k4,4n                                                                             |
+  join1 key=4 ${apptbl_dir}/MOUSHIOKURI_TAISHO                                                   |
+  delf 4                                                                                         |
+  LANG=C sort -k5,5n                                                                             |
+  join1 key=5 ${apptbl_dir}/MOUSHIOKURI_KOUMOKU                                                  |
+  delf 5                                                                                         |
+  awk '{print "OKURI",$1,$2,$3,$4,$5"+++"$7,"_","_",$6,$8,$9}'                             > ${tmp}-okuri
+  # 1:目印 2:支援経過共有 3:時刻 4:申送り種別 5:対象 6:内容 7:備考 8:所要時間 9:実施者 10:色 11:ID
+else
+  :
+fi > ${tmp}-okuri
+
+
+cat ${tmp}-kaigojisseki ${tmp}-vital ${tmp}-okuri > ${tmp}-search_kekka
+cat ${tmp}-search_kekka
+
+
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

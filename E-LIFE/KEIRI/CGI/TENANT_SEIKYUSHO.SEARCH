@@ -1,0 +1,80 @@
+#!/bin/bash
+#
+# SERVICE_MASTER.SEARCH
+# スケジュールマスタ　検索用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/KEIRI/CGI/KEIRI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+# 初期値は一応シニアで
+[ "$ServiceTateya" = "_" -o -z "$ServiceTateya" ] && ServiceTateya="01"
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+#--------------------------------------------------------------
+# ファイルの取得
+# 当月のデータがなかったら前月分を表示
+cat ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_TENANT_MASTER |
+self 1 5                                                                > $tmp-tenant_master
+cp $tmp-tenant_master ${work_dir}/tenante_master
+cat ${pompa_dir}/TENANT_TENANT_TOUROKU/${shisetsu}/TENANT_SEIKYUSHO |
+# 1:テナントID  2:郵便番号  3:住所            4:社名            5:宛名
+# 6:賃料        7:共益費    8:電気代          9:水道代          10:駐車場代
+# 11:駐輪場代   12:空調費   13:インターネット 14:パーク24電気代 15:自販機
+# 16:有効フラグ 17:更新時間 18:userid
+awk '$(NF-2)!="9"'            |
+LANG=C sort -k1,1             |
+tee ${work_dir}/tenant_join   |
+awk '$1=="'${tenant_name}'"'  |
+delf 1 NF-2/NF              > ${tmp}-search
+if [ "$(gyo $tmp-search)" = 0 ];then
+  echo "@ @ @ @ @ @ @ @ @ @ @ @ @ @ @" > $tmp-search
+else
+  :
+fi
+#--------------------------------------------------------------
+# 出力
+cp $tmp-search ${work_dir}/sechiko
+cat $tmp-search
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# KANGO_KAIGO_YOUYAKU.TOUROKU : 看護介護要約登録用CGI
+#
+# Usage : KANGO_KAIGO_YOUYAKU.TOUROKU ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+cgi_path="/RACK_KORITSU/cgi-bin"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+idkanri_dir="/DATA/E-LIFE/SHISETSU_KAIGOKIROKU/KANRI/ID"
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# INPUTディレクトリ作成
+mkdir -p ${input_dir}/${today}
+
+# POMPAディレクトリ作成
+mkdir -p ${pompa_dir}/KANGO_KAIGO_YOUYAKU/NEW/${riyosha_name}
+
+# データを作る
+kyo=$(echo $today | awk '{nen=substr($1,1,4);getu=substr($1,5,2);hi=substr($1,7,2);print nen"年"getu"月"hi"日"}')
+cat ${tbl_dir}/JYUUGYOUIN_MASTER/USER_MASTER > $tmp-user_master
+echo "koushinsha" "${userid}" | join1 key=2 $tmp-user_master | delf 2 > $tmp-koushinsha
+echo "koushinbi" "${kyo}"  |
+cat ${tmp}-name - $tmp-koushinsha > ${tmp}-search
+# INPUTデータを保存
+cp -p ${tmp}-search ${input_dir}/${today}/KANGO_KAIGO_YOUYAKU.${riyosha_name}.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+# POMPAデータを保存
+lock_file=${pompa_dir}/KANGO_KAIGO_YOUYAKU/NEW/${riyosha_name}/KANGO_KAIGO_YOUYAKU.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+cp -p ${tmp}-search ${pompa_dir}/KANGO_KAIGO_YOUYAKU/NEW/${riyosha_name}/${riyosha_name}.${current_time}
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+cat  ${tmp}-search
+
+# 終了
+rm -f $tmp-*
+
+exit 0

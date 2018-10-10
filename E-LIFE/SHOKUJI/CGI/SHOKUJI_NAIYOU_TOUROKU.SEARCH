@@ -1,0 +1,64 @@
+#!/bin/bash
+#
+# SHOKUJI_NAIYOU_TOUROKU.SEARCH
+# 食事メニュー検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+Shisetsu="${shisetsu}"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければ 従業員マスタから
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1) # 従業員マスタに指定がなければ>施設建屋フロアマスタの上にある方(シニアがあればシニア)
+
+awk '$(NF-2)!="9"{print "KEITAI",$0}' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_KEITAI > $tmp-keitai
+# 1:"SHOKUJI_KEITAI" 2:食事形態id 3:登録年月日 4:(削除)変更年月日 5:食事形態名称
+
+awk '$(NF-2)!="9"{print "SHUSHOKU",$0}' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_SHUSHOKU > $tmp-shushoku
+# 1:"SHOKUJI_KEITAI" 2:食事形態id 3:登録年月日 4:(削除)変更年月日 5:食事形態名称
+
+awk '$(NF-2)!="9"{print "FUKUSHOKU",$0}' ${pompa_dir}/${Shisetsu}/${Tateya}/SHOKUJI_FUKUSHOKU > $tmp-fukushoku
+# 1:"SHOKUJI_KEITAI" 2:食事形態id 3:登録年月日 4:(削除)変更年月日 5:食事形態名称
+
+
+
+#cp $tmp-* /home/hands/work/okuda 
+if [ -s $tmp-keitai -o -s $tmp-shushoku -o -s $tmp-fukushoku ] ; then
+  cat $tmp-keitai $tmp-shushoku $tmp-fukushoku
+fi
+## 終了
+rm -f $tmp-*
+exit 0

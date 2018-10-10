@@ -1,0 +1,151 @@
+#!/bin/bash
+#
+# SHOKUJI_JISSEKI_GEKKAN.SEARCH
+# 食事実績検索
+#
+# Written by E.Okuda  : 2013/11/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+thisyear="$(date +%Y)"
+thismonth="$(date +%m)"
+seikyuu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+RIYOUSHAID=$(nameread "Nyuukyosha" ${namedata})
+Shisetsu=$(nameread "Shisetsu" ${namedata})
+[ -z "${Shisetsu}" -o "${Shisetsu}" = "_" ] && Shisetsu="$(nameread "shisetsu" ${namedata})"
+Tateya=$(nameread "Tateya" ${namedata})
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+
+TaishouYear=$(nameread "TaishouYear" ${namedata})
+[ -z "${TaishouYear}" -o "${TaishouYear}" = "_" ] && TaishouYear=${thisyear}
+TaishouMonth=$(nameread "TaishouMonth" ${namedata} | maezero 1.2)
+[ -z "${TaishouMonth}" -o "${TaishouMonth}" = "_" ] && TaishouMonth=${thismonth}
+TaishouNengetsu=$(echo "${TaishouYear}""${TaishouMonth}")
+
+TaishouNengetsuFrom=$(echo "${TaishouNengetsu}""01")
+TaishouNengetsuTo=$(echo "${TaishouNengetsu}""31")
+
+# 現在の居室を取得
+awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$(NF-2)!="9"{print $0}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 対象日よりﾀｲｷｮ日が後で2行以上あったら
+awk '$8>="'${Taishoubi}'"{print $6,$0}' |
+LANG=C sort -k1,1 -k8,9                 |
+rank ref=1                 |
+awk '$1=="1"'              |
+self 8 7                   > $tmp-riyousha_kyoshitsu
+# 1:利用者ID 2: 居室No
+
+#------------------------------------------------------------
+# データの絞込み
+#----------------------
+## 20140908変更
+# 消費税率を取得
+cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/ZEIRITSU  |
+# 1:ID 2:税率 3:適用開始日 4:適用終了日 5:削除フラグ 6:更新日時 7:userid
+awk '$3<="'${TaishouNengetsuFrom}'"&&$4>="'${TaishouNengetsuFrom}'"{print $0}'   |
+self 2                                               > ${tmp}-zeiritsu
+zeiritsu=$(cat ${tmp}-zeiritsu | awk '{print $1+"1"}')
+###
+
+
+cat ${pompa_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_SHOKUJI_JISSEKI |
+# 1:利用者ID    2:施設ID                 3:建屋       4:居室           5:入居者ゲストフラグ
+# 6:日付        7:食事（朝昼夜おやつ他） 8:食事ID     9:食事メニューID 10:食事メニュー名称
+# 11:食事種類ID 12:単価(税抜き)          13:数量      14:色ID          15:税込み
+# 16:予備項目2  17:予備項目3             18:予備項目4 19:予備項目5
+
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}'    |
+awk '{print $0,$10}' |
+#awk '{if($5=="2"){print $0,"★ゲスト"$10}else{print $0,$10}}'  |
+self 6/9 NF 14 15 13 5 12 |
+# 1:日付 2:食事（朝昼夜おやつ他） 3:食事ID 4:食事メニューID     5:予備項目5
+# 6:色ID 7:税込み                 8:数量   9:入居者ゲストフラグ 10:単価(税抜き)
+# 0908以前のデータで税込価格が入力されていないものは計算する
+awk '{print $0,$7!="_"?$7:$NF*"'${zeiritsu}'"}'       |
+marume -sage 11.0                                     |
+self 1/6 NF 8/NF-2                                    > $tmp-shokuji_jisseki_jyunbi_jyunbi
+
+# 欠食情報の取得
+awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' ${seikyuu_dir}/${Shisetsu}/${Tateya}/${TaishouNengetsu}/RIYOUSHA_KESSHOKU > $tmp-kesshoku
+# 1:利用者(入居者)ID 2:施設ID     3:建屋 4:居室 5:欠食年月日
+# 6:欠食食事         7:入院外泊ID
+
+if [ -s $tmp-kesshoku ] ; then
+  cat $tmp-kesshoku |
+  awk '{print $5,$6,"00000","000","<b>欠食</b>","002","0","1","1"}' |
+# 1:日付 2:食事(朝昼夜おやつ他） 3:食事ID 4:食事メニューid 5:メニュー名
+# 6:色   7:単価(税抜き)          8:数量   9:入居者ゲストフラグ
+  LANG=C sort -k1,4  > $tmp-kesshoku_data
+  
+  # 欠食のデータと欠食なしの人データを足す
+  if [ -s $tmp-shokuji_jisseki_jyunbi_jyunbi ] ; then
+    cat $tmp-shokuji_jisseki_jyunbi_jyunbi $tmp-kesshoku_data > $tmp-shokuji_jisseki_jyunbi
+  else
+    cat $tmp-kesshoku_data >$tmp-shokuji_jisseki_jyunbi
+  fi
+
+else
+  cat $tmp-shokuji_jisseki_jyunbi_jyunbi > $tmp-shokuji_jisseki_jyunbi
+
+fi
+
+mdate ${TaishouNengetsu}m |
+tarr                      > $tmp-taishou_nengetsu
+
+if [ -s $tmp-shokuji_jisseki_jyunbi ] ; then
+  cat $tmp-shokuji_jisseki_jyunbi |
+# 1:日付 2:食事(朝昼夜おやつ他） 3:食事ID 4:食事メニューid 5:メニュー名
+# 6:色   7:単価(税抜き)          8:数量   9:入居者ゲストフラグ
+  LANG=C sort -k6,6                    |
+  join2 key=6 ${tbl_dir}/CONFIG/COLOR_TABLE -  |
+  delf 6 8                             |
+  LANG=C sort -k1,1                    |
+  loopj num=1 - $tmp-taishou_nengetsu  > $tmp-shokuji_jisseki
+
+# データがなかった場合
+else
+  cat $tmp-taishou_nengetsu |
+  awk '{print $1,"_","_","_","_","_","_","_"}'  > $tmp-shokuji_jisseki
+fi
+
+if [ -s $tmp-shokuji_jisseki ] ; then
+  cat $tmp-shokuji_jisseki
+fi
+# 1:日付 2:食事(朝昼夜おやつ他） 3:食事ID 4:食事メニューid 5:メニュー名
+# 6:色   7:単価(税抜き)          8:数量   9:入居者ゲストフラグ
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,179 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.SEARCH
+# 個人情報詳細(介護保険)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+#[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+#-------------------------------------------------------------
+# 利用者基本情報テーブルの取得
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別           5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:西暦：生年月日 10:感染症
+# 11:入居前郵便番号  12:入居前住所        13:現郵便番号            14:現住所        15:携帯電話番号
+# 16:E-MAILアドレス  17:趣味特技          18:備考
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_KIHON  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+  # 必要な情報のみに
+  self 1/8 14 15 9 > $tmp-kihon
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別   5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:現住所 10:携帯電話番号
+# 11:西暦：生年月日 
+
+# 年齢の取得
+  Birthday="$(awk '{print substr($11,5,4)}' $tmp-kihon)"
+  Today="$(date +%m%d)"
+  today="$(date +%Y%m%d)"
+
+  # 誕生日が来ていれば
+#  if [ "${Birthday}" -le "${Today}" ] ;then
+    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000}' $tmp-kihon | marume -sage 1.0)"
+  # 誕生日が来ていなければ
+#  else
+#    Nenrei="$(awk 'N="'${today}'"-$11{print N/10000-1}' $tmp-kihon | marume -sage 1.0)"
+#  fi
+
+  awk '{print "kihon",$0,"'${Nenrei}'"}' $tmp-kihon |
+  self 1/9 NF 10 11                                 > $tmp-kihon_data
+# 1:利用者(入居者)ID 2:利用者(入居者)氏名 3:利用者(入居者)氏名カナ 4:性別 5:和暦：元号
+# 6:和暦：誕生年     7:和暦：誕生月       8:和暦：誕生日           9:年齢 
+
+
+# 利用者アセスメントテーブルの取得
+# 1:利用者(入居者)ID        2:アセスメントID     3:施設               4:生活習慣起床            5:生活習慣朝食
+# 6:生活習慣昼食            7:生活習慣夕食       8:生活習慣就寝       9:生活習慣入浴            10:生活習慣過ごし方(午前)
+# 11:生活習慣過ごし方(午後) 12:生活習慣その他    13:イベント参加      14:趣味                   15:特技
+# 16:性格                   17:好きな作家        18:好きな本          19:好きな俳優・女優       20:好きな映画
+# 21:好きな歌手             22:好きな歌          23:好きなTV・ラジオ  24:よく行った街土地       25:好きな食べ物
+# 26:嫌いな食べ物           27:好きな飲み物      28:嫌いな飲み物      29:アルコール飲む飲まない 30:アルコール種類
+# 31:タバコ本数             32:タバコ詳細        33:嫌うこと          34:定期契約購買項目1      35:定期契約購買詳細1
+# 36:定期契約購買項目2      37:定期契約購買詳細2 38:定期契約購買項目3 39:定期契約購買詳細3      40:定期契約購買項目4
+# 41:定期契約購買詳細4      42:定期契約購買項目5 43:定期契約購買詳細5 44:定期契約購買項目6      45:定期契約購買詳細6
+# 46:定期契約購買項目7      47:定期契約購買詳細7 48:生活暦            49:家族                   50:入居のきっかけ
+
+  # 最新のファイル
+#  find ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID} -maxdepth 1 -type f -name "${RIYOUSHAID}"*_ASSESSMENT > ${tmp}-search_data
+
+#if [ -s ${tmp}-search_data ] ; then
+#  Number="$(cat ${tmp}-search_data | sed 's/_/ /g' | self NF-1 | LANG=C sort -u | tail -1)"
+
+#  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${Number}_ASSESSMENT > $tmp-data
+
+#  if [  -s $tmp-data -a "$(self NF-2 $tmp-data)" = "9" ] ; then
+#    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT |
+#    awk '$(NF-2)!="9"'                                                                     |
+#    LANG=C sort -u                                                                         |
+#    getlast 1 1       
+#  else
+#    cat $tmp-data
+#  fi |
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT |
+  awk '$(NF-2)!="9"'                                                                     |
+  if [ -z "${Rireki}" -o "${Rireki}" = "_" ] ; then
+     getlast 1 1
+  else
+     awk '$2=="'${Rireki}'"'
+  fi |  
+  awk '{print "assessment",$0}'  > $tmp-assessment_data
+
+#else
+#  :
+#fi
+
+assessmentid=$(awk '{print $3}' $tmp-assessment_data | head -1)
+
+# 最新の追加ファイル
+cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT_ADDITIONAL |
+awk '$(NF-2)!="9"&&$2=="'$assessmentid'"{print "additional",$0}' > $tmp-assessment_data_additional
+
+
+# 後から追加になった項目対応
+# 1:利用者(入居者)ID        2:アセスメントID     3:施設 4:備考欄 5～24:予備項目
+
+  # 最新の追加ファイル
+
+#  find ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID} -maxdepth 1 -type f -name "${RIYOUSHAID}"*_ASSESSMENT_ADDITIONAL > ${tmp}-search_data_additional
+
+#if [ -s ${tmp}-search_data_additional ] ; then
+#  Number="$(cat ${tmp}-search_data_additional | sed 's/_/ /g' | self NF-2 | LANG=C sort -u | tail -1)"
+
+#  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_${Number}_ASSESSMENT_ADDITIONAL > $tmp-data_additional
+
+#  if [  -s $tmp-data_additional -a "$(self NF-2 $tmp-data_additional)" = "9" ] ; then
+#    cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_ASSESSMENT/${RIYOUSHAID}/${RIYOUSHAID}_*_ASSESSMENT_ADDITIONAL |
+#    awk '$(NF-2)!="9"'                                                                     |
+#    LANG=C sort -u                                                                         |
+#    getlast 1 1       
+#  else
+#    cat $tmp-data_additional
+#  fi |
+#  awk '{print "additional",$0}'  > $tmp-assessment_data_additional
+
+#else
+#  :
+#fi
+
+
+#-----------------------------------------------------------------------------------
+# # 該当データ
+ if [ -s "$tmp-kihon_data" -a -s "$tmp-assessment_data" -a -s "$tmp-assessment_data_additional" ] ; then    
+   cat - $tmp-kihon_data $tmp-assessment_data $tmp-assessment_data_additional
+ elif [ -s "$tmp-kihon_data" -a -s "$tmp-assessment_data" ] ; then    
+   cat - $tmp-kihon_data $tmp-assessment_data
+ elif [ -s "$tmp-kihon_data" ] ; then
+   cat - $tmp-kihon_data
+ else
+   :
+ fi 
+
+#-------------------------------------------------------------
+#  ;;
+#esac
+
+## 終了
+rm -f $tmp-*
+exit 0

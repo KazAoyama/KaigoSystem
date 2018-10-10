@@ -1,0 +1,220 @@
+#!/bin/bash
+#
+# KINYUU_MASTER.ALL.AJAX : 金融マスタ テーブル全体書き換えAJAX
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+tmp=/var/tmp/otsubo
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    |
+sed 's/null//g'                > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# 変数の定義
+today="$(date +%Y%m%d)"
+
+# モード設定
+[ -z "${MODE}" ] && MODE="init"
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 金融機関と支店のテキストボックス部分disabled場合わけ
+
+# 全体更新のときは金融機関が必ず選択されている。(クリアのときはinitが動く)
+# 支店が選択されているかでdisabledの場所が変わる
+
+# 支店あり：金融機関すべてと支店コードdisabled
+# 支店なし：金融機関コードdisabled
+
+if [ "${KinyuuKikan_Shiten}" = "" -o "${KinyuuKikan_Shiten}" = "_" ] ; then
+  kikan_code_disabled="disabled"
+else
+  kikan_code_disabled="disabled"
+  kikan_name_disabled="disabled"
+  kikan_name_kana_disabled="disabled"
+  shiten_code_disabled="disabled"
+fi
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 表示データの作成
+
+# calsedテーブル用意
+: > ${tmp}-calsed
+# 金融機関インデックス
+[ "${kikan_index}" != "" -a "${kikan_index}" != "_" ] && echo "###KIKAN_ACTIVE${kikan_index}### active" >> ${tmp}-calsed
+# 支店インデックス
+[ "${shiten_index}" != "" -a "${shiten_index}" != "_" ] && echo "###SHITEN_ACTIVE${shiten_index}### active" >> ${tmp}-calsed
+
+# 金融機関テーブル
+LANG=C sort ${home_dir}/TBL/CONFIG/KINYUUKIKAN_NAME |
+case "${kikan_index}" in
+  0 )
+    awk '{print $1,$3}' -
+  ;;
+  1 )
+    awk '$2~/^ア/||$2~/^イ/||$2~/^ウ/||$2~/^エ/||$2~/^オ/{print $1,$3}' -
+  ;;
+  2 )
+    awk '$2~/^カ/||$2~/^キ/||$2~/^ク/||$2~/^ケ/||$2~/^コ/{print $1,$3}' -
+  ;;
+  3 )
+    awk '$2~/^サ/||$2~/^シ/||$2~/^ス/||$2~/^セ/||$2~/^ソ/{print $1,$3}' -
+  ;;
+  4 )
+    awk '$2~/^タ/||$2~/^チ/||$2~/^ツ/||$2~/^テ/||$2~/^ト/{print $1,$3}' -
+  ;;
+  5 )
+    awk '$2~/^ナ/||$2~/^ニ/||$2~/^ヌ/||$2~/^ネ/||$2~/^ノ/{print $1,$3}' -
+  ;;
+  6 )
+    awk '$2~/^ハ/||$2~/^ヒ/||$2~/^フ/||$2~/^ヘ/||$2~/^ホ/{print $1,$3}' -
+  ;;
+  7 )
+    awk '$2~/^マ/||$2~/^ミ/||$2~/^ム/||$2~/^メ/||$2~/^モ/{print $1,$3}' -
+  ;;
+  8 )
+    awk '$2~/^ヤ/||$2~/^ユ/||$2~/^ヨ/{print $1,$3}' -
+  ;;
+  9 )
+    awk '$2~/^ラ/||$2~/^リ/||$2~/^ル/||$2~/^レ/||$2~/^ロ/{print $1,$3}' -
+  ;;
+  10 )
+    awk '$2~/^ワ/||$2~/^ヲ/||$2~/^ン/{print $1,$3}' -
+  ;;
+  11 )
+    echo "@ @"
+  ;;
+  * )
+  ;;
+esac |
+# 選択されていれば選択する
+awk '{if($1=="'${KinyuuKikan}'"){$3="selected"};print}' - > ${tmp}-kikan_data
+
+
+# 支店テーブル
+LANG=C sort ${home_dir}/TBL/CONFIG/KINYUUKIKAN_SHITEN_NAME |
+awk '$1=="'${KinyuuKikan}'"{print}' - |
+delf 1 |
+LANG=C sort |
+case "${shiten_index}" in
+  0 )
+    awk '{print $1,$3}' -
+  ;;
+  1 )
+    awk '$2~/^ア/||$2~/^イ/||$2~/^ウ/||$2~/^エ/||$2~/^オ/{print $1,$3}' -
+  ;;
+  2 )
+    awk '$2~/^カ/||$2~/^キ/||$2~/^ク/||$2~/^ケ/||$2~/^コ/{print $1,$3}' -
+  ;;
+  3 )
+    awk '$2~/^サ/||$2~/^シ/||$2~/^ス/||$2~/^セ/||$2~/^ソ/{print $1,$3}' -
+  ;;
+  4 )
+    awk '$2~/^タ/||$2~/^チ/||$2~/^ツ/||$2~/^テ/||$2~/^ト/{print $1,$3}' -
+  ;;
+  5 )
+    awk '$2~/^ナ/||$2~/^ニ/||$2~/^ヌ/||$2~/^ネ/||$2~/^ノ/{print $1,$3}' -
+  ;;
+  6 )
+    awk '$2~/^ハ/||$2~/^ヒ/||$2~/^フ/||$2~/^ヘ/||$2~/^ホ/{print $1,$3}' -
+  ;;
+  7 )
+    awk '$2~/^マ/||$2~/^ミ/||$2~/^ム/||$2~/^メ/||$2~/^モ/{print $1,$3}' -
+  ;;
+  8 )
+    awk '$2~/^ヤ/||$2~/^ユ/||$2~/^ヨ/{print $1,$3}' -
+  ;;
+  9 )
+    awk '$2~/^ラ/||$2~/^リ/||$2~/^ル/||$2~/^レ/||$2~/^ロ/{print $1,$3}' -
+  ;;
+  10 )
+    awk '$2~/^ワ/||$2~/^ヲ/||$2~/^ン/{print $1,$3}' -
+  ;;
+  11 )
+    echo "@ @"
+  ;;
+  * )
+  ;;
+esac |
+# 選択されていれば選択する
+awk '{if($1=="'${KinyuuKikan_Shiten}'"){$3="selected"};print}' - > ${tmp}-shiten_data
+
+
+# 金融機関テキスト
+kikan_code="${KinyuuKikan}"
+kikan_name="$(awk '$1=="'${KinyuuKikan}'"{print $3}' ${home_dir}/TBL/CONFIG/KINYUUKIKAN_NAME)"
+kikan_name_kana="$(awk '$1=="'${KinyuuKikan}'"{print $2}' ${home_dir}/TBL/CONFIG/KINYUUKIKAN_NAME)"
+
+# 支店テキスト
+shiten_code="${KinyuuKikan_Shiten}"
+shiten_name="$(awk '$1=="'${KinyuuKikan}'"&&$2=="'${KinyuuKikan_Shiten}'"{print $4}' ${home_dir}/TBL/CONFIG/KINYUUKIKAN_SHITEN_NAME)"
+shiten_name_kana="$(awk '$1=="'${KinyuuKikan}'"&&$2=="'${KinyuuKikan_Shiten}'"{print $3}' ${home_dir}/TBL/CONFIG/KINYUUKIKAN_SHITEN_NAME)"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 共通設定項目
+# DROPDOWN_ACTIVE:メニューのどのドロップダウンが選択されているか
+# LI_SYSTEMSETTEIi:ドロップダウン内のどこが選択されているか
+cat << FIN | sed 's/ _$/ @/g' >> $tmp-calsed
+###KIKAN_CODE### ${kikan_code}
+###KIKAN_NAME### ${kikan_name}
+###KIKAN_NAME_KANA### ${kikan_name_kana}
+###SHITEN_CODE### ${shiten_code}
+###SHITEN_NAME### ${shiten_name}
+###SHITEN_NAME_KANA### ${shiten_name_kana}
+###KIKAN_CODE_DISABLED### ${kikan_code_disabled}
+###KIKAN_NAME_DISABLED### ${kikan_name_disabled}
+###KIKAN_NAME_KANA_DISABLED### ${kikan_name_kana_disabled}
+###SHITEN_CODE_DISABLED### ${shiten_code_disabled}
+FIN
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+#--------------------------------------------------------
+
+
+# --------------------------------------------------------------
+# HTMLの作成
+
+awk '/table_all_start/,/table_all_end/' ${html_dir}/KINYUU_MASTER2.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l"KINYUU_KIKAN_TBL" - ${tmp}-kikan_data |
+mojihame -l"KINYUU_KIKAN_SHITEN_TBL" - ${tmp}-shiten_data > ${tmp}-html
+echo -e 'Content-Type: text/html; charset=UTF-8; \n\n' |
+cat - ${tmp}-html
+#sed 's/###KAIGYO###/\n/g'     |
+#sed 's/###SPACE###/ /g' |
+#if [ -e $tmp-html_alert ] ; then
+#  cat - $tmp-html_alert
+#else
+#  cat -
+#fi
+#formhame -d"_" - ${namedata}
+# --------------------------------------------------------------
+
+#rm -f ${tmp}-*
+exit 0

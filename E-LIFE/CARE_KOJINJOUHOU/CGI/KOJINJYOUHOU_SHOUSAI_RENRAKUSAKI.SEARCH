@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+#KOJINJYOUHOU_SHOUSAI_KOUZA.SEARCH  
+# 個人情報詳細(契約)
+#  
+#
+# Written by E.Okuda :2013/12/11
+
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+#-------------------------------------------------------------
+
+# 変数の定義
+namedata="$1"
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+
+MODE=$(nameread "MODE" $namedata)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+
+#-------------------------------------------------------------
+
+  RIYOUSHAID="$(nameread "RIYOUSHAID" $namedata)"
+
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者が選択されていません"
+
+# MODEによる処理の分岐
+if [ "${MODE}" = "init" -o "${MODE}" = "KazokuPrint" ] ; then
+
+#-------------------------------------------------------------
+# ファイルの取得
+# 1:利用者(入居者)ID 2:連絡先ＩＤ     3:連絡先氏名     4:連絡先氏名カナ 5:連絡先性別
+# 6:連絡先続柄       7:連絡先続柄備考 8:連絡先優先順位 9:電話番号1      10:電話番号2
+# 11:E-mail          12:郵便番号      13:住所          14:勤務先        15:請求書送先
+# 16:身元引受人      17:返還金受取人  18:代理人        19:備考          20:反映
+# 21:備考1           22:備考2         23:備考3
+
+  cat ${pompa_dir}/RIYOUSHA/RIYOUSHA_RENRAKUSAKI  |
+  awk '$1=="'${RIYOUSHAID}'"&&$(NF-2)!="9"{print $0}' |
+
+  # 更新日時の整形
+  awk '{print $0,$25!="_"?substr($25,1,4)"/"substr($25,5,2)"/"substr($25,7,2)"　"substr($25,9,2)":"substr($25,11,2):"_",$NF}' |
+  self 1/24 NF-1 NF > $tmp-renrakusaki
+
+  # 該当データがあれば、金融機関名称、支店名を取得
+  if [ -s "$tmp-renrakusaki" ] ; then
+    cat - $tmp-renrakusaki
+  else 
+    :
+  fi
+
+fi
+#-------------------------------------------------------------
+
+
+## 終了
+rm -f $tmp-*
+exit 0

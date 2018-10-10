@@ -1,0 +1,432 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_RIYOUSHA.UPLOAD
+#
+# データ取込：利用者情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE1" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE1/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                             |
+awk '$1!=""'  |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+# 番号のチェック
+ [ -z "${NUMBER}" -o "${NUMBER}" = "_" ] && error_exit "開始利用者IDを入力してください"
+START_NUMBER="$(echo "${NUMBER}" | awk '{print $1-"1"}')"
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+cat ${excel} |
+e2t2 4 a2 ab-  > $tmp-data
+# 1:UserID          2:UserName        3:Nameカナ          4:NickName     5:性別
+# 6:誕生日          7:PostNo          8:Adr               9:TelNo        10:CellularTelNo
+# 11:FaxNo          12:EMailAdr       13:CellularEMailAdr 14:BloodType   15:BloodTypeRh
+# 16:Stature        17:Weight         18:PhotoPath        19:Sake        20:Cigarette
+# 21:BaseMealKindID 22:MainMealKindID 23:SubMealKindID    24:MealComment 25:DeleteFlg
+# 26:PostNo2        27:Adr2           28:誕生日(和暦)
+
+[ -s "$tmp-data" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# RIYOUSHA_MASTER
+cat $tmp-data  |
+self 1/3 NF-3  |
+# 1:UserID 2:UserName 3:Nameカナ 4:DeleteFlg
+sed 's/_/　/g' |
+zen 3          |
+awk '{print $1,$2,$3,"_",$4=="0"?"1":"9","2014071500000000","UserId"}' |
+rank           |
+awk '{print $1+"'${START_NUMBER}'",$0}' |
+maezero 1.8    |
+self 3 1 4/NF  |
+LANG=C sort    > $tmp-riyousha_master1
+# 1:UserID    2:NEW_UserID 3:名前(漢字) 4:名前(カナ) 5:予備項目
+# 6:Delフラグ 7:更新日     8:更新者
+
+#-------------------------------------
+# 既に利用者IDのついている方がいた場合
+# 漢字
+#awk '$(NF-2)!="9"{print $2,$1}' /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER |
+awk '$(NF-2)!="9"{print $2,$1}' /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER |
+# 1:名前(漢字) 2:HSS利用者ID
+LANG=C sort -u |
+cjoin1 +ng key=3 - $tmp-riyousha_master1 > $tmp-riyousha_genkou_choufuku 2>$tmp-riyousha_master2
+# 1:UserID   2:NEW_UserID 3:名前(漢字) 4:HSS利用者ID 5:名前(カナ)
+# 6:予備項目 7:Delフラグ  8:更新日     9:更新者
+
+# カナ
+#awk '$(NF-2)!="9"{print $3,$1}' /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER |
+awk '$(NF-2)!="9"{print $3,$1}' /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER |
+# 1:カナ  2:HSS利用者ID 
+LANG=C sort -u |
+cjoin1 +ng key=4 - $tmp-riyousha_master1 > $tmp-riyousha_genkou_choufuku_2 2>$tmp-riyousha_master3
+# 1:UserID   2:NEW_UserID 3:名前(漢字) 4:カナ   5:HSS利用者ID
+# 6:予備項目 7:Delフラグ  8:更新日     9:更新者
+
+# 既に重複している人リストの作成
+if [ -s $tmp-riyousha_genkou_choufuku -a -s $tmp-riyousha_genkou_choufuku_2 ] ; then
+  self 1 4 $tmp-riyousha_genkou_choufuku   > $tmp-oldId_newID
+  self 1 5 $tmp-riyousha_genkou_choufuku_2 |
+  cat $tmp-oldId_newID -                   
+elif [ -s $tmp-riyousha_genkou_choufuku ] ; then
+  self 1 4 $tmp-riyousha_genkou_choufuku   
+elif [ -s $tmp-riyousha_genkou_choufuku_2 ] ;then
+#cp $tmp-riyousha_master_new /DATA/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER
+  self 1 5 $tmp-riyousha_genkou_choufuku_2
+fi |
+LANG=C sort -u                           > $tmp-riyousha_genkou_choufuku_result
+# 1:UserID  2:HSS利用者ID
+
+# 既に利用者IDのついている人はそのIDをHSSIDとする
+if [ -s $tmp-riyousha_genkou_choufuku_result ] ; then
+  cat $tmp-riyousha_master1                                |
+  cjoin2 +"_" key=1 $tmp-riyousha_genkou_choufuku_result - |
+# 1:UserID      2:HSS利用者ID 3:NEW_UserID 4:名前(漢字) 5:カナ
+# 6:HSS利用者ID 7:予備項目    8:Delフラグ  9:更新日     10:更新者
+  awk '{print $1,$2!="_"?$2:$3,$4,$5,$6,$7,$8,$9,$10}'     
+else 
+  cat $tmp-riyousha_master1
+fi  > $tmp-riyousha_master4
+
+#-------------------------------------
+# 取込データ内に同じ利用者データがあった場合
+
+# 削除フラグがついている方はそのままなので別にしておく
+awk '$(NF-2)=="9"' $tmp-riyousha_master4 > $tmp-riyousha_master_sakujyoflg
+awk '$(NF-2)!="9"' $tmp-riyousha_master4 > $tmp-riyousha_master5
+
+# 漢字名称が同じ方を抽出
+cat $tmp-riyousha_master5 |
+# 1:UserID    2:NEW_UserID 3:名前(漢字) 4:カナ 5:予備項目
+# 6:Delフラグ 7:更新日     8:更新者
+# NewUserIdが同一でなく、漢字名前が一緒のひと
+LANG=C sort -k3,3         |
+#getfirst 2 2              |
+
+# 削除フラグがついている入居者データははずす
+awk '$(NF-2)!="9"'        |
+rank ref=3                |
+tee $tmp-choufuku_check_tochu |
+awk '$1!="1"{print $4}'   |
+LANG=C sort -u           > $tmp-choufuku_riyousha1
+# 1:漢字 
+
+# カナ名称が同じ方を抽出
+cat $tmp-riyousha_master5 |
+# 同じ漢字のチェックは済んでいるので漢字が同じ人は1レコードにしておく
+LANG=C sort -k3,3         |
+getlast 3 3               |
+
+LANG=C sort -k4,4         |
+#getlast 2 2               |
+awk '$(NF-2)!="9"'        |
+rank ref=4                |
+awk '$1!="1"{print $5}'   |
+LANG=C sort -u    > $tmp-choufuku_riyousha2
+# 1:カナ 
+
+# 重複のでーたがあったら新IDは若い方の番号にする
+
+# 漢字
+if [ -s $tmp-choufuku_riyousha1 ] ; then
+  cat $tmp-riyousha_master5 |
+  cjoin1 key=3 $tmp-choufuku_riyousha1 - |
+  LANG=C sort -k1,1         |
+  getfirst 3 3              |
+  self 3 2                  |
+  LANG=C sort               > $tmp-choufuku_riyousha_kanji_id
+# 1:名前(漢字) 2:NEW_UserID
+
+  if [ -s $tmp-choufuku_riyousha_kanji_id ] ; then
+    cjoin2 +"_" key=3 $tmp-choufuku_riyousha_kanji_id $tmp-riyousha_master5 |
+# 1:UserID   2:NEW_UserID 3:名前(漢字) 4:NEW_UserID 5:カナ
+# 6:予備項目 7:Delフラグ  8:更新日     9:更新者
+    awk '{print $1,$4!="_"?$4:$2,$3,$5,$6,$7,$8,$9,$10}'  > $tmp-riyousha_master6
+  else
+   cat $tmp-riyousha_master5 > $tmp-riyousha_master6
+  fi
+else
+  :
+fi
+
+# カナ
+if [ -s $tmp-choufuku_riyousha2 -a -s $tmp-riyousha_master6 ] ; then
+  cat $tmp-riyousha_master6 |
+  cjoin1 key=4 $tmp-choufuku_riyousha2 - |
+  LANG=C sort -k1,1         |
+  getfirst 4 4              |
+  self 4 2                  |
+  LANG=C sort               > $tmp-choufuku_riyousha_kana_id
+# 1:名前(カナ) 2:NEW_UserID
+
+  if [ -s $tmp-choufuku_riyousha_kana_id ] ; then
+    cjoin2 +"_" key=4 $tmp-choufuku_riyousha_kana_id $tmp-riyousha_master6 |
+# 1:UserID   2:NEW_UserID 3:名前(漢字) 4:カナ   5:NEW_UserID
+# 6:予備項目 7:Delフラグ  8:更新日     9:更新者
+    awk '{print $1,$5!="_"?$5:$2,$3,$4,$6,$7,$8,$9}'  > $tmp-riyousha_master7
+  else
+   cat $tmp-riyousha_master6 > $tmp-riyousha_master7
+  fi
+elif [ -s $tmp-choufuku_riyousha2 -a -s $tmp-riyousha_master5 ] ; then
+  cat $tmp-riyousha_master5 |
+  cjoin1 key=4 $tmp-choufuku_riyousha2 - |
+  LANG=C sort -k1,1         |
+  getfirst 1 1              |
+  self 4 2                  |
+  LANG=C sort               > $tmp-choufuku_riyousha_kana_id
+# 1:名前(カナ) 2:NEW_UserID
+
+  if [ -s $tmp-choufuku_riyousha_kana_id ] ; then
+    cjoin2 +"_" key=4 $tmp-choufuku_riyousha_kana_id $tmp-riyousha_master5 |
+# 1:UserID   2:NEW_UserID 3:名前(漢字) 4:カナ   5:NEW_UserID
+# 6:予備項目 7:Delフラグ  8:更新日     9:更新者
+    awk '{print $1,$5!="_"?$5:$2,$3,$4,$6,$7,$8,$9}'  > $tmp-riyousha_master7
+  else
+   cat $tmp-riyousha_master5 > $tmp-riyousha_master7
+  fi
+
+elif [ -s $tmp-riyousha_master6 ] ; then
+  cat $tmp-riyousha_master6 > $tmp-riyousha_master7
+else
+  cat $tmp-riyousha_master5 > $tmp-riyousha_master7
+fi
+
+# 利用者マスタ
+if [ -s $tmp-riyousha_master_sakujyoflg ] ; then
+  cat $tmp-riyousha_master7 $tmp-riyousha_master_sakujyoflg |
+  LANG=C sort -u  
+else
+  cat $tmp-riyousha_master7 |
+  LANG=C sort -u
+fi  > $tmp-riyousha_master
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "利用者マスタ作成に失敗しました"
+
+[ ! -s "$tmp-riyousha_master" -o "$(retu $tmp-riyousha_master)" != "8" ] && error_exit "利用者マスタ作成に失敗しました"
+
+# RIYOUSHA_KIHON
+cat $tmp-data                |
+self 1 5 6 7 8 10 12 9 11    |
+# 1:UserID        2:性別     3:誕生日(西暦) 4:PostNo 5:Adr
+# 6:CellularTelNo 7:EMailAdr 8:TelNo        9:FaxNo
+awk '{print $0,substr($3,1,4),substr($3,5,2),substr($3,7,2)}' |
+# 1:UserID        2:性別     3:誕生日(西暦) 4:PostNo 5:Adr
+# 6:CellularTelNo 7:EMailAdr 8:TelNo        9:FaxNo  10:西暦年
+# 11:月           12:日
+awk '{if($3<19120730){print $0,"1","01",$10-1867}
+      else if($3<19261225){print $0,"1","02",$10-1911}
+      else if($3<19890107){print $0,"1","03",$10-1925}
+      else{print $0,"1","05",$10-1988}
+     }'                       |
+# 1:UserID        2:性別     3:誕生日(西暦) 4:PostNo 5:Adr
+# 6:CellularTelNo 7:EMailAdr 8:TelNo        9:FaxNo  10:西暦年
+# 11:月           12:日      13:元号No      14:和暦年
+self 1 2 NF-1 NF 11 12 3 NF-2 4 5 4/9 |
+# 1:UserID      2:性別         3:誕生日(和暦)元号 4:誕生日(和暦)年 5:誕生月
+# 6:誕生日      7:誕生日(西暦) 8:感染症           9:入居前郵便番号 10:入居前住所
+# 11:現郵便番号 12:現住所      13:CellularTelNo   14:EMailAdr      15:TelNo
+# 16:FaxNo
+
+# 電話番号とFacあれば備考欄に
+awk '{print $0,"@",$(NF-1)!="@"?"(TEL)"$(NF-1):"@",$NF!="@"?"(FAX)"$NF:"@"}' |
+# 1:UserID      2:性別         3:誕生日(和暦)元号 4:誕生日(和暦)年 5:誕生月
+# 6:誕生日      7:誕生日(西暦) 8:感染症           9:入居前郵便番号 10:入居前住所
+# 11:現郵便番号 12:現住所      13:CellularTelNo   14:EMailAdr      15:TelNo
+# 16:FaxNo      17:趣味(@)     18:TelNo           19:FaxNo
+delf NF-4 NF-3                  |
+awk '{print $0,$(NF-1)$NF}'     |
+awk '{if($NF=="@@"){($NF="###SPACE###");print $0}
+      else{sub("@","",$NF);print $0}
+     }'                         |
+delf NF-2 NF-1                  |
+# 1:UserID                   2:性別         3:誕生日(和暦)元号 4:誕生日(和暦)年 5:誕生月
+# 6:誕生日                   7:誕生日(西暦) 8:感染症           9:入居前郵便番号 10:入居前住所
+# 11:現郵便番号(_)           12:現住所(_)   13:携帯電話        14:E-mail        15:趣味特技
+# 16:備考(電話番号、FAX番号)
+
+##self 1 5 NF 6 7 8 10 12 9 11 |
+### 1:UserID 2:性別          3:誕生日(和暦) 4:誕生日(西暦) 5:PostNo
+### 6:Adr    7:CellularTelNo 8:EMailAdr     9:TelNo        10:FaxNo
+###sed 's/\// /g'               |
+###maezero 5.2 6.2              |
+### 1:UserID         2:性別   3:誕生日(和暦) 4:誕生日(西暦)年 5:誕生日(西暦)月
+### 6:誕生日(西暦)日 7:PostNo 8:Adr          9:CellularTelNo  10:EMailAdr
+### 11:TelNo         12:FaxNo
+##awk '{gsub(/年/," ",$3);print $0}'      |
+##awk '{gsub(/月/," ",$4);print $0}'      |
+##awk '{gsub(/日/,"",$5);print $0}'       |
+### 1:UserID       2:性別   3:誕生日(和暦)年 4:誕生日(和暦)月 5:誕生日(和暦)日
+### 6:誕生日(西暦) 7:PostNo 8:Adr            9:CellularTelNo  10:EMailAdr
+### 11:TelNo       12:FaxNo
+##awk '{print $1,$2,substr($3,1,2),substr($3,3,2),$4,$5,$6,"01",$7,$8,$7,$8,$9,$10,"_",$11!="@"?$11"###SPACE###"$12:$12}' |
+##awk '{if($3=="明治"){print $0,"01"}
+## else if($3=="大正"){print $0,"02"}
+## else if($3=="昭和"){print $0,"03"}
+##    else{print $0,"04"}
+##     }' |
+##self 1 2 NF 4/NF-1 |
+LANG=C sort > $tmp-riyousha_kihon_base
+# 1:UserID                   2:性別         3:誕生日(和暦)元号 4:誕生日(和暦)年 5:誕生月
+# 6:誕生日                   7:誕生日(西暦) 8:感染症           9:入居前郵便番号 10:入居前住所
+# 11:現郵便番号(_)           12:現住所(_)   13:携帯電話        14:E-mail        15:趣味特技
+# 16:備考(電話番号、FAX番号)
+
+
+[ ! -s "$tmp-riyousha_kihon_base" -o "$(retu $tmp-riyousha_kihon_base)" != "16" ] && error_exit "利用者基本マスタ作成に失敗しました"
+
+cat $tmp-riyousha_kihon_base        |
+cjoin1 key=1 $tmp-riyousha_master - |
+# 1:UserID          2:NEW_UserID  3:名前(漢字)               4:名前(カナ)    5:予備項目
+# 6:Delフラグ       7:更新日      8:更新者                   9:性別          10:誕生日(和暦)元号
+# 11:誕生日(和暦)年 12:誕生月     13:誕生日                  14:誕生日(西暦) 15:感染症
+# 16:入居前郵便番号 17:入居前住所 18:現郵便番号(_)           19:現住所(_)    20:携帯電話
+# 21:E-mail         22:趣味特技   23:備考(電話番号、FAX番号)
+delf 1 |
+self 1/3 8 9/NF 5/7                 |
+LANG=C sort -u                      > $tmp-riyousha_kihon
+# 1:UserID          2:名前(漢字)  3:名前(カナ)               4:性別         5:誕生日(和暦)元号
+# 6:誕生日(和暦)年  7:誕生月      8:誕生日                   9:誕生日(西暦) 10:感染症
+# 11:入居前郵便番号 12:入居前住所 13:現郵便番号(_)           14:現住所(_)   15:携帯電話
+# 16:E-mail         17:趣味特技   18:備考(電話番号、FAX番号) 19:Delフラグ   20:更新日
+# 21:更新者
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "利用者基本マスタ作成に失敗しました"
+[ ! -s "$tmp-riyousha_kihon" -o "$(retu $tmp-riyousha_kihon)" != "21" ] && error_exit "利用者基本マスタ作成に失敗しました"
+
+cat $tmp-riyousha_master |
+delf 1                   |
+LANG=C sort -u           > $tmp-riyousha_master_result
+# 1:NEW_UserID 2:名前(漢字) 3:名前(カナ) 4:予備項目 5:Delフラグ
+# 6:更新日     7:更新者
+
+cat $tmp-riyousha_master |
+self 1 2                 |
+LANG=C sort -u           > $tmp-riyousha_number
+# 1:UserID          2:NEW_UserID
+
+RIYOUSHA_MASTER_GYO="$(gyo $tmp-riyousha_master_result)"
+
+#[ "$(gyo $tmp-riyousha_kihon)" = "${RIYOUSHA_MASTER_GYO}" ] || error_exit "失敗しました"
+
+tail -1 $tmp-riyousha_master_result |
+self 1                              > $tmp-kanri_number
+
+
+#--------------------
+# 取込施設のみの情報を指定の場所へ保存
+
+cp -p $tmp-riyousha_number /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu}_${cur_time}
+cp -p $tmp-riyousha_master_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_MASTER_${Shisetsu}_${cur_time}
+cp -p $tmp-riyousha_kihon /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KIHON_${Shisetsu}_${cur_time}
+
+cp -p $tmp-*choufuku* /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}_${cur_time}
+
+#-------------------
+# 他施設の既存データとあわせたものを作成
+cat $tmp-riyousha_master_result /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER |
+LANG=C sort -u |
+getlast 1 1    > $tmp-riyousha_master_new
+
+cat $tmp-riyousha_kihon /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KIHON |
+LANG=C sort -u |
+getlast 1 1    > $tmp-riyousha_kihon_new
+
+#----------------------
+# テーブル更新
+
+  # 利用者マスタ
+cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_MASTER_${cur_time}
+
+ cp $tmp-riyousha_master_new /home/hands/work/okuda/DATA_TORIKOMI_DATA/RIYOUSHA_MASTER
+# cp $tmp-riyousha_master_new /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_MASTER
+# cp $tmp-riyousha_master_new /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_MASTER
+# cp $tmp-riyousha_master_new /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER
+#
+# # 利用者基本
+cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KIHON /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_KIHON_${cur_time}
+ cp $tmp-riyousha_kihon_new /home/hands/work/okuda/DATA_TORIKOMI_DATA/RIYOUSHA_KIHON 
+# cp $tmp-riyousha_kihon_new /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KIHON 
+# cp $tmp-riyousha_kihon_new /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KIHON
+# cp $tmp-riyousha_kihon_new /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KIHON
+#
+  # 管理番号
+cp -p /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/RIYOUSHA_ID /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/back/RIYOUSHA_ID
+  cp -p $tmp-kanri_number /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_ID
+#  cp $tmp-kanri_number /DATA/E-LIFE/UNEI/KANRI/RIYOUSHA/RIYOUSHA_ID
+#-------------------------------------------------------------
+# データのチェック用
+#cp $tmp-*
+cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA 
+
+#-------------------------------------------------------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

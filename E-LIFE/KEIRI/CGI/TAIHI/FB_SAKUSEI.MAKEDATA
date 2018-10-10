@@ -1,0 +1,777 @@
+#!/bin/bash
+#
+# FB_SAKUSEI.MAKEDATA :　ファームバンキング作成
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/FB_SAKUSEI.INI &> /dev/null
+
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# 引数設定
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+
+# 変数
+eval $(name-source ${namefile})
+if [ \( ! -n "${MODE}" \) -o \( "${MODE}" = "_" \) ] ; then
+  MODE="init"
+fi
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+hikiotoshi_month_date="${month}${hikiotoshi_date}"
+
+# ディレクトリ
+[ ! -e ${seikyu_dir}/${shisetsu} ] && mkdir ${seikyu_dir}/${shisetsu}
+
+# エラー時処理
+function error_exit {
+  echo "ng ${1}"
+  cat $tmp-lock |
+  while read name;do
+    rm -f ${name}.LOCK
+  done
+#  rm ${tmp}-*
+  exit 1
+}
+
+# --------------------------------------------------------------
+# 処理のながれ
+# -
+# 1.チェックが入ったユーザ年月リストを作成し、ヘッダから最新の情報を取得する
+# 2.ヘッダの情報に従い明細ファイルから合計行(行分類フラグ＝30)を取得し同じ請求先の請求はまとめる
+# 3.口座情報を付与
+# 4.全銀フォーマットに従いテキスト作成
+# 5.チェック入れたものについてステータスを7：FBデータ作成済みに変更する
+
+# ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+# -
+# 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+# 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+# 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+# 16:予備             17:予備             18:予備           19:予備          20:予備
+# 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+# 26:更新者
+
+# ${seikyu_dir}/${shisetsu}/MEISAI/${seikyu_syori_month}/SEIKYU_MEISAI.${seikyu_syori_month}.${seikyusaki}
+# -
+# 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備      18:予備        19:予備           20:予備
+# 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+
+# ${riyosha_dir}/RIYOUSHA_KOUZA
+# -
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:予備       17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード
+# 1:全請求 2:施設請求 3:居宅訪問介護請求
+#   ！補足！請求期間で絞込みしたときに「全請求と他」がヒットすることはありえない（入力時に制御入れてるはず）。同じ期間に「施設」と「居宅」が一緒になることはありえる。
+# -
+# 他入居者との一括請求
+# 0:なし 1:あり
+# -
+# 一括請求入居者ID
+# 他入居者との一括請求が1のときにここのIDの人に請求させる
+# -
+# 一括請求書フラグ
+# 他入居者との一括請求が1のときにここのフラグに従い請求書宛名表示を変える
+# 0:なし 1:連名 2:請求入居者名義
+# --------------------------------------------------------------
+
+# ---------------------------------------
+# ロックファイル作成
+
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# ---------------------------------------
+
+# --------------------------------------------------------------
+# 1.チェックが入ったリストを作成
+
+# チェックが入ったもののみ送信される
+# taishoで始まるものがチェックボックス
+awk '$1~/taisho/{print $1}' ${namefile} |
+# 1:name
+sed 's/taisho//g' -                     |
+# 事業所の人はここでは対象からはずす
+awk '$1!~/J/'                           |
+tr "_" " "                              |
+self 1/NF                               |
+# 1:入居者ID 2:処理月
+self 2 1                                |
+# 1:処理月 2:入居者ID
+LANG=C sort                             > ${tmp}-check_list
+# --------------------------------------------------------------
+cp ${tmp}-check_list ${work}/checklist
+
+awk '$1~/kubun/{print $1,$2}' ${namefile} |
+# 1:name
+#sed 's/kubun//g' -                     |
+tr "_" " "                              |
+self 2/NF |
+LANG=C sort                             > ${tmp}-kubun_list
+# --------------------------------------------------------------
+cp ${tmp}-kubun_list ${work}/kubunlist
+
+# 委託者番号が選択されていなかったらエラー
+[ ! -n ${itakushaNo} -o ${itakushaNo} = "_" ] && error_exit "委託者番号が選択されていません"
+mkdir -p ${pompa_dir}/KOJINATESEIKYUSHO/${itakushaNo}/${year}${month}
+cp $tmp-kubun_list ${pompa_dir}/KOJINATESEIKYUSHO/${itakushaNo}/${year}${month}/KUBUNLIST
+
+# --------------------------------------------------------------
+# 2.ヘッダの情報に従い明細ファイルから合計行(行分類フラグ＝30)を取得
+
+# 施設ごとに処理して最後にマージ
+# チェックが入っている人の施設だけに絞り込む
+shonichi="$(echo ${year}${month}"01")"
+getsumatsu="$(mdate ${year}${month}m | tarr | tail -n1)"
+self 2 $tmp-check_list | LANG=C sort -u > $tmp-check_taisho
+awk '$7<="'${getsumatsu}'"&&$8>="'${shonichi}'"' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+LANG=C sort -k6,6                                                                                    |
+join0 key=6 $tmp-check_taisho                                                                        |
+self 1  | LANG=C sort -u                                                                             > $tmp-shiborikomi_shisetsu
+
+awk '$2=="'${itakushaNo}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_FACT > $tmp-itakushaMST
+self 1 $tmp-itakushaMST |
+join0 key=1 $tmp-shiborikomi_shisetsu > $tmp-itakusha_shisetsu
+
+for Shisetsu in $(yarr $tmp-itakusha_shisetsu);do
+  awk '$1=="'${Shisetsu}'"&&$2=="'${year}''${month}'"&&$3=="2"&&$(NF-2)!=9' /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} |
+  self 3 > $tmp-yuko_check
+  if [ "$(gyo $tmp-yuko_check)" = 0 ];then
+    :
+  else
+    echo ${Shisetsu}
+  fi
+done > $tmp-shisetsu_list
+
+
+# -----------------------------
+# 処理月時点で有効な口座を取得
+
+awk '$(NF-2)!="9"' ${riyosha_dir}/RIYOUSHA_KOUZA             |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:顧客番号   17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード1か2(施設か全請求)
+# 追加でアンスコも(他入居者一括請求のときアンスコになるから)
+awk '$5=="1" || $5=="2" || $5=="_"'                      |
+self 1 3 4  6 7 \
+     8 9 10 16                                           |
+# 1:利用者ID     2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:請求期間FROM 7:請求期間TO     8:名義人     9:顧客番号
+
+# 選択した年月で有効なものに絞る
+awk '$6<="'${year}${month}'" && $7>="'${year}${month}'"' |
+delf 6 7                                                 |
+LANG=C sort                                              |
+# 半角処理
+han 6                                                    > ${tmp}-kouza_yuko_yuko
+# 1:利用者ID 2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:名義人   7:顧客番号
+
+# 金融機関名と支店名を半角かなで追加
+# マスタ準備
+cat /home/hands/E-LIFE/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME |
+awk '$4==1{print $1,$2}'                                  |
+han                                                       |
+LANG=C sort                                               > $tmp-ginko_master
+
+cat /home/hands/E-LIFE/TBL/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME |
+awk '$5==1{print $1,$2,$3}'                                      |
+han                                                              > $tmp-shiten_master
+
+cat ${tmp}-kouza_yuko_yuko                           |
+# 1:利用者ID 2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:名義人   7:顧客番号
+LANG=C sort -k2,3                                    |
+join1 key=2/3 $tmp-shiten_master                     |
+join1 key=2 $tmp-ginko_master                        |
+awk '{gsub(/_/,"",$8);print}'                        |
+LANG=C sort                                          > $tmp-kouza_yuko
+# 1:利用者ID 2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+# 6:口座種類 7:口座番号       8:名義人     9:顧客番号
+
+for SHISETSU in $(yarr $tmp-shisetsu_list);do
+  # -----------------------------
+  # チェックされた人の有効なヘッダを取得
+
+  # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+  # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+  # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+  # 16:予備             17:予備             18:予備           19:予備          20:予備
+  # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+  # 26:更新者
+
+  # ディレクトリ
+  [ ! -e ${seikyu_dir}/${SHISETSU} ] && mkdir ${seikyu_dir}/${SHISETSU}
+
+  LANG=C sort -k1,2 -k25,25 ${seikyu_dir}/${SHISETSU}/HEAD/SEIKYU_HEAD |
+  getlast 1 2                       |
+  awk '$24!="9"'                    |
+  # 一応念のため、選択した年月が請求確定月のものを選ぶ
+  awk '$14=="'${year}''${month}'"'  |
+  join0 key=1/2 ${tmp}-check_list - > ${tmp}-head_yukou
+  cp ${tmp}-head_yukou ${work}/head_yuko
+  # -----------------------------
+
+  # -----------------------------
+  # まずありえないがスタータス6か7以外が混じってたらエラー
+
+  awk '$3!="6" && $3!="7"' ${tmp}-head_yukou > ${tmp}-error_file
+  [ -s ${tmp}-error_file ] && error_exit "無効なステータスの請求が含まれています"
+  # -----------------------------
+
+  # -----------------------------
+  # まずありえないがチェック入ったリストと有効なヘッダの行数が違ったらエラー
+
+  #[ "$(gyo ${tmp}-check_list)" != "$(gyo ${tmp}-head_yukou)" ] && error_exit "処理エラーが発生しました"
+  # -----------------------------
+
+  # -----------------------------
+  # 明細ファイル合計行を取得
+
+  self 1 2 9 10 ${tmp}-head_yukou |
+  # 1:処理月 2:入居者ID 3:支払合算相手ID 4:明細ファイル名
+  while read year_month ID gassan_ID File ; do
+   # cjoin1 key=1/2 <(echo "${year_month} ${ID} ${gassan_ID}") ${seikyu_dir}/${SHISETSU}/MEISAI/${year_month}/${File} |
+   # # 1:処理月      2:入居者ID  3:支払合算相手 4:行分類フラグ 5:契約ID
+   # # 6:項目ID      7:契約枝番  8:請求年月日   9:非課税フラグ 10:金額税抜き
+   # # 11:金額税込み 12:税額     13:内訳1       14:内訳2       15:特別処理フラグ
+   # # 16:予備       17:予備     18:予備        19:予備        20:予備
+   # # 21:予備       22:予備     23:予備        24:予備        25:予備
+   # # 26:削除フラグ 27:更新時間 28:更新者
+   # cjoin0 key=4 <(echo "30") - |
+   # self 1/3 11                 |
+    cjoin1 key=1/2 <(echo "${ID} ${year_month} ${gassan_ID}") ${pompa_dir}/KOJINATESEIKYUSHO/${SHISETSU}/${year_month}/FOR_FB |
+tee ${work}/meisai_join |
+    cjoin2  +"0" key=1/2 ${pompa_dir}/KOJINATESEIKYUSHO/${itakushaNo}/${year}${month}/KUBUNLIST |
+    # 1:入居者ID 2:処理月 3:新規区分 4:支払合算相手 5:金額税込
+    self 2 1 4 5 3               |
+    # 1:処理月 2:入居者ID 3:支払合算相手 4:金額税込み 5:新規区分
+    awk '{if($3=="_")
+            {seikyusaki=$2;}
+          else
+            {seikyusaki=$3;};
+          print seikyusaki,$0}' |
+    # 1:請求先 2:処理月 3:入居者ID 4:支払合算相手 5:金額税込み 6:新規区分
+    self 1 5 6                   > ${tmp}-meisai_yukou_kari
+    # 1:請求先 2:金額税込み
+    if [ -s ${tmp}-meisai_yukou_kari ] ; then
+      cat ${tmp}-meisai_yukou_kari
+    else
+      [ "${gassan_ID}" = "_" ] && seikyusaki="${ID}" || seikyusaki="${gassan_ID}"
+      echo "${seikyusaki} 0 0"
+    fi
+  done             |
+  # 同じ請求先を合計する
+tee ${work}/meisai_yuko |
+  LANG=C sort      |
+  self 1 3 2       |
+  sm2 1 2 3 3      > ${tmp}-meisai_yukou
+  # 1:請求先 2:新規区分 3:金額税込み
+  # -----------------------------
+  # --------------------------------------------------------------
+
+  # --------------------------------------------------------------
+  # 3.口座情報を付与し、口座をキーにして金額を集計
+  
+  # -----------------------------
+  # -----------------------------
+  # 口座と明細をつなげる
+  
+  join1 key=1 ${tmp}-kouza_yuko ${tmp}-meisai_yukou |
+  # 1:請求先      2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+  # 6:口座種類    7:口座番号       8:名義人     9:顧客番号   10:新規区分
+  # 11:金額税込み
+  
+  # 他入居者口座選択や他入居者
+  # 一括請求
+  # を選択していると請求先が同一のものが複数行でてくるので集計する
+  delf 1                                            |
+  # 1::金融機関コード 2:金融機関名 3:支店コード 4:支店名 5:口座種類
+  # 6:口座番号        7:名義人     8:顧客番号   9:新規区分   10:金額
+  
+  LANG=C sort -k1,9                                 |
+  sm2 1 9 10 10                                     |
+  tee ${tmp}-kakunin                                |
+  
+  # 文字数が変わる値については固定長のデータに直す
+  while read kikan kikan_mei shiten shiten_mei yokinsyumoku kouza_number meigi kokyaku kubun kingaku ; do
+    # 口座番号頭0埋め7桁
+    kouza_number_new="$(echo "${kouza_number}" | keta 7 | sed 's/ /0/g')"
+    # 金額頭0埋め10桁
+    kingaku_new="$(echo "${kingaku}" | keta 10 | sed 's/ /0/g')"
+    # 口座名義左寄せ30文字半角スペース埋め
+    meigi_new="$(echo "${meigi}" | keta -30 | sed 's/ /#/g')"
+    # 金融機関名
+    kinyu_name="$(echo ${kikan_mei} | keta -15 | sed 's/ /#/g')"
+    # 支店名
+    shiten_name="$(echo ${shiten_mei} | keta -15 | sed 's/ /#/g')"
+    # 顧客番号
+    kokyakubango="$(echo ${kokyaku} | keta 15 | sed 's/ /0/g')"
+    # なおしたものを吐き出し
+    echo "${kikan} ${kinyu_name} ${shiten} ${shiten_name} ${yokinsyumoku} ${kouza_number_new} ${meigi_new} ${kingaku_new} ${kubun} ${kokyakubango}"
+  done >> ${tmp}-fb_kihon_data
+  # 1:金融機関コード 2:金融機関名 3:支店コード 4:支店名 5:口座種類
+  # 6:口座番号       7:名義人     8:金額税込み 9:新規区分 10:顧客番号
+  # -----------------------------
+  # 5.チェック入れたものについてステータスを7：FBデータ作成済みに変更する
+  
+  # ${tmp}-head_yukou
+  # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+  # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+  # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+  # 16:予備             17:予備             18:予備           19:予備          20:予備
+  # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+  # 26:更新者
+
+  awk '{$3="7";
+        $25="'${current_time}'";
+        print}' ${tmp}-head_yukou > ${tmp}-head_input
+
+  cat ${seikyu_dir}/${SHISETSU}/HEAD/SEIKYU_HEAD \
+      ${tmp}-head_input                          |
+  LANG=C sort -k1,2 -k25,25                      > ${tmp}-head_mst
+
+# 更新時用ファイル
+echo "head_input \
+      head_mst \
+      26 \
+      ${input_dir}/${today}/SEIKYU_HEAD.INPUT.$(basename $0).${current_time} \
+      ${seikyu_dir}/${SHISETSU}/HEAD/SEIKYU_HEAD"                            > ${tmp}-koushin_file
+# 1:inputファイル名 2:masterファイル名 3:input/master列数 4:input確定名 5:masterファイル名
+  # --------------------------------------------------------------
+  cp ${tmp}-koushin_file ${work}/koushin_file
+  # --------------------------------------------------------------
+  # 列チェック
+  
+  cat ${tmp}-koushin_file |
+  while read input_name mst_name retu_no input_dir_name mst_dir_name ; do
+    [ "$(retu $tmp-${input_name})" != "${retu_no}" ] && : > $tmp-err
+    [ "$(retu $tmp-${input_name} | gyo)" != "1" ] && : > $tmp-err
+    [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name} | gyo)" != "0" ] && : > $tmp-err
+  done
+  [ -e $tmp-err ] && error_exit "列数エラー"
+  
+  cat ${tmp}-koushin_file |
+  while read input_name mst_name retu_no input_dir_name mst_dir_name ; do
+    [ "$(retu $tmp-${mst_name})" != "${retu_no}" ] && : > $tmp-err
+    [ "$(retu $tmp-${mst_name} | gyo)" != "1" ] && : > $tmp-err
+    [ "$(awk 'NF!="'${retu_no}'"' $tmp-${mst_name} | gyo)" != "0" ] && : > $tmp-err
+  done
+  [ -e $tmp-err ] && error_exit "列数エラー"
+  # --------------------------------------------------------------
+  
+  # --------------------------------------------------------------
+  # 更新
+  
+  # ディレクトリがなければ作成
+  [ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+  
+  cat ${tmp}-koushin_file |
+  while read input_name mst_name retu_no input_dir_name mst_dir_name ; do
+    cp -p ${tmp}-${input_name} ${input_dir_name}
+    [ "${?}" != 0 ] && : > ${tmp}-err
+    [ -e ${tmp}-err ] && break;
+  done
+  [ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました"
+  
+  cat ${tmp}-koushin_file |
+  while read input_name mst_name retu_no input_dir_name mst_dir_name ; do
+    cp -p ${tmp}-${mst_name} ${mst_dir_name}
+    [ "${?}" != 0 ] && : > ${tmp}-err
+    [ -e ${tmp}-err ] && break;
+  done
+  [ -e ${tmp}-err ] && error_exit "処理中にエラーが発生しました"
+  # --------------------------------------------------------------
+  
+done
+# -----------------------------
+# 0円以下が出たら落とす
+
+awk '$6<=0' ${tmp}-kakunin > ${tmp}-kingaku_err
+[ -s ${tmp}-kingaku_err ] && error_exit "金額が0円以下になる行があります。選択した内容を確認してください。"
+# -----------------------------
+
+###################################### 事業所側のデータ作成 ##############################################################
+# チェックが入ったもののみ送信される
+
+# 年月
+kyotaku_nengetsu=$(mdate ${year}${month}m/+1)
+
+# taishoで始まるものがチェックボックス
+awk '$1~/taisho/{print $1}' ${namefile} |
+# 1:name
+sed 's/taisho//g' -                     |
+awk '$1~/J/'                            |
+tr "_" " "                              |
+sed 's/J//g'                            |
+self 1/NF                               |
+# 1:入居者ID 2:処理月
+self 1                                  |
+LANG=C sort                             > ${tmp}-jigyosho_check_list
+# --------------------------------------------------------------
+cp ${tmp}-jigyosho_check_list ${work}/jigyosho_checklist
+# --------------------------------------------------------------
+cat ${tmp}-check_list ${tmp}-jigyosho_check_list > $tmp-err_chk
+[ ! -s ${tmp}-err_chk ] && error_exit "対象が選択されていません"
+# --------------------------------------------------------------
+
+# 口座情報
+awk '$21!="9"' ${riyosha_dir}/RIYOUSHA_KOUZA             |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:顧客番号   17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード1か2(施設か全請求)
+# 追加でアンスコも(他入居者一括請求のときアンスコになるから)
+awk '$5=="1" || $5=="3"'                                 > $tmp-riyosha_kouza_13
+
+awk '$21!="9"' ${riyosha_dir}/RIYOUSHA_KOUZA             |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:顧客番号   17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+# -
+# 請求内容コード1か2(施設か全請求)
+# 追加でアンスコも(他入居者一括請求のときアンスコになるから)
+awk '$5=="_"'                                            |
+self 1 13                                                |
+LANG=C sort -k2,2                                        > $tmp-riyosha_unsco
+
+cat $tmp-riyosha_unsco                                   |
+join1 key=2 $tmp-riyosha_kouza_13                        |
+delf 2                                                   > $tmp-riyosha_unsco_2
+
+cat $tmp-riyosha_kouza_13 $tmp-riyosha_unsco_2           |
+self 1 3 4  6 7 \
+     8 9 10 16                                           |
+# 1:利用者ID     2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:請求期間FROM 7:請求期間TO     8:名義人     9:顧客番号
+
+# 選択した年月で有効なものに絞る
+awk '{gsub(/_/,"",$8);print}'                        |
+awk '$6<="'${getsumatsu}'" && $7>="'${shonichi}'"' |
+delf 6 7                                                 |
+han 6                                                    |
+LANG=C sort                                              > ${tmp}-kouza_jigyo_yuko
+# 1:利用者ID 2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:名義人   9:顧客番号
+
+cat ${tmp}-kouza_jigyo_yuko                           |
+# 1:利用者ID 2:金融機関コード 3:支店コード 4:口座種類 5:口座番号
+# 6:名義人
+LANG=C sort -k2,3                                    |
+join1 key=2/3 $tmp-shiten_master                     |
+join1 key=2 $tmp-ginko_master                        |
+LANG=C sort                                          > $tmp-kouza_yuko_jigyosho
+# 1:利用者ID 2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+# 6:口座種類 7:口座番号       8:名義人
+
+awk '$1~/J/' ${pompa_dir}/KOJINATESEIKYUSHO/${itakushaNo}/${year}${month}/KUBUNLIST |
+sed 's/J//g'                                                                        > $tmp-jigyosho_kubun
+# 引落金額を取得
+cat ${pompa_dir}/MEISAI/1004/${kyotaku_nengetsu}/FOR_FB > $tmp-fb1004
+cat ${pompa_dir}/MEISAI/1005/${kyotaku_nengetsu}/FOR_FB > $tmp-fb1005
+cat $tmp-fb1004 $tmp-fb1005                           |
+LANG=C sort                                           |
+join0 key=1 ${tmp}-jigyosho_check_list                |
+# 1:利用者ID 2:年月 3:FB金額 4:確定フラグ 5:更新時間
+cjoin2  +"0" key=1/2 $tmp-jigyosho_kubun              |
+# 1:利用者ID 2:年月 3:新規区分 4:FB金額 5:確定フラグ 6:更新時間
+self 1 3 4                                            |
+sm2 1 2 3 3                                           > $tmp-jigyosho_riyosha_goukei
+# 1:利用者ID 2:新規区分 3:合計金額
+
+# 口座と明細をつなげる
+LANG=C sort -k1,1 $tmp-jigyosho_riyosha_goukei        |
+# 1:利用者ID 2:新規区分 3:請求額
+join1 key=1 $tmp-kouza_yuko_jigyosho              |
+# 1:利用者ID 2:金融機関コード 3:金融機関名 4:支店コード 5:支店名
+# 6:口座情報 7:口座番号       8:口座名義   9:顧客番号   10:新規区分
+# 11:金額
+
+# 他入居者口座選択や他入居者
+# 一括請求
+# を選択していると請求先が同一のものが複数行でてくるので集計する
+delf 1                                            |
+# 1::金融機関コード 2:金融機関名 3:支店コード 4:支店名   5:口座種類
+# 6:口座番号        7:名義人     8:顧客番号   9:新規区分 10:金額税込み
+LANG=C sort -k1,9                                 |
+sm2 1 9 10 10                                     |
+tee ${tmp}-kakunin                                |
+# -----------------------------
+# 文字数が変わる値については固定長のデータに直す
+
+while read kikan kikan_mei shiten shiten_mei yokinsyumoku kouza_number meigi kokyaku kubun kingaku ; do
+  # 口座番号頭0埋め7桁
+  kouza_number_new="$(echo "${kouza_number}" | keta 7 | sed 's/ /0/g')"
+  # 金額頭0埋め10桁
+  kingaku_new="$(echo "${kingaku}" | keta 10 | sed 's/ /0/g')"
+  # 口座名義左寄せ30文字半角スペース埋め
+  meigi_new="$(echo "${meigi}" | keta -30 | sed 's/ /#/g')"
+  # 金融機関名
+  kinyu_name="$(echo ${kikan_mei} | keta -15 | sed 's/ /#/g')"
+  # 支店名
+  shiten_name="$(echo ${shiten_mei} | keta -15 | sed 's/ /#/g')"
+  # 顧客番号
+  kokyakubango="$(echo ${kokyaku} | keta 15 | sed 's/ /0/g')"
+  # なおしたものを吐き出し
+  echo "${kikan} ${kinyu_name} ${shiten} ${shiten_name} ${yokinsyumoku} ${kouza_number_new} ${meigi_new} ${kingaku_new} ${kubun} ${kokyakubango}"
+done >> ${tmp}-fb_kihon_data
+
+# 居宅側のステータス更新
+for jigyosho in $(echo "1004 1005");do
+  cat ${pompa_dir}/MEISAI/${jigyosho}/${kyotaku_nengetsu}/FOR_FB  |
+  # 1:利用者ID 2:年月 3:金額 4:ステータス 5:更新日時
+  join0 +ng key=1 $tmp-jigyosho_check_list  > $tmp-koushin 2> $tmp-not_koushin
+  awk '{if($4=="6"){$4="7";$5="'${current_time}'"};print}' $tmp-koushin > $tmp-koushingo
+  cat $tmp-koushingo $tmp-not_koushin       |
+  LANG=C sort                               > $tmp-kansei
+  mv $tmp-kansei ${pompa_dir}/MEISAI/${jigyosho}/${kyotaku_nengetsu}/FOR_FB
+done
+
+
+
+# --------------------------------------------------------------
+
+# --------------------------------------------------------------
+# 4.全銀フォーマットに従いテキスト作成
+
+# 半角スペースは最後に変換かますので#で埋めておく
+
+# -----------------------------
+# ヘッダの固定項目はは変数化
+
+#itaku_number="03216"
+itaku_number="$(echo ${itakushaNo} | keta 5 | sed 's/ /0/g')"
+itaku_name="$(echo "ｶ)ﾄｳｷﾕｳｲｰﾗｲﾌﾃﾞｻﾞｲﾝ" | keta -40 | sed 's/ /#/g')" #左寄せ40桁半角スペース埋め
+
+# # # # 要確認
+#itaku_bank_number="0291"
+itaku_bank_number="0005"
+#itaku_bank_s_number="160"
+itaku_bank_s_number="135"
+itaku_yokin_syumoku="1"
+#itaku_kouza_number="7918415"
+itaku_kouza_number="3382510"
+# -----------------------------
+
+# -----------------------------
+# ヘッダレコードの作成
+
+echo "191000000${itaku_number}${itaku_name}${hikiotoshi_month_date}${itaku_bank_number}###############${itaku_bank_s_number}###############${itaku_yokin_syumoku}${itaku_kouza_number}#################" > ${tmp}-h_record
+# -----------------------------
+
+# -----------------------------
+# データレコードの作成(ゆうちょとその他銀行で分岐する) 
+
+cjoin0 +ng key=1 <(echo "9900") ${tmp}-fb_kihon_data > ${tmp}-fb_kihon_data_yucyo 2> ${tmp}-fb_kihon_data_not_yucyo
+# 1:金融機関コード 2:金融機関名 3:支店コード 4:支店名 5:口座種類
+# 6:口座番号       7:名義人     8:金額税込み 9:新規区分 10:顧客番号
+
+# ゆうちょ側
+cat ${tmp}-fb_kihon_data_yucyo |
+#while read kikan shiten yokinsyumoku kouza_number meigi kingaku ; do
+while read kikan kikan_mei shiten shiten_mei yokinsyumoku kouza_number meigi kingaku kubun kokyaku ; do
+  echo "2${kikan}${kikan_mei}${shiten}####################${kouza_number}${meigi}${kingaku}${kubun}${itaku_number}${kokyaku}0########"
+#  echo "2${kikan}###############${shiten}####################${kouza_number}${meigi}${kingaku}0${itaku_number}0000000000000000########"
+done                           > ${tmp}-yucyo_result
+
+# ゆうちょ以外
+cat ${tmp}-fb_kihon_data_not_yucyo |
+#cat ${tmp}-fb_kihon_data            |
+while read kikan kikan_mei shiten shiten_mei yokinsyumoku kouza_number meigi kingaku kubun kokyaku ; do
+  echo "2${kikan}${kikan_mei}${shiten}${shiten_mei}####${yokinsyumoku}${kouza_number}${meigi}${kingaku}${kubun}${itaku_number}${kokyaku}0########"
+done                               > ${tmp}-not_yucyo_result
+
+cat ${tmp}-yucyo_result ${tmp}-not_yucyo_result > ${tmp}-d_record
+# -----------------------------
+
+# -----------------------------
+# 行数が違ったらエラー
+
+[ "$(gyo ${tmp}-d_record)" != "$(gyo ${tmp}-fb_kihon_data)" ] && error_exit "処理中にエラーが発生しました"
+# -----------------------------
+
+# -----------------------------
+# トレーラレコードの作成
+
+# データレコードの行数と合計金額
+d_gyo="$(gyo ${tmp}-d_record | keta 6 | sed 's/ /0/g')" #6桁で頭ゼロ埋め
+d_goukei_kingaku="$(self NF ${tmp}-fb_kihon_data | sm2 0 0 1 1 | keta 12 | sed 's/ /0/g')" #12桁で頭ゼロ埋め
+
+# 作成
+echo "8${d_gyo}${d_goukei_kingaku}000000000000000000000000000000000000#################################################################" > ${tmp}-t_record
+# -----------------------------
+
+# -----------------------------
+# エンドレコードの作成
+
+echo "9#######################################################################################################################" > ${tmp}-e_record
+# -----------------------------
+
+# -----------------------------
+# 完成
+cat ${tmp}-h_record \
+    ${tmp}-d_record \
+    ${tmp}-t_record \
+    ${tmp}-e_record |
+sed 's/#/ /g'       > ${tmp}-fb_data_kansei
+# -----------------------------
+# --------------------------------------------------------------
+
+#echo "テスト" > ${tmp}-data
+#-----------------------------------------------------------
+# 確認
+
+[ ! -s ${tmp}-fb_data_kansei ] && error_exit "データ作成に失敗しました"
+#-----------------------------------------------------------
+
+# --------------------------------------------------------------
+
+#-----------------------------------------------------------
+# ファイルをダウンロードディレクトリに置く
+
+filename="FB_DATA.${year}${month}.${current_time}.txt"
+cp ${tmp}-fb_data_kansei ${download_dir}/${filename}
+[ "${?}" != 0 ] && error_exit "処理中にエラーが発生しました"
+#-----------------------------------------------------------
+
+# ---------------------------------------
+# ロックファイル削除
+
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# ---------------------------------------
+
+############################ 明細出力用のデータ作成 #################################
+# 利用者マスタから部屋番号と利用者IDをとってくる
+shonichi=$(echo "${year}${month}""01")
+getsumatsu=$(mdate ${year}${month}m | tarr | tail -n1)
+awk '$(NF-2)!=9' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_KOUZA |
+# 1:利用者ID    2:口座ID                3:金融機関コード    4:支店コード        5:請求内容コード
+# 6:口座種類    7:口座番号              8:請求期間FROM      9:請求期間TO        10:名義人
+# 11:備考       12:他入居者との一括請求 13:一括請求入居者ID 14:一括請求書フラグ 15:口座名義(漢字フルネーム)
+# 16:顧客番号       17:予備                 18:予備             19:予備             20:予備
+# 21:削除フラグ 22:更新時間             23:更新者
+awk '$8<="'${getsumatsu}'"&&$9>="'${shonichi}'"'          |
+# 一括請求にしている人は除く
+awk '$13=="_"'                                            |
+tee $tmp-riyosha_kouza                                    |
+self 16 1                                                 |
+LANG=C sort -k2,2                                         > $tmp-kokyaku_riyosha
+# 1:顧客番号 2:利用者ID
+
+# 口座の顧客番号が居宅かどうかを判断
+awk '$5==3' $tmp-riyosha_kouza                            |
+self 16                                                   |
+awk '{print $1,"kyotaku"}'                                |
+LANG=C sort                                               > $tmp-kyotaku_kouza
+cp $tmp-kyotaku_kouza ${work}/kyotaku_kouza
+
+
+awk '$(NF-2)!=9{print $1,$2}' ${data_dir}/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+LANG=C sort > $tmp-riyosha_master
+
+# 処理月に各部屋に存在した人のリストを作成する
+awk '$(NF-2)!=9' ${data_dir}/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:削除フラグ 10:更新時間
+# 11:更新者
+self 1/8 7.1.6 8.1.6 |
+# 1:施設ID   2:建屋ID 3:フロアID 4:ユニットID 5:居室ID
+# 6:入居者ID 7:入居日 8:退去日   9:入居月     10:退去月
+LANG=C sort |
+getlast 1 6 |
+# 入居退去期間が処理月を含む人のみ抽出
+#awk '$9<="'${up_kikan_month_select}'" && $10>="'${up_kikan_month_select}'"' |
+self 6 1 5 | LANG=C sort -k1,1  |
+join2 key=1 $tmp-riyosha_master > ${tmp}-hito_heya
+# 1:利用者ID 2:利用者名 3:施設ID 4:居室ID
+join2 key=2 $tmp-hito_heya $tmp-kokyaku_riyosha                              |
+LANG=C sort -k1,1                                                            > $tmp-kokyaku_riyosha_room
+# 1:顧客番号 2:利用者ID 3:利用社名 4:施設コード 5:居室
+cp $tmp-kokyaku_riyosha_room ${work}/kokyaku_room
+
+# ----------
+
+awk 'NR!=1&&NF==4' ${tmp}-fb_data_kansei                                     |
+self 1.2.4 1.6 2/NF                                                          |
+awk '{if($1=="9900"){print $1,$2,$3,"S",$4,$5}else{print $1,$2,$3,substr($4,1,1),substr($4,2),$5}}' |
+# 1:銀行コード 2:銀行名ｶﾅ 3:支店コード 4:口座種別 5:口座番号口座名義カナ 6:その他
+self 1/4 5.1.7 5.8 6.1.10 6.11.1 6.12.5 6.17.15 6.32                         |
+# 1:銀行コード      2:銀行名ｶﾅ 3:支店コード 4:口座種別   5:口座番号
+# 6:口座名義カナ    7:引落金額 8:新規コード 9:委託者番号 10:顧客番号
+# 11:振替結果コード
+
+# 先頭の0をトル
+1bai 7 10                                                                    > $tmp-upload_input
+# 1:銀行コード      2:銀行名ｶﾅ 3:支店コード 4:口座種別   5:口座番号
+# 6:口座名義カナ    7:引落金額 8:新規コード 9:委託者番号 10:顧客番号
+# 11:振替結果コード
+
+# 施設・居室と結びつけ
+self 10 1/9 11 $tmp-upload_input                                             |
+# 1:顧客番号        2:銀行コード   3:銀行名ｶﾅ 4:支店コード 5:口座種別
+# 6:口座番号        7:口座名義カナ 8:引落金額 9:新規コード 10:委託者番号
+# 11:振替結果コード
+LANG=C sort -k1,1                                                            |
+tee ${work}/joinupload |
+join2 key=1 $tmp-kokyaku_riyosha_room                                        |
+# 1:顧客番号      2:利用者ID  3:利用者名    4:施設コード  5:居室
+# 6:銀行コード    7:銀行名ｶﾅ  8:支店コード  9:口座種別    10:口座番号
+# 11:口座名義カナ 12:引落金額 13:新規コード 14:委託者番号 15:振替結果コード
+join2 key=1 $tmp-kyotaku_kouza                                               |
+# 1:顧客番号        2:居宅フラグ    3:利用者ID  4:利用者名    5:施設コード
+# 6:居室            7:銀行コード    8:銀行名ｶﾅ  9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額 14:新規コード 15:委託者番号
+# 16:振替結果コード
+self 3/6 2 1 7/NF                                                            |
+awk '{$16="A";print}'                                                        |
+LANG=C sort                                                                  > $tmp-for_pompa
+# 1::利用者ID       2:利用者名      3:施設コード 4:居室        5:居宅フラグ
+# 6:顧客番号        7:銀行コード    8:銀行名ｶﾅ   9:支店コード  10:口座種別
+# 11:口座番号       12:口座名義カナ 13:引落金額  14:新規コード 15:委託者番号
+# 16:振替結果コード
+
+cp ${tmp}-for_pompa ${pompa_dir}/FB_SAKUSEI/${itakushaNo}/FB_SAKUSEI.MAKEDATA.${year}${month}.${itakushaNo}
+
+
+
+#-----------------------------------------------------------
+# 結果はきだし(ファイル名をdisplayに渡す)
+
+echo "ok ${filename}"
+#-----------------------------------------------------------
+
+rm -f ${tmp}-*
+exit 0
+

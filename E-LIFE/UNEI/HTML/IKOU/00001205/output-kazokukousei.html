@@ -1,0 +1,1594 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<title>家族構成図</title>
+		<script>
+			// グローバル変数 =====================================================
+			// ライン描画フラグ
+			var lineDrawFlag = false;
+
+			// ラインNo (1=書く / 0=消す)
+			var	lineNo = 1;
+			
+			// データ番号
+			var dataNo = 231;
+
+			// モード（ = "LINE"|"PERSON"|"PARTS"|"TEXT"）
+			var mode;
+			// アクション（ LINE: = "DRAW"|"ERASE", OTHER: = "PUT"|"DEL"）
+			var action;
+
+			// グリッドスイッチ(1=ON / 0=OFF)
+			// グリッドは人物パーツのみ
+			var gridSw = 1;
+
+			// スクリーン
+			var textScreenObj = null;
+			var partScreenObj = null;
+			var personScreenObj = null;
+			var lineScreenObj = null;
+			var putScreenObj = null;			// クリックを検知するスクリーン(画像と同じ位置・大きさ)
+
+			// ラインの配置データ
+			var linePic;
+			var linePic_save = [];
+
+			// 人物の配置データ
+			var personPic;
+
+			// ラインパターンのタイル(配列)
+			var lineObj;
+
+			// 人物のタイル(配列)
+			var personObj;
+			
+			// 現在選択中の人物パターン
+			var selectedPersonObj = null;
+			var selectedPersonIconObj = null;
+
+			// カーソル
+			var cursorX;
+			var cursorY;
+
+			// テキスト
+			var texts;
+			var textObj = null;						// 配置するテキスト
+			var textInputObj = null;			// テキスト入力欄
+			var maxTextPartsNo = 10;			// 配置できるテキストパーツの最大数
+			var tateyoko;									// 横書き or 縦書き
+
+			// パーツ
+			var partsPic;
+			var partsObj;
+
+			// 背景（グリッド）
+			var bgTileObj;
+
+			// 初期化 =============================================================
+			function init(){
+				// マウス位置取得する関数をコールバック関数として設定する
+				document.onmousemove=function(e){
+					if(document.all && !window.opera){
+						cursorX = window.event.clientX;
+						cursorY = window.event.clinetY;
+					}else{
+						cursorX = e.pageX;
+						cursorY = e.pageY;
+					}
+				}
+
+				// 各オブジェクトの取得
+  			texts     = document.getElementsByClassName("text_parts");
+				partsPic  = document.getElementsByClassName("fig_parts");
+				personObj = document.getElementsByClassName("person_pattern");
+				personPic = document.getElementsByClassName("person_tile");
+				lineObj   = document.getElementsByClassName("line_action");
+				linePic   = document.getElementsByClassName("line_tile");
+				bgTileObj = document.getElementsByClassName("bg_2");
+				
+				textScreenObj   = document.getElementById("TEXT_SCREEN");
+				partsScreenObj  = document.getElementById("PARTS_SCREEN");
+				personScreenObj = document.getElementById("PERSON_SCREEN");
+				lineScreenObj   = document.getElementById("LINE_SCREEN");
+				putScreenObj    = document.getElementById("PUT_SCREEN");
+
+				textInputObj  = document.getElementById("TEXTINPUT");
+				buttonObj     = document.getElementById("TEXTPUT_BUTTON");
+
+				selectedPersonObj =  document.createElement("div");
+
+				clearData();
+
+				// ドラッグイベントを削除
+				for(var i=0; i<linePic.length; i++){
+					linePic[i].ondrag = function(){return false;};
+					linePic[i].ondragstart = function(){return false;};
+					linePic[i].ondragend = function(){return false;};
+				}
+
+				// 横書き縦書きを取得する
+				if(document.getElementById("TY_TATE").checked){
+					tateyoko = "TATE";
+				}else{
+					tateyoko = "YOKO";
+				}
+			}
+
+			// 選択・配置のクリア
+			function clearData(){
+				initSelect();
+				selectedLineObj =  document.createElement("div");
+				selectedLineObj.style.backgroundImage   = "url('/images/LINE0000.png')";
+				selectedPersonObj.style.backgroundImage = "url('/images/PERSON00.png')";
+
+				// 配置データの初期化
+				for (var i=0; i<personPic.length; i++){
+					personPic[i].style.backgroundImage = selectedPersonObj.style.backgroundImage;
+				}
+				for (var i=0; i<linePic.length; i++){
+					linePic[i].style.backgroundImage = selectedLineObj.style.backgroundImage;
+					linePic[i].value = 0;
+				}
+				for (var i=0; i<texts.length; i++){
+					var obj = document.getElementById("TEXTPARTS" + i);
+					obj.style.display = "none";
+					obj.innerHTML = "";
+				}
+				for (var i=0; i<partsPic.length; i++){
+					var obj = document.getElementById("PARTS" + i);
+					obj.style.display = "none";
+					obj.style.backgroundImage = "";
+				}
+			}
+
+			// 全ての選択を解除する
+			function initSelect(){
+				for(var i=0; i<personObj.length; i++){
+					personObj[i].style.border = "2px solid #dddddd";
+				}
+
+				// ツールアイコンの強調解除
+				document.getElementById("TOOL_TEXT").style.border=   "2px solid #aaaaaa";
+				document.getElementById("TOOL_PERSON").style.border= "2px solid #aaaaaa";
+				document.getElementById("TOOL_PARTS").style.border=  "2px solid #aaaaaa";
+				document.getElementById("TOOL_LINE").style.border=   "2px solid #aaaaaa";
+				document.getElementById("TOOL_DEL").style.border=    "2px solid #aaaaaa";
+
+				// アクションの初期化
+				document.getElementById("ACTION_TOOL").style.display = "block";
+				document.getElementById("LINE_TOOL").style.display   = "none";
+
+				// ツールの初期化（非表示）
+				document.getElementById("TEXT_INPUT_TOOL").style.display = "none";
+				document.getElementById("PARTS_PATTERN").style.display   = "none";
+				document.getElementById("PERSON_PATTERN").style.display  = "none";
+				document.getElementById("BLANK").style.display           = "block";
+			}
+
+			// クリア
+			function clearAll(){
+				if (!window.confirm("現在の作図を消去します。\nよろしいでしょうか？"))
+					return;
+				clearData();
+			}
+
+			// テキスト ===========================================================	
+			// テキスト配置モードにする
+			function modeText(obj){
+				if ((textObj=getTextObj()) == null){
+					alert("これ以上テキストを配置できません");
+					return;
+				}
+				initSelect();
+				document.getElementById("TOOL_TEXT").style.border= "2px solid blue";
+				document.getElementById("TEXT_INPUT_TOOL").style.display = "block";
+				document.getElementById("BLANK").style.display = "none";
+
+				// レイヤーの順序変更
+				putScreenObj.style.zIndex    = "14";
+				textScreenObj.style.zIndex   = "13";
+				partsScreenObj.style.zIndex  = "12";
+				personScreenObj.style.zIndex = "11";
+				lineScreenObj.style.zIndex   = "10";
+				
+				// 入力欄の初期化
+				textInputObj.value= "";
+				textInputObj.disabled = false;
+
+				mode = "TEXT";
+				setAction("PUT");
+			}
+
+			// 使用可能なテキストパーツを取得する
+			function getTextObj(){
+				for (var i=0; i<texts.length; i++){
+					var obj = document.getElementById("TEXTPARTS" + i);
+					if(obj.innerHTML == "")	return obj;
+				}
+				return null;
+			}
+
+			// 入力したテキストを動かせるパーツにする
+			function setText(){
+				// 入力した文字列を取り出す
+				var str = textInputObj.value.replace(/\n/g,"<br>");
+
+				// カーソルにテキストパーツをセットする
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+				textObj.style.display = "block";	
+				textObj.innerHTML = str;
+				
+				// 縦書きの指定
+				if (tateyoko == "TATE"){
+					textObj.style.width = "1em";
+					textObj.style.textalign = "center";
+				}else{
+					textObj.style.width = "auto";
+					textObj.style.textalign = "left";
+				}
+
+				// 入力したテキストを初期化する
+				textInputObj.value = "";
+				textInputObj.disabled = false;
+			}
+
+			// テキストが1文字以上あれば、配置ボタンを有効化する
+			function enabledTextPutButton(){
+				if(textInputObj.value.length <= 0)	return;
+				buttonObj.disabled = false;
+			}
+			
+			// テキストをマウスに合わせて動かす
+			function moveText(){
+				if (textObj == null)	return;
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+			}
+
+			// テキストの位置を固定する
+			function putText(){
+				if (textObj==null)	return;
+				textObj.style.left = (cursorX - 16) + 'px';
+				textObj.style.top  = (cursorY - 16) + 'px';
+				textObj.style.border = "none"
+				textObj = null;
+				
+				// テキストモードへ再初期化
+				modeText();
+			}
+
+			// テキストパーツを拾う
+			function pickText(obj){
+				if(mode != "TEXT")	return;
+
+				textObj = obj;
+				
+				if(action == "PUT"){
+					textObj.style.border = "2px solid red";
+					textObj.style.left = (cursorX - 16) + 'px';
+					textObj.style.top  = (cursorY - 16) + 'px';
+				}else if(action == "DEL"){
+					deleteText(obj);
+				}
+			}
+
+			// テキストパーツを削除する
+			function deleteText(obj){
+				obj.innerHTML = "";
+				obj.style.display = "none";	
+				obj = null;
+				
+				// テキストモードに変更しておく
+				initSelect();
+				mode = "TEXT";
+			}
+
+			// 横書き縦書きの変更
+			function changeTateyoko(value){
+				tateyoko = value;
+			}
+
+			// パーツ（円・矢印）==================================================
+			function modeParts(){
+				initSelect();
+				document.getElementById("TOOL_PARTS").style.border= "2px solid blue";
+				document.getElementById("PARTS_PATTERN").style.display = "block";
+				document.getElementById("BLANK").style.display = "none";
+
+				// レイヤーの順序変更
+				putScreenObj.style.zIndex    = "14";
+				partsScreenObj.style.zIndex  = "13";
+				textScreenObj.style.zIndex   = "12";
+				personScreenObj.style.zIndex = "11";
+				lineScreenObj.style.zIndex   = "10";
+
+				mode = "PARTS";
+				setAction("PUT");
+			}
+			
+			// 使用可能なパーツを取得する
+			function getPartsObj(){
+				for (var i=0; i<partsPic.length; i++){
+					var obj = document.getElementById("PARTS" + i);
+					if(obj.style.display == "none")	return obj;
+				}
+				return null;
+			}
+
+			function selectParts(obj, w, h){
+				if ((partsObj=getPartsObj()) == null){
+					alert("これ以上円を配置できません");
+					return;
+				}
+				// カーソルに選択したアイコンと同じ図形をセット
+				partsObj.style.backgroundImage = obj.style.backgroundImage;
+				partsObj.style.width = w;
+				partsObj.style.height = h;
+				partsObj.style.border = "none";
+				partsObj.style.backgroundColor = "transparent";
+				partsObj.style.left = (cursorX - 32) + 'px';
+				partsObj.style.top  = (cursorY - 32) + 'px';
+				partsObj.style.display = "block";	
+
+				// レイヤーの順序変更
+				putScreenObj.style.zIndex    = "14";
+				partsScreenObj.style.zIndex  = "13";
+				textScreenObj.style.zIndex   = "12";
+				personScreenObj.style.zIndex = "11";
+				lineScreenObj.style.zIndex   = "10";
+			}
+
+			// パーツをマウスに合わせて動かす
+			function moveParts(){
+				if (partsObj == null)	return;
+				partsObj.style.left = (cursorX - 32) + 'px';
+				partsObj.style.top  = (cursorY - 32) + 'px';
+			}
+
+			// 選択したパーツの位置を固定する
+			function putParts(){
+				if (partsObj == null)	return;
+
+				partsObj.style.left = (cursorX - 32) + 'px';	
+				partsObj.style.top  = (cursorY - 32) + 'px';	
+				partsObj.style.border = "none";	
+				partsObj = null;
+
+				// パーツモードへ再初期化
+				modeParts();
+			}
+
+			// パーツを拾う
+			function pickParts(obj){
+				if(mode != "PARTS")	return;
+
+				partsObj = obj;
+
+				if(action == "PUT"){
+					partsObj.style.border = "none";
+					partsObj.style.left = (cursorX - 32) + 'px';
+					partsObj.style.top  = (cursorY - 32) + 'px';
+				}else if(action=="DEL"){
+					deleteParts(obj);
+				}
+			}
+
+			// パーツを削除する
+			function deleteParts(obj){
+				obj.style.backgroundImage = "";	
+				obj.style.display = "none";	
+				obj = null;
+				
+				// パーツモードへ再初期化
+				modeParts();
+			}
+
+			// 人物配置 ===========================================================
+			// 人物配置モードにする
+			function modePerson(){
+				initSelect();
+				document.getElementById("TOOL_PERSON").style.border= "2px solid blue";
+				document.getElementById("PERSON_PATTERN").style.display = "block";
+				document.getElementById("BLANK").style.display = "none";
+
+				// レイヤーの順序変更
+				personScreenObj.style.zIndex = "14";
+				textScreenObj.style.zIndex   = "13";
+				partsScreenObj.style.zIndex  = "12";
+				lineScreenObj.style.zIndex   = "11";
+				putScreenObj.style.zIndex    = "10";
+
+				mode = "PERSON";
+				action = "PUT";
+				if(selectedPersonIconObj){
+					selectedPersonIconObj.style.border = "2px solid green";
+				}
+				if(gridSw == 1)	gridPerson();
+				setAction("PUT");
+			}
+
+			// 人物を選択する
+			function selectPerson(obj){
+				initSelect();
+				modePerson();
+				obj.style.border = "2px solid green";
+				selectedPersonIconObj = obj;
+				selectedPersonObj.style.backgroundImage = obj.style.backgroundImage;
+			}
+
+			// 人物タイルを置く/削除する
+			function putPerson(obj){
+				if(mode != "PERSON")	return;
+
+				if(action == "PUT"){
+					obj.style.backgroundImage = selectedPersonObj.style.backgroundImage;
+				}else if(action == "DEL"){
+					obj.style.backgroundImage = "url('/images/PERSON00.png')";
+					setAction("PUT");
+					document.getElementById("TOOL_DEL").style.border= "2px solid #aaaaaa";
+				}
+			}
+
+			// ライン配置 =========================================================
+			// ライン配置モードにする
+			function modeLine(){
+				initSelect();
+				document.getElementById("TOOL_LINE").style.border= "2px solid blue";
+				document.getElementById("LINE_TOOL").style.display = "block";
+				document.getElementById("ACTION_TOOL").style.display = "none";
+				
+				// レイヤーの順序変更
+				lineScreenObj.style.zIndex   = "14";
+				textScreenObj.style.zIndex   = "13";
+				partsScreenObj.style.zIndex  = "12";
+				personScreenObj.style.zIndex = "11";
+				putScreenObj.style.zIndex    = "10";
+
+				mode = "LINE";
+				setDrawLine();
+			}
+
+			// ライン描画モードのON/OFF
+			function disableDraw(){
+				lineDrawFlag = false;
+			}
+
+			function enableDraw(){
+				saveLinePic();
+				lineDrawFlag = true;
+			}
+
+			// ラインを描画する状態にする
+			function setDrawLine(){
+				document.getElementById("LINE_DRAW").style.border  = "2px solid green";
+				document.getElementById("LINE_ERASE").style.border = "2px solid #aaaaaa";
+				lineNo = 1;
+			}
+
+			// ラインを消去する状態にする
+			function setEraseLine(){
+				document.getElementById("LINE_DRAW").style.border  = "2px solid #aaaaaa";
+				document.getElementById("LINE_ERASE").style.border = "2px solid green";
+				lineNo = 0;
+			}
+
+			// ラインタイルを置く
+			function putLine(obj){
+			}
+
+			// ライン画像を描画する（マウスボタンを離したとき実行）
+			function drawLinePic(){
+				for (var i=0; i<linePic.length; i++){
+					var lineDir = 0;
+					if(linePic[i].value == 1){
+						if((i/19)>=1  && linePic[i-19].value == 1)	lineDir +=    1;
+						if((i%19)<=18 && linePic[i+1].value  == 1)	lineDir +=   10;
+						if((i/19)<18  && linePic[i+19].value == 1)	lineDir +=  100;
+						if((i%19)>=1  && linePic[i-1].value  == 1)	lineDir += 1000;
+					}
+					no = ("0000" + lineDir).slice(-4);
+					linePic[i].style.backgroundImage = "url('/images/LINE" + no + ".png')";
+					linePic[i].style.backgroundColor = "transparent";
+				}
+			}
+
+			// UNDO用にライン画像を保存する
+			function saveLinePic(){
+				for (var i=0; i<linePic.length; i++){
+					linePic_save[i] = linePic[i].value;
+				}
+			}
+
+			// ライン描画を一段回前に戻す
+			function undoLine(){
+				document.getElementById("LINE_UNDO").style.border =  "2px solid red";
+				for (var i=0; i<linePic.length; i++){
+					linePic[i].value= linePic_save[i];
+				}
+				for (var i=0; i<linePic.length; i++){
+					var lineDir = 0;
+					if(linePic[i].value == 1){
+						if((i/19)>=1  && linePic[i-19].value == 1)	lineDir +=    1;
+						if((i%19)<=18 && linePic[i+1].value  == 1)	lineDir +=   10;
+						if((i/19)<18  && linePic[i+19].value == 1)	lineDir +=  100;
+						if((i%19)>=1  && linePic[i-1].value  == 1)	lineDir += 1000;
+					}
+					no = ("0000" + lineDir).slice(-4);
+					linePic[i].style.backgroundImage = "url('/images/LINE" + no + ".png')";
+					linePic[i].style.backgroundColor = "transparent";
+				}
+				document.getElementById("LINE_UNDO").style.border =  "2px solid #aaaaaa";
+			}
+
+			// アクション =========================================================
+			function setAction(act){
+				if(act == "PUT"){
+					document.getElementById("TOOL_PUT").style.border= "2px solid red";
+					document.getElementById("TOOL_DEL").style.border= "2px solid #aaaaaa";
+					action = "PUT";
+				}else{
+					document.getElementById("TOOL_PUT").style.border= "2px solid #aaaaaa";
+					document.getElementById("TOOL_DEL").style.border= "2px solid red";
+					action = "DEL";
+				}
+			}
+			
+			// 保存/読出 ==========================================================
+			// データを保存する
+			function saveData(){
+				if (!window.confirm("現在の作図を[No." + dataNo + "]データとして保存します。\nよろしいでしょうか？"))
+					return;
+
+				// 人物
+				var personStr = "";
+				for (var i=0; i<personPic.length; i++){
+					// 番号部分だけを抜き出す
+					var picFile = personPic[i].style.backgroundImage.split("/").pop();
+					var figNo = ("00" + picFile.match(/[0-9]+/)).slice(-2);
+					personStr += (figNo + ",")
+				}
+
+				// ライン
+				var lineStr = "";
+				for (var i=0; i<linePic.length; i++){
+					// 番号部分だけを抜き出す
+					var linePicFile = linePic[i].style.backgroundImage.split("/").pop();
+					var figNo = ("0000" + linePicFile.match(/[0-9]+/)).slice(-4);
+					lineStr += (figNo + ",")
+				}
+
+				// 文字
+				var textStr = new Array();
+				var sendTextStr = "&";
+
+				for(var i=0; i<texts.length; i++){
+					var str = texts[i].innerHTML; 
+					if(texts[i].style.display == "none")	continue;
+					// 文字列は、"_"を"\_"に、","を"\,"に、半角空白を"_"に其々置換し、URIエンコードする
+					str = str.replace(/,/g,"\\,");
+					str = str.replace(/_/g,"\\_");
+					str = str.replace(/ /g,"_");
+					str = encodeURIComponent(str);
+
+					textStr[i] = "TEXTPARTS" + i + "=" + texts[i].style.left + "," + texts[i].style.top + "," + str + "," + texts[i].style.width;
+					sendTextStr += textStr[i];
+					sendTextStr += "&";
+				}
+
+				// パーツ
+				var partsStr = new Array();
+				for(var i=0; i<partsPic.length; i++){
+					if(partsPic[i].style.display == "none")	continue;
+					partsStr[i] = "PARTS" + i + "=" + partsPic[i].style.left + "," + partsPic[i].style.top 
+						+ "," + partsPic[i].style.backgroundImage
+						+ "," + partsPic[i].style.width + "," + partsPic[i].style.height;
+					sendTextStr += partsStr[i];
+					sendTextStr += "&";
+				}
+
+				// 保存CGI呼び出し
+				var httpReq = new XMLHttpRequest();
+				httpReq.open("POST", "/E-LIFE/KYOUTSU/cgi-bin/KAZOKUKOSEI_SAVE.CGI", false);
+				httpReq.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+				httpReq.send("NO=" + dataNo + "&PERSON=" + personStr + "&LINE=" + lineStr + sendTextStri + "&RiyouCGI=IKOU_ASSESSMENT&Riyoushaid=00001205");
+				
+				// 完了
+				alert("保存しました");
+			}
+
+			// データを読み出す
+			function loadData(){
+                                var responseData="NO 231\nPERSON 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00\nLINE 0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0010,1010,1000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000,0000\nTEXTPARTS0 133px,71px,更新,auto\nTEXTPARTS1 130px,138px,てｘｔ,auto";
+				var data = responseData.split("\n");
+				dataNo = data[0].match(/[0-9]+/);
+
+				// 人物
+				var personNo = data[1].substr(7).split(",");
+				for(var i=0; i<personNo.length; i++){
+					personPic[i].style.backgroundImage = "url('/images/PERSON" + personNo[i] + ".png')";
+				}
+
+				// ライン
+				var lineNo  = data[2].substr(5).split(",");
+				for(var i=0; i<lineNo.length; i++){
+					linePic[i].style.backgroundImage = "url('/images/LINE" + lineNo[i] + ".png')";
+					if(lineNo[i] > 0){
+						linePic[i].value = 1;
+					}else{
+						linePic[i].value = 0;
+					}
+				}
+				// パーツ・テキスト
+				for (var i=3; i<data.length; i++){
+					var partsData = data[i].split(" ");	
+					if (partsData[0].indexOf("PARTS") == 0){
+						// パーツ
+						var parts=partsData[1].split(",");
+						partsObj = document.getElementById(partsData[0]);
+						partsObj.style.left = parts[0];
+						partsObj.style.top  = parts[1];
+						partsObj.style.backgroundImage = parts[2].replace(/\\\"/g,"'");
+						partsObj.style.width = parts[3];
+						partsObj.style.height = parts[4];
+						partsObj.style.backgroundColor = "transparent";
+						partsObj.style.border = "none";
+						partsObj.style.display = "block";
+						partsObj = null;
+					}else if (partsData[0].indexOf("TEXTPARTS") == 0){
+						// テキスト
+						textParts=partsData[1].split(",");
+						textObj = document.getElementById(partsData[0]);
+						textObj.style.left = textParts[0];
+						textObj.style.top  = textParts[1];
+						textObj.innerHTML  = textParts[2];
+						textObj.style.width = textParts[3];
+						textObj.style.border = "none";
+						textObj.style.display = "block";
+						textObj = null;
+					}
+				}
+			}
+
+                        function gotoHome() {
+                                window.close();
+                        }
+	
+			// グリッド ===========================================================
+			// 人物配置のグリッドを表示する
+			function gridPerson(){
+				for(i=0; i<bgTileObj.length; i++){
+					bgTileObj[i].style.backgroundColor = "#eeeeee";
+				}
+			}
+
+			// グリッドのトグル（表示/非表示）
+			function toggleGrid(){
+				// グリッドを非表示にする
+				if(gridSw == 1){
+					for(i=0; i<bgTileObj.length; i++){
+						bgTileObj[i].style.backgroundColor = "white";
+					}
+					gridSw = 0;
+					document.getElementById("GRID_SW").innerHTML = "グリッドON";
+				// グリッドを表示する
+				}else{
+					gridPerson();
+					gridSw = 1;
+					document.getElementById("GRID_SW").innerHTML = "グリッドOFF";
+				}
+			}
+			
+			// プレビュー =========================================================
+			function dispPreview(){
+				// レイヤーの順序変更
+				textScreenObj.style.zIndex   = "14";
+				partsScreenObj.style.zIndex  = "13";
+				personScreenObj.style.zIndex = "12";
+				lineScreenObj.style.zIndex   = "11";
+				putScreenObj.style.zIndex    = "10";
+
+				// グリッドを非表示にする
+				if(gridSw == 1){
+					for(i=0; i<bgTileObj.length; i++){
+						bgTileObj[i].style.backgroundColor = "white";
+					}
+					gridSw = 0;
+					document.getElementById("GRID_SW").innerHTML = "グリッドON";
+				}
+			}
+		</script>
+
+		<style>
+			* {
+				padding: 0;
+				margin: 0;
+				font-size: 12px;
+			}
+			.main {
+				float: left;
+				width: 329px;
+				height: 329px;
+				padding: 0px 0px;
+				background-color: white;
+			}
+
+			/* スクリーン(左側) */
+			.text_screen {
+				width:  329px;
+				height: 329px;
+				position: absolute;
+				left: 16px;
+				top: 16px;
+				background-color: transparent;
+				z-index: 100;
+			}
+
+			.bg_screen{
+				width:  329px;
+				height: 329px;
+				position: absolute;
+				left: 16px;
+				top: 16px;
+			}
+
+			.line_screen {
+				width:  304px;
+				height: 304px;
+				position: absolute;
+				left: 24px;
+				top: 24px;
+			}
+
+			.parts_screen {
+				width:  329px;
+				height: 329px;
+				position: absolute;
+				left: 24px;
+				top: 24px;
+			}
+
+			.line_tile {
+				width: 16px;
+				height: 16px;
+				float: left;
+				margin: 0;
+				background-repeat: no-repeat;
+				cursor: default;
+			}
+
+			.person_screen {
+				width:  329px;
+				height: 329px;
+				position: absolute;
+				left: 16px;
+				top: 16px;
+			}
+			.person_tile {
+				width: 32px;
+				height: 32px;
+				float: left;
+				margin: 0;
+				text-align:center;
+			}
+
+			.bg_tile{
+				width: 32px;
+				height: 32px;
+				float: left;
+			}
+			
+			.bg_1{	
+				background-color: white;
+			}
+
+			.bg_2{	
+				background-color: white;
+			}
+
+			/* ツール(右側)*/
+			.tool_area{
+				width: 160px;
+				height:312px;
+				position: absolute;
+				left: 366px;
+				top: 16px;
+				padding:4px;
+				background-color: steelblue;
+			}
+			
+			.person_box{
+				width: 100%;	
+				height: 76px;
+				margin-bottom:5px;
+				background-color: white;
+			}
+
+			.person_pattern {
+				width: 32px;
+				height: 32px;
+				float: left;
+				border: 2px solid #dddddd;
+				margin: 1px;
+				background-repeat: no-repeat;
+			}
+
+			.tool_select_box{
+				width: 100%;	
+				height: 38px;	
+				margin-bottom:2px;
+				background-color: lightskyblue;
+			}
+
+			.action_box{
+				width: 100%;	
+				height: 38px;	
+				background-color: deepskyblue;
+			}
+
+			.tool_icon {
+				width: 32px;
+				height: 32px;
+				float: left;
+				border: 2px solid #aaaaaa;
+				margin: 1px;
+				background-repeat: no-repeat;
+			}
+
+			.parts_icon {
+				width: 64px;
+				height: 64px;
+				float: left;
+				border: 2px solid #aaaaaa;
+				background-repeat: no-repeat;
+				background-color: white;
+			}
+
+			.line_action {
+				width: 32px;
+				height: 32px;
+				float: left;
+				border: 2px solid #aaaaaa;
+				margin: 1px;
+				background-repeat: no-repeat;
+			}
+
+			.btn_box{
+				clear: both;
+				height: 20px;
+				padding: 5px 0;
+			}
+
+			button {
+				background-color: peachpuff;
+				font-size: 7pt;
+			}
+
+			.btn_box button{
+				height: 20px;
+			}
+
+			.text_parts {
+				border: 1px dotted blue;
+				cursor: default;
+			}
+
+			.fig_parts {
+				margin-bottom:5px;
+				text-align:center;
+				vertical-align:middle;
+				background-color: #eeeeee;
+				background-repeat: no-repeat;
+				border:2px solid white;
+			}
+
+			.text_button_area {
+				width:160px;
+				margin-top:5px;
+				text-align:right;
+			}
+			.tool_box {
+				width:160px;
+				height:120px;
+				margin-top: 0;
+				clear: both;
+			}
+			#TOOL_AREA{
+				width:160px;
+				height:120px;
+			}
+
+			#BLANK{
+				background-color:#f0f0f0;
+				display:block;
+			}
+			#TEXT_INPUT_TOOL{
+				background-color:#dcf7db;
+				display:none;
+			}
+		</style>
+	</head>
+
+	<body style="width:329px;height:329px" onload="init();loadData();">
+		<div class="main">
+			<div class="bg_screen">
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+				<div class="bg_tile bg_2"></div>
+				<div class="bg_tile bg_1"></div>
+			</div>
+
+			<div id="PUT_SCREEN" class="put_screen" onclick="putParts();putText()" onmousemove="moveParts();moveText()">
+			</div>
+			
+			<div id="LINE_SCREEN" class="line_screen" onmousedown="enableDraw()" onmouseup="disableDraw();drawLinePic()">
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+				<div class="line_tile" onmousemove="putLine(this)"></div>
+			</div>
+
+			<div id="PERSON_SCREEN" class="person_screen">
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+				<div class="person_tile" style="background-image:url('/images/PERSON00.png')" onclick="putPerson(this)"></div>
+			</div>
+			<div id="TEXT_SCREEN" class="text_screen" onclick="putText()" onmousemove="moveText()">
+				<p id="TEXTPARTS0" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS1" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS2" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS3" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS4" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS5" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS6" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS7" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS8" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+				<p id="TEXTPARTS9" class="text_parts" style="position:absolute;display:none" onmousedown="pickText(this)"></p>
+			</div>
+			<div id="PARTS_SCREEN" class="parts_screen" onclick="putParts()" onmousemove="moveParts()">
+				<div id="PARTS0" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS1" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS2" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS3" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS4" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS5" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS6" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS7" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS8" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+				<div id="PARTS9" class="fig_parts" style="position:absolute;display:none" onmousedown="pickParts(this)"></div>
+			</div>
+
+			<div id="TOOL" class="tool_area" style="display:none"> 
+				<div class="tool_select_box">
+					<div id="TOOL_PERSON" class="tool_icon" style="background-image:url('/images/PERSON_ICON.png')" onclick="modePerson(this)"></div>
+					<div id="TOOL_LINE"   class="tool_icon" style="background-image:url('/images/LINE_ICON.png')"   onclick="modeLine(this)"></div>
+					<div id="TOOL_TEXT"   class="tool_icon" style="background-image:url('/images/TEXT_ICON.png')"   onclick="modeText(this)"></div>
+					<div id="TOOL_PARTS"  class="tool_icon" style="background-image:url('/images/PARTS_ICON.png')"  onclick="modeParts(this)"></div>
+				</div>
+				<div id="LINE_TOOL"   class="action_box">
+					<div id="LINE_DRAW"  class="line_action" style="background-image:url('/images/PEN_ICON.png')"    onclick="setDrawLine()"></div>
+					<div id="LINE_ERASE" class="line_action" style="background-image:url('/images/ERASER_ICON.png')" onclick="setEraseLine()"></div>
+					<div id="LINE_UNDO"  class="line_action" style="background-image:url('/images/UNDO_ICON.png')" onclick="undoLine()"></div>
+				</div>
+				<div id="ACTION_TOOL" class="action_box">
+					<div id="TOOL_PUT"    class="tool_icon" style="background-image:url('/images/PUT_ICON.png')"    onclick="setAction('PUT')"></div>
+					<div id="TOOL_DEL"    class="tool_icon" style="background-image:url('/images/DEL_ICON.png')"    onclick="setAction('DEL')"></div>
+				</div>
+				<div class="btn_box">
+					<button id="GRID_SW" style="width:60px" onclick="toggleGrid()">グリッドOFF</button>
+					<button id="DISP_SW" style="width:60px" onclick="dispPreview()">プレビュー</button>
+				</div>
+				<div id="TOOL_AREA">
+					<div id="BLANK" class="tool_box">
+					</div>
+					<div id="PERSON_PATTERN" class="person_box">
+						<div class="person_pattern" style="background-image:url('/images/PERSON01.png');clear:both" onclick="selectPerson(this)"></div>
+						<div class="person_pattern" style="background-image:url('/images/PERSON02.png')" onclick="selectPerson(this)"></div>
+						<div class="person_pattern" style="background-image:url('/images/PERSON03.png')" onclick="selectPerson(this)"></div>
+						<div class="person_pattern" style="background-image:url('/images/PERSON04.png')" onclick="selectPerson(this)"></div>
+						<div class="person_pattern" style="background-image:url('/images/PERSON05.png')" onclick="selectPerson(this)"></div>
+						<div class="person_pattern" style="background-image:url('/images/PERSON06.png')" onclick="selectPerson(this)"></div>
+					</div>
+					<div id="TEXT_INPUT_TOOL" class="tool_box">
+						<div>
+							<textarea id="TEXTINPUT" style="width:150px;height:60px;margin:5px" onkeyup="enabledTextPutButton()" disabled></textarea>
+						</div>
+						<div style="padding:3px 3px 0 3px">
+							<input id="TY_YOKO" name="TATEYOKO" type="radio" value="YOKO" onchange="changeTateyoko(this.value)" checked>横書き</input>
+							<input id="TY_TATE" name="TATEYOKO" type="radio" value="TATE" onchange="changeTateyoko(this.value)">縦書き</input>
+						</div>
+						<div class="text_button_area" >
+							<button id="TEXTPUT_BUTTON" style="width:50px;height:20px;margin-right:5px;padding-top:0" onclick="setText()" disabled>配置</button>
+						</div>
+					</div>
+					<div id="PARTS_PATTERN"  class="tool_box">
+						<div style="width:162px;height:120px;background-color:#dddddd;overflow:scroll">
+							<div style="margin-left:2px">
+								<div id="CIRCLE_5X5" class="parts_icon" style="background-color:white;background-image:url('/images/CIRCLE_5X5.png');float:left" onclick="selectParts(this,'160px','160px')"></div>
+								<div id="CIRCLE_4X4" class="parts_icon" style="background-color:white;background-image:url('/images/CIRCLE_4X4.png');float:left" onclick="selectParts(this,'128px','128px')"></div>
+								<div id="CIRCLE_5X3" class="parts_icon" style="background-color:white;background-image:url('/images/CIRCLE_5X3.png');float:left" onclick="selectParts(this,'160px', '96px')"></div>
+								<div id="CIRCLE_3X2" class="parts_icon" style="background-color:white;background-image:url('/images/CIRCLE_3X2.png');float:left" onclick="selectParts(this, '96px', '64px')"></div>
+							</div>
+							<div style="margin-top:4px">
+								<div id="ARROW_LU" class="parts_icon" style="background-image:url('/images/ARROW_LU.png');float:left;width:32px;height:32px" onclick="selectParts(this,'32px','32px')"></div>
+								<div id="ARROW_RU" class="parts_icon" style="background-image:url('/images/ARROW_RU.png');float:left;width:32px;height:32px" onclick="selectParts(this,'32px','32px')"></div>
+								<div id="ARROW_LD" class="parts_icon" style="background-image:url('/images/ARROW_LD.png');float:left;width:32px;height:32px" onclick="selectParts(this,'32px','32px')"></div>
+								<div id="ARROW_RD" class="parts_icon" style="background-image:url('/images/ARROW_RD.png');float:left;width:32px;height:32px" onclick="selectParts(this,'32px','32px')"></div>
+							</div>
+							<div style="margin-top:4px">
+								<div id="ARROW_L2U" class="parts_icon" style="background-image:url('/images/ARROW_L2U.png');float:left;width:32px;height:64px" onclick="selectParts(this,'32px','64px')"></div>
+								<div id="ARROW_R2U" class="parts_icon" style="background-image:url('/images/ARROW_R2U.png');float:left;width:32px;height:64px" onclick="selectParts(this,'32px','64px')"></div>
+								<div id="ARROW_L2D" class="parts_icon" style="background-image:url('/images/ARROW_L2D.png');float:left;width:32px;height:64px" onclick="selectParts(this,'32px','64px')"></div>
+								<div id="ARROW_R2D" class="parts_icon" style="background-image:url('/images/ARROW_R2D.png');float:left;width:32px;height:64px" onclick="selectParts(this,'32px','64px')"></div>
+							</div>
+							<div style="margin-top:4px">
+								<div id="ARROW_2LU" class="parts_icon" style="background-image:url('/images/ARROW_2LU.png');margin-bottom:0;width:64px;height:32px" onclick="selectParts(this,'64px','32px')"></div>
+								<div id="ARROW_2RU" class="parts_icon" style="background-image:url('/images/ARROW_2RU.png');margin-bottom:0;width:64px;height:32px" onclick="selectParts(this,'64px','32px')"></div>
+								<div id="ARROW_2LD" class="parts_icon" style="background-image:url('/images/ARROW_2LD.png');margin-bottom:0;width:64px;height:32px" onclick="selectParts(this,'64px','32px')"></div>
+								<div id="ARROW_2RD" class="parts_icon" style="background-image:url('/images/ARROW_2RD.png');width:64px;height:32px" onclick="selectParts(this,'64px','32px')"></div>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="btn_box" style="clear:both">
+					<button style="width:42px" onclick="clearAll()">クリア</button>
+					<button style="width:42px;margin-right:6px" onclick="loadData()">読出</button>
+					<button style="width:62px;background-color:limegreen" onclick="saveData()">保存</button>
+                                        <button style="width:62px;" onclick="gotoHome()">画面を閉じる</button>
+				</div>
+			</div>
+		</div>
+	</body>
+</html>

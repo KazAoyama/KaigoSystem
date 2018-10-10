@@ -1,0 +1,297 @@
+#!/bin/bash
+#
+# KEIYAKU_ICHIRAN.SEARCH
+# 契約情報一覧検索
+#
+# Written by Y.kashiyama  : 2014/03/12
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+searchfile=$2
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/UNEI"
+data_dir="/DATA/E-LIFE"
+tbl_dir="${home_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+cat ${searchfile}             |
+self 5 6 1 7 8 2 9 10 3 11/29 > $tmp-totyu
+# 1:利用者(入居者)ID 2:契約ID    3:施設ID      4:利用者名      5:施設名
+# 6:建屋ID           7:フロアID  8:ユニットID  9:居室ID        10:入居時年齢
+# 11:契約種類ID      12:契約名称 13:契約日     14:引渡し日     15:契約開始日
+# 16:契約終了日      17:退去理由 18:退去理由名 19:退去理由詳細 20:備考
+# 21:予備1           22:予備2    23:予備3      24:予備4        25:予備5
+# 26:削除フラグ      27:更新日   28:更新者
+
+#----------------------------
+# 標準賃料
+#----------------------------
+# 今日が有効なもの
+awk '$4<='"${today}"' && $5>='"${today}"'{print $1,$2,$3,$6}' ${tbl_dir}/RIYOURYOU_MASTER/KYOSHITSU_CHINRYOU |
+# 1:施設ID 2:建屋ID 3:居室ID 4:標準賃料
+LANG=C sort                                                                                                  > $tmp-normal_chinryou
+
+#----------------------------
+# 特販名、特販内容、賃料
+#----------------------------
+awk '$4=="001"{print $0}' ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+awk '{if($11~/[0-9]/){print $1,$3,$2,$9,$11}else{print $1,$3,$2,$9,$8}}' |
+#self 1 3 2 9 11 ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU |
+# 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:値引き後金額
+cjoin2 key=3/4 <(self 1 2 3 ${tbl_dir}/RIYOURYOU_MASTER/TOKUHAN_SHUBETSU) |
+# 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:特販名
+# 6:値引き後金額
+LANG=C sort |
+cjoin2 key=1/4 <(self 1 3 2 4 9 ${pompa_dir}/RIYOUSHA/RIYOUSHA_RIYOURYOU) |
+# 1:利用者(入居者)ID 2:契約ID 3:施設ID 4:特販ID 5:特販内容
+# 6:特販名           7:値引き後金額
+LANG=C sort |
+cjoin2 key=1/3 - $tmp-totyu                                               |
+# 1:利用者(入居者)ID 2:契約ID       3:施設ID        4:特販ID      5:特販内容
+# 6:特販名           7:値引き後金額 8:利用者名      9:施設名      10:建屋ID
+# 11:フロアID        12:ユニットID  13:居室ID       14:入居時年齢 15:契約種類ID
+# 16:契約名称        17:契約日      18:引渡し日     19:契約開始日 20:契約終了日
+# 21:退去理由        22:退去理由名  23:退去理由詳細 24:備考       25:予備1
+# 26:予備2           27:予備3       28:予備4        29:予備5      30:削除フラグ
+# 31:更新日          32:更新者
+self 3 10 13 1 2 8 9 11 12 14/32 4/7 |
+# 1:施設ID      2:建屋ID        3:居室ID      4:利用者(入居者)ID 5:契約ID
+# 6:利用者名    7:施設名        8:フロアID    9:ユニットID       10:入居時年齢
+# 11:契約種類ID 12:契約名称     13:契約日     14:引渡し日        15:契約開始日
+# 16:契約終了日 17:退去理由     18:退去理由名 19:退去理由詳細    20:備考
+# 21:予備1      22:予備2        23:予備3      24:予備4           25:予備5
+# 26:削除フラグ 27:更新日       28:更新者     29:特販ID          30:特販内容
+# 31:特販名     32:値引き後金額
+
+# 標準賃料くっつける
+cjoin2 key=1/3 $tmp-normal_chinryou |
+# 1:施設ID      2:建屋ID      3:居室ID        4:標準賃料    5:利用者(入居者)ID
+# 6:契約ID      7:利用者名    8:施設名        9:フロアID    10:ユニットID
+# 11:入居時年齢 12:契約種類ID 13:契約名称     14:契約日     15:引渡し日
+# 16:契約開始日 17:契約終了日 18:退去理由     19:退去理由名 20:退去理由詳細
+# 21:備考       22:予備1      23:予備2        24:予備3      25:予備4
+# 26:予備5      27:削除フラグ 28:更新日       29:更新者     30:特販ID
+# 31:特販内容   32:特販名     33:値引き後金額
+
+#----------------
+# 利用状態
+#----------------
+awk '{if($16<='"${today}"' && $17>='"${today}"'){$34="有効" ;print}else{$34="終了" ;print}}' |
+# 1:施設ID      2:建屋ID      3:居室ID        4:標準賃料    5:利用者(入居者)ID
+# 6:契約ID      7:利用者名    8:施設名        9:フロアID    10:ユニットID
+# 11:入居時年齢 12:契約種類ID 13:契約名称     14:契約日     15:引渡し日
+# 16:契約開始日 17:契約終了日 18:退去理由     19:退去理由名 20:退去理由詳細
+# 21:備考       22:予備1      23:予備2        24:予備3      25:予備4
+# 26:予備5      27:削除フラグ 28:更新日       29:更新者     30:特販ID
+# 31:特販内容   32:特販名     33:値引き後金額 34:利用状態
+
+# 日付
+dayslash yyyy/mm/dd 16 |
+dayslash yyyy/mm/dd 17 |
+# 並べ替え
+self 8 3 7 13 32 16 17 33 31 4 11 34 20 21 | 
+#> $tmp-search_data
+head -1000              > $tmp-search_data
+# 1:施設名      2:居室ID     3:利用者名      4:契約名称 5:特販名
+# 6:契約開始日  7:契約終了日 8:値引き後金額  9:特販内容 10:標準賃料
+# 11:入居時年齢 12:利用状態  13:退去理由詳細 14:備考
+
+# 施設の取得
+if [ -n "${Shisetsu}" -a "${Shisetsu}" != "_" -a "${Shisetsu}" != "0000" ];then
+  cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON                |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  awk '$1!="1000"&&$(NF-2)!="9"{print $1,$2}'                  |
+  join0 key=1 <(echo ${Shisetsu})                              |
+  self 2                                                       > ${tmp}-shisetsu_name
+else
+  echo "全て"                                                  > ${tmp}-shisetsu_name
+#  :                                                            > ${tmp}-shisetsu_name
+fi
+
+# 建屋の取得
+if [ -n "${Tateya}" -a "${Tateya}" != "_" ];then
+  echo "${Tateya}"                                             |
+  awk '{if($1=="01"){print "シニア"}else{print "ケア"}}'        > ${tmp}-tateya_name
+else
+  echo "全て"                                                   > ${tmp}-tateya_name
+fi
+
+# フロアの取得
+if [ -n "${Floor}" -a "${Floor}" != "_" ];then
+  echo "${Floor}" |
+  awk '{print $1"F"}' > ${tmp}-floor_name
+else
+  echo "全て"         > ${tmp}-floor_name
+fi
+
+# ユニットの取得
+if [ -n "${Unit}" -a "${Unit}" != "_" ];then
+  cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Unit})                                  |
+  self 2                                                       > ${tmp}-unit_name
+else
+  echo "全て"                                                  > ${tmp}-unit_name
+fi
+
+# 居室の取得
+if [ -n "${Kyoshitsu}" -a "${Kyoshitsu}" != "_" ];then
+  echo "${Kyoshitsu}" |
+  awk '{print $1}'                                       > ${tmp}-kyoshitsu
+else
+  echo "全て"                                                  > ${tmp}-kyoshitsu
+fi
+
+# 入居者の取得
+if [ -n "${Nyuukyosha}" -a "${Nyuukyosha}" != "_" ];then
+  cat ${riyosha_dir}/RIYOUSHA_MASTER                     |
+# 1:FLOOR_CODE 2:FLOOR_NAME
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Nyuukyosha})                            |
+  self 2                                                       > ${tmp}-nyuukyosya_name
+else
+  echo "全て"                                                  > ${tmp}-nyuukyosya_name
+fi
+
+# 契約種類の取得
+if [ -n "${Keiyaku}" -a "${Keiyaku}" != "_" ];then
+  cat ${tbl_dir}/KEIYAKU_MASTER/KEIYAKU_NAME                   |
+  self 1 2                                                     |
+  join0 key=1 <(echo ${Keiyaku})                               |
+  self 2                                                       > ${tmp}-keiyaku_name
+else
+  echo "全て"                                                  > ${tmp}-keiyaku_name
+fi
+
+# 特販名の取得
+if [ -n "${Tokuhan}" -a "${Tokuhan}" != "_" ];then
+  cat ${tbl_dir}/RIYOURYOU_MASTER/TOKUHAN_SHUBETSU             |
+  self 1 2 3                                                   |
+  join0 key=1/2 <(echo ${Shisetsu} ${Tokuhan})                               |
+  self 3                                                       > ${tmp}-tokuhan_name
+else
+  echo "全て"                                                  > ${tmp}-tokuhan_name
+fi
+
+
+##################
+# 利用状況
+###################
+cat << FIN | LANG=C sort > ${tmp}-riyou_status_kari
+_ 全て
+01 有効
+02 終了
+FIN
+echo ${RiyouStatus} |
+join1 key=1 ${tmp}-riyou_status_kari |
+self 2                          > ${tmp}-riyou_status
+
+##################
+# 表示順
+###################
+cat << FIN | LANG=C sort > ${tmp}-hyouji_jun_kari
+01 居室
+02 入居者
+03 契約開始日
+04 契約終了日
+05 契約種類
+FIN
+echo ${HyoujiJyun} |
+join1 key=1 ${tmp}-hyouji_jun_kari |
+self 2                          > ${tmp}-hyouji_jun
+
+##################
+# 昇順・降順
+###################
+cat << FIN | LANG=C sort > ${tmp}-shoujun_koujun_kari
+1 昇順
+2 降順
+FIN
+echo ${HyoujiShoukou} |
+join1 key=1 ${tmp}-shoujun_koujun_kari |
+self 2                          > ${tmp}-shoujun_koujun
+
+
+# エクセル用に小分け
+# 施設名、建屋、フロア
+ycat ${tmp}-shisetsu_name ${tmp}-tateya_name ${tmp}-floor_name   |
+awk '{print $1,"@",$2,"@",$3}'                                   > $tmp-b4
+# ユニット、 居室、 入居者
+ycat ${tmp}-unit_name ${tmp}-kyoshitsu ${tmp}-nyuukyosya_name    |
+awk '{print $1,"@",$2,"@",$3}'                                   > $tmp-b5
+# 契約種類、 特販名、利用状況
+ycat ${tmp}-keiyaku_name ${tmp}-tokuhan_name ${tmp}-riyou_status |
+awk '{print $1,"@",$2,"@",$3}'                                   > $tmp-b6
+# 契約開始日
+echo "${KeiyakukaishibiFrom} ${KeiyakukaishibiTo}"               |
+awk '{print $1,"@",$2}'                                          > $tmp-b7
+# 契約終了日
+echo "${KeiyakuendFrom} ${KeiyakuendbiTo}"                       |
+awk '{print $1,"@",$2}'                                          > $tmp-b8
+
+# 検索結果が０件だったらアラート表示して終わり
+if [ -s $tmp-search_data ]; then
+
+TEMPLA=${template_dir}/KEIYAKU_ICHIRAN_TEMPLATE.xls
+Ehexcel < ${TEMPLA} 1 b4 ${tmp}-b4                 \
+                    1 b5 ${tmp}-b5                 \
+                    1 b6 ${tmp}-b6                 \
+                    1 b7 ${tmp}-b7                 \
+                    1 b8 ${tmp}-b8                 \
+                    1 b9 ${tmp}-hyouji_jun         \
+                    1 b10 ${tmp}-shoujun_koujun    \
+                    1 a14 $tmp-search_data         > ${download_dir}/${userid}_$$.download.xls
+
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+        $ON_LOAD
+          window.open("/E-LIFE/UNEI/DOWNLOAD/${userid}_$$.download.xls","_self");
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+  # ファイル名をはく
+  echo "${userid}_$$.download.xls"
+
+else
+
+  # 結果が無ければアラート
+  echo "zero"
+
+fi
+# 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,151 @@
+#!/bin/bash
+#
+# SERVICE_JISSHI_HOUKOKU.PRINT : 訪問介護計画書印刷
+#
+# Usage : SERVICE_JISSHI_HOUKOKU.PRINT
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/HOUMONKAIGO/CGI/HOUMONKAIGO.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+rm -f $tmp-*
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+opt_data=$3
+today="$(date +%Y%m%d)"
+
+cp -p ${namedata} ${work_dir}/namedata_houmonkaigo
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 検索結果
+  print)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data}        > $tmp-listdata
+    else
+    # 空のリストデータを作成する
+      : > $tmp-listdata
+    fi
+  ;;
+
+esac
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+
+cp -p $tmp-listdata $work_dir/listdata_houmon
+
+# 報告書基本データ取得
+awk '$1=="k"' $tmp-listdata    |
+delf 1           > $tmp-listdata_houkoku
+
+# 報告書リストデータ取得
+awk '$1=="l"' $tmp-listdata    |
+delf 1           > $tmp-houkokulist
+
+
+# 事業所マスタ、自事業所マスタ、従業員マスタなど
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-listdata_houkoku)
+#--------------------------------------------------------
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###RIYOUSHAID### $Riyoushaid
+###USERID### $USER_ID
+###HOUKOKUID### $HoukokuID
+###RIYOUSHA### $Riyousha
+###SLKYOTAKUKAIGOSHIENJIGYOUSHO### $slKyotakuKaigoShienJigyousho
+###SLKAIGOSHIENSENMONIN### $slKaigoShienSenmonin
+###SLHOUMONKAIGOJIGYOUSHO### $slHoumonkaigoJigyousho
+###SLSERVICETEIKYOSEKININSHA### $slServiceTeikyoSekininsha
+FIN
+
+# 事業所マスタ
+cat ${home_dir}/TBL/JIGYOUSHO/JIGYOUSHO_MASTER      |
+# 1:事業所ID 2:事業所名 3:事業所タイプ
+awk '$46=="0" {print $1,$3,$4}'                     |
+# 居宅支援事業のみ
+awk '$3=="43"'                                      |
+LANG=C sort -k3,3                                   |
+join1 key=3 ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE  |
+# 1:事業所ID 2:事業所名 3:事業所タイプ 4:サービスタイプ 5:サービスタイプ名
+self 1 2 5                                          |
+LANG=C sort -k1,3                                   > ${tmp}-jigyousho_master
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/PRINT_SERVICE_JISSHI_HOUKOKU.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+mojihame -l###HOUKOKULIST### - $tmp-houkokulist |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+sed 's/"_"/""/g'              |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat - > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 $tmp-base_pdf.html ${home_dir}/HOUMONKAIGO/DOWNLOAD/SERVICE_JISSHI_HOUKOKU.pdf
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/HOUMONKAIGO/DOWNLOAD/SERVICE_JISSHI_HOUKOKU.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+rm -f ${tmp}-*
+exit 0

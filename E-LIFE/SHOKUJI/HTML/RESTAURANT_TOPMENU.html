@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="jp" manifest="/js/restaurant.appcache">
+<head>
+<meta charset="utf-8">
+<title>本日のメニュー</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<meta name="description" content="">
+<meta name="author" content="">
+<link rel="stylesheet" type="text/css" href="/css/bootstrap.css">
+<link rel="stylesheet" type="text/css" href="/css/restaurant.css">
+<script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.11.0/jquery-ui.min.js"></script>
+<style>
+.msg_nomenu{text-align:center;padding-top:150px;color:#0000C0;font:180% bold;}
+.menu_tbl_addspace{margin-left:0;}
+.btn_order{min-height:130px;width:48%;}
+.btn_order2{min-height:130px;width:48%;}
+.menu_tbl .menu{width:100%;}
+.btn_kasan_nyukyosha ,.btn_kasan_guest {font-size:200%;background:#FFFFFF;height:70%; }
+.btn_genzan_nyukyosha ,.btn_genzan_guest {height:70%; font-size:80% }
+.btn_suryo_nyukyosha_title ,.btn_suryo_guest_title {width:100%;font-size:60%;text-align:center;margin-top:1%;padding:1%;}
+.btn_suryo_nyukyosha {height:100%;float:left;width:49%;background:#FF8080;border:1px solid #8F4848;border-radius: 5px;-webkit-border-radius: 5px;}
+.btn_suryo_guest{height:100%;float:right;width:49%;background:#647BAB;border:1px solid #556991;border-radius: 5px;-webkit-border-radius: 5px;}
+.btn_suryo_grp{height:130px;}
+
+
+/* #647BAB #FF8080  */
+
+</style>
+<script src="/js/restaurant.js"></script>
+<script>
+// マニフェストファイルが更新されていたら、ページリロード
+//各アプリのトップページにあたる、メニュー画面と注文一覧画面に実装
+//これをやらないとキャッシュされてるhtmlやjsなどが即時にリフレッシュされない（次回アクセスでの反映となる）
+//メニュー画面はPOSTリクエストのため毎回更新となり、そもそもイベント発生しないようだが一応実装しとく
+window.addEventListener('load', function(e) {
+
+  window.applicationCache.addEventListener('updateready', function(e) {
+    if (window.applicationCache.status == window.applicationCache.UPDATEREADY) {
+      // Browser downloaded a new app cache.
+      // Swap it in and reload the page to get the new hotness.
+      window.applicationCache.swapCache();
+      //if (confirm('A new version of this site is available. Load it?')) {
+      //  window.location.reload();
+      //}
+      window.location.reload();
+    } else {
+      // Manifest didn't changed. Nothing new to server.
+    }
+  }, false);
+
+}, false);
+
+
+var touchsupport = ('ontouchstart' in window); //タッチイベントの切り替え判定
+if(touchsupport){
+//ipadの場合
+  touchstart = 'touchstart';
+  touchmove = 'touchmove';
+  touchend = 'touchend';
+}else{
+//pcの場合
+  touchstart = 'mousedown';
+  touchmove = 'mousemove';
+  touchend = 'mouseup';
+}
+
+
+//確認ダイアログ表示
+function showConfirmDlg(){
+  jQuery('#confirm').show();
+}
+
+//確認ダイアログ非表示
+function closeConfirmDlg(){
+  jQuery('#confirm').hide();
+}
+
+
+
+function select_categoly(menu){
+   var position = jQuery(menu).offset().top - (jQuery("#header").height() + 5);
+  jQuery('body,html').animate({scrollTop:position}, 10, 'linear');
+
+  curent_category = menu;
+
+}
+
+var curent_category = "#main";
+
+function move_menu(direction){
+
+  movesize =  window.innerHeight - (jQuery("#header").height() + jQuery("#footer").height());
+
+  if(direction == "down"){
+
+    var position = $(window).scrollTop() + movesize;
+    scrollHeight = $(document).height();
+    scrollPosition = $(window).height() + $(window).scrollTop();
+
+    if ( (scrollHeight - scrollPosition) / scrollHeight <= 0.05) {
+      //スクロール位置（トップ）が表示対象全体の下部5%の範囲になった場合
+      jQuery('body,html').animate({scrollTop:0}, 10, 'swing');
+    } else {
+      //それ以外のスクロールの位置の場合
+      jQuery('body,html').animate({scrollTop:position}, 10, 'swing');
+    }
+  }else{
+
+    var position = $(window).scrollTop() - movesize ;
+    scrollHeight = $(document).height();
+
+    if ($(window).scrollTop() < 1) {
+      //スクロール位置（トップ）が表示対象全体の1未満になった場合
+      jQuery('body,html').animate({scrollTop: scrollHeight}, 10, 'swing');
+    }else{
+      //それ以外のスクロールの位置の場合
+      jQuery('body,html').animate({scrollTop:position}, 10, 'swing');
+    }
+  }
+
+}
+
+
+
+
+function select_menu(type,id,name){
+
+  $("#select_menu_id").val(id);
+  $("#select_menu_name").val(name);
+  $("#select_shokujishurui").val(type);
+
+//  $("#MODE").attr({value:"init"});
+   $("#MODE").val("regist");
+
+   var form = $("#userinfo");
+   form.attr({
+         target: "_top",
+         method: "post",
+         action: "./RESTAURANT_SURYO_SELECT.CGI"
+   });
+   form.submit();
+
+}
+
+//注文確認画面へ
+function go_kakunin(){
+
+  //数量指定されているなら、ボタンをロック　※注文確認ボタンはクラスにsend指定していないので独自にここで実施
+  //※ＳＥＮＤ指定すると数量選択指示ダイアログのＯＫボタンが無効になるため。（共通ファンクションのため処理順番を制御できない。）
+  $("button").attr("disabled", true);
+
+  var menu_seq_id_Arr = new Array();
+  var menu_id_Arr = new Array();
+  var menu_suryo_nyukyosha_Arr = new Array();
+  var menu_suryo_guest_Arr = new Array();
+
+  var suryo_nyukyosha = 0;
+  var suryo_guest     = 0;
+  var menu_seq_id     = "";
+
+  var chk_suryou_total = 0;
+
+  //選択中メニューの情報取得
+  //メニューデータを全部チェックして、入居者、ゲスト、いずれかの数量が入ってたら、背景色変更。
+  $( ".menu" ).each(function() {
+
+    suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+    suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+    menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+    //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、送信用配列にセット
+    if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+      menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+      menu_id_Arr.push($( this ).children(".menuid").val());
+      menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+      menu_suryo_guest_Arr.push(suryo_guest);
+    }
+
+    //全メニューの選択数量を集計　（数量選択指示ダイアログ表示判定用）
+    chk_suryou_total = chk_suryou_total + suryo_nyukyosha + suryo_guest;
+
+  });
+
+/*  個別にやる必要なし。
+
+  //メインメニュー（大型）が存在する場合
+  if($( "#menu_main_l .menu" ).size() > 0 ) {
+
+    $( "#menu_main_l .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+
+  }
+
+  //メインメニュー（小型）が存在する場合
+  if($( "#menu_main_s .menu" ).size() > 0 ) {
+
+    $( "#menu_main_s .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+  }
+
+
+  //サイドメニュー（小型）が存在する場合
+  if($( "#menu_side_s .menu" ).size() > 0 ) {
+
+    $( "#menu_side_s .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+  }
+
+
+  //ソフトドリンクメニュー（小型）が存在する場合
+  if($( "#menu_soft_s .menu" ).size() > 0 ) {
+
+    $( "#menu_soft_s .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+  }
+
+
+  //アルコールドリンクメニュー（小型）が存在する場合
+  if($( "#menu_alc_s .menu" ).size() > 0 ) {
+
+    $( "#menu_alc_s .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+  }
+
+
+  //その他メニュー（小型）が存在する場合
+  if($( "#menu_else_s .menu" ).size() > 0 ) {
+
+    $( "#menu_else_s .menu" ).each(function() {
+
+      suryo_nyukyosha = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+      suryo_guest = parseInt($( this ).children(".btn_suryo_grp").children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+      menu_seq_id = $( this ).children(".menu_seq_id").val();
+
+      //入居者、ゲストいずれかの数量がゼロでないか、すでにカートに存在してたメニューの場合、登録
+      if(suryo_nyukyosha > 0 || suryo_guest > 0  || menu_seq_id != "_"){
+        menu_seq_id_Arr.push($( this ).children(".menu_seq_id").val());
+        menu_id_Arr.push($( this ).children(".menuid").val());
+        menu_suryo_nyukyosha_Arr.push(suryo_nyukyosha);
+        menu_suryo_guest_Arr.push(suryo_guest);
+      }
+
+    });
+  }
+*/
+
+   //予約メニュー数量の取得
+   var chk_yoyaku = Number("###CHECK_YOYAKU###") ;   
+
+   //数量が指定されていなければ入力指示メッセージ表示
+   //（予約ｶがある場合、注文一覧からの操作の場合は対象外）
+   if(chk_suryou_total < 1 && chk_yoyaku == 0 && $("#user_type").val() != "kanriuser"  ){
+　  $("button").attr("disabled", false);
+     showConfirmDlg();
+     return;
+   } 
+   //数量指定されているなら、ボタンをロック　※注文確認ボタンはクラスにsend指定していないので独自にここで実施
+   //　※send指定してしまうと、入力指示メッセージのダイアログでOKボタンが無効になってしまうため。
+   $("button").attr("disabled", true);
+
+//alert( menu_seq_id_Arr  + "\n" + menu_id_Arr + "\n" + menu_suryo_nyukyosha_Arr  + "\n" + menu_suryo_guest_Arr  );
+
+   $("#select_menu_seq_id_array").val(menu_seq_id_Arr);
+   $("#select_menu_id_array").val(menu_id_Arr);
+   $("#select_menu_suryo_nyukyosha_array").val(menu_suryo_nyukyosha_Arr);
+   $("#select_menu_suryo_guest_array").val(menu_suryo_guest_Arr);
+
+
+   $("#MODE").val("registall");
+   var form = $("#userinfo");
+   form.attr({
+         target: "_top",
+         method: "post",
+         action: "./RESTAURANT_CHUMON_KAKUNIN.CGI"
+   });
+   form.submit();
+}
+
+
+//トップ認証画面へ
+function go_top(){
+
+  //遷移先の決定
+  if($("#user_type").val() == "kanriuser"){
+    urlstr = "./RESTAURANT_CHUMON_ICHIRAN.CGI"
+    $("#MODE").val("display");
+  }else{
+//    urlstr = "./RESTAURANT_TOPMENU.CGI?post_camera=on"
+    urlstr = "./RESTAURANT_DUMMY.CGI?post_camera=on"
+    $("#MODE").val("init");
+  }
+
+   var form = $("#userinfo");
+   form.attr({
+         target: "_top",
+         method: "post",
+         action: urlstr
+   });
+   form.submit();
+
+}
+
+//ドリンクメニューへ
+function go_drink(type_str){
+
+  $("#MODE").val("drink");
+  $("#drink_type").val(type_str);
+   var form = $("#userinfo");
+   form.attr({
+         target: "_top",
+         method: "post",
+         action: "./RESTAURANT_TOPMENU.CGI"
+   });
+   form.submit();
+
+}
+
+function go_next(url){
+  document.location = url;
+}
+
+var flg_show_l_kondate="###KONDATE_SHOW###";
+
+//var select_bar_color = "#F4AAEB";
+//var select_bar_color = "#FF70FF";
+var select_bar_color = "#FF94FF";
+var select_bar_color_border = "#FF00FF";
+
+$( function() {
+
+  //施設情報クッキー更新 ※有効期限の更新が目的（実質無期限化）
+  //※ipad上ではクッキーはアプリ単位に保持される。このページは注文、一覧アプリ共通だがここでは注文アプリのクッキー更新が主目的
+  setCookieData_longterm("c_shisetsu","###SHISETSU_ID###");
+
+
+  //管理ユーザの場合、「本日」ではなく日付表示
+  if( $("#user_type").val() == "kanriuser"  ){
+    var wk_day = $("#target_day").val();
+    $("#disp_day").text( Number(wk_day.substr(4,2)) + "月"+ Number(wk_day.substr(6,2))+ "日");
+  }
+
+
+  if(flg_show_l_kondate == ""){
+    $("#menu_main_l").hide();
+    $("#menu_main_s").removeClass("menu_tbl_addspace");
+//  }
+//20150725 追加
+// 大型メニューは表示対象のときだけ折りたたむ
+  }else{
+    $(".btn_order").css("height","60px");
+    $(".btn_order .desc").hide();
+    $(".btn_order .pay").hide();
+    $(".btn_order").css("overflow","hidden");
+  }
+
+//  $(".btn_order2").css("height","60px");
+
+  //選択中メニューの網がけ表示設定
+  //メニューデータを全部チェックして、入居者、ゲスト、いずれかの数量が入ってたら、背景色変更。
+  $( ".menu" ).each(function() {
+     var w_nyukyosha_suryo =  parseInt($(this).children().children().children(".btn_kasan_nyukyosha").text());
+     var w_guest_suryo     =  parseInt($(this).children().children().children(".btn_kasan_guest").text());
+
+    if( w_nyukyosha_suryo > 0 || w_guest_suryo > 0 ){
+      $(this).css("background",select_bar_color);
+      $(this).css("border-style","solid");
+      $(this).css("border-color",select_bar_color_border);
+    }
+  });
+
+
+});
+
+
+//20150725 追加
+//大型メニューボタン押下時処理
+$(document).on(touchstart, '.btn_order', function () {
+  // クリックした時の処理
+
+//  $(".btn_order").css("height","60px");
+//  $(".btn_order .desc").hide();
+//  $(".btn_order .pay").hide();
+
+
+  if($(this).children(".btn_disp_flg").text()=="0"){
+            $(this).css("height","");
+            $(this).children(".btn_disp_flg").text("1");
+            $(this).children(".desc").show();
+            $(this).children(".pay").show();
+  }else{
+            $(this).css("height","60px");
+            $(this).children(".desc").hide();
+            $(this).children(".pay").hide();
+            $(this).children(".btn_disp_flg").text("0");
+  }  
+
+  $(this).children(".name").css("overflow","hidden");
+
+});
+
+//入居者加算ボタン押下時処理
+$(document).on(touchstart, '.btn_kasan_nyukyosha', function () {
+  // 加算処理
+  $(this).text( parseInt($(this).text()) + 1);
+  $(this).parent().parent().parent(".menu").css("background",select_bar_color);
+  $(this).parent().parent().parent(".menu").css("border-style","solid");
+  $(this).parent().parent().parent(".menu").css("border-color",select_bar_color_border);
+
+
+
+});
+
+//ゲスト加算ボタン押下時処理
+$(document).on(touchstart, '.btn_kasan_guest', function () {
+  // 加算処理
+  $(this).text( parseInt($(this).text()) + 1);
+  $(this).parent().parent().parent(".menu").css("background",select_bar_color);
+  $(this).parent().parent().parent(".menu").css("border-style","solid");
+  $(this).parent().parent().parent(".menu").css("border-color",select_bar_color_border);
+
+});
+
+//入居者減算ボタン押下時処理
+$(document).on(touchstart, '.btn_genzan_nyukyosha', function () {
+  // 一つ前の要素（入居者数量指定ボタン）の減算処理
+  var w_nyukyosha_suryo =  parseInt($(this).prev(".btn_kasan_nyukyosha").text()) - 1;
+  if(w_nyukyosha_suryo < 1 ) {
+    w_nyukyosha_suryo = 0 ;
+  }
+  $(this).prev(".btn_kasan_nyukyosha").text( w_nyukyosha_suryo );
+
+
+  var w_total_suryo =  w_nyukyosha_suryo + parseInt($(this).parent().parent().children(".btn_suryo_guest").children(".btn_kasan_guest").text());
+
+  //入居者、ゲストともゼロなら背景色戻す
+  if (w_total_suryo < 1){
+    $(this).parent().parent().parent(".menu").css("background","");
+    $(this).parent().parent().parent(".menu").css("border-style","");
+    $(this).parent().parent().parent(".menu").css("border-color","");
+  }
+
+});
+
+//ゲスト減算ボタン押下時処理
+$(document).on(touchstart, '.btn_genzan_guest', function () {
+  // 一つ前の要素（ゲスト数量指定ボタン）の減算処理
+
+  var w_guest_suryo =  parseInt($(this).prev(".btn_kasan_guest").text()) - 1;
+  if(w_guest_suryo < 1 ){ 
+    w_guest_suryo = 0 ;
+  }
+  $(this).prev(".btn_kasan_guest").text(w_guest_suryo);
+
+  var w_total_suryo =  w_guest_suryo + parseInt($(this).parent().parent().children(".btn_suryo_nyukyosha").children(".btn_kasan_nyukyosha").text());
+
+  //入居者、ゲストともゼロなら背景色戻す
+  if (w_total_suryo < 1){
+    $(this).parent().parent().parent(".menu").css("background","");
+    $(this).parent().parent().parent(".menu").css("border-style","");
+    $(this).parent().parent().parent(".menu").css("border-color","");
+  }
+
+
+
+});
+
+
+$(document).on(touchstart, '.btn_move_up', function () {
+  move_menu('up');
+});
+$(document).on(touchstart, '.btn_move_down', function () {
+  move_menu('down');
+});
+$(document).on(touchstart, '.btn_current', function () {
+  go_kakunin();
+});
+
+$(document).on(touchstart, '.btn_certify', function () {
+  go_top();
+});
+
+
+/*
+
+//以下のメニューカテゴリボタンなどでtouchstartイベントを使うと挙動が不安定になるので使用せず
+//例:上下にスクロールしたあとで、ボタンのないとこ（メニュー名）にタッチすると、メインカテゴリボタンや上スクロールが動いてしまうなど。
+
+$(document).on(touchstart, '.btn_main', function () {
+  select_categoly('#main');
+});
+$(document).on(touchstart, '.btn_side', function () {
+  select_categoly('#side');
+});
+$(document).on(touchstart, '.btn_drink_soft', function () {
+  select_categoly('#drink_soft');
+});
+$(document).on(touchstart, '.btn_drink_alc', function () {
+  select_categoly('#drink_alc');
+});
+$(document).on(touchstart, '.btn_else', function () {
+  select_categoly('#else');
+});
+
+$(document).on(touchstart, '.btn_move_up', function () {
+  move_menu('up');
+});
+$(document).on(touchstart, '.btn_move_down', function () {
+  move_menu('down');
+});
+$(document).on(touchstart, '.btn_current', function () {
+  go_kakunin();
+});
+
+*/
+
+
+
+
+</script>
+<!-- 20150724 数量指定方法改善バージョン  -->
+</head>
+<body id="body_top">
+  <div id="wrap">
+    <div id="header" >
+      <div class="name">###NYUKYOSHA_NAME### 様（部屋番号： ###ROOM_NO###）</div>
+      <h1  class="well" style="position:relative;"> <span id="disp_day">本日</span>（###SHOKUJI_TITLE###）のメニュー<span style="font-size:50%;position: absolute;bottom:1%;right:1%;">###SHISETSU_NAME###</span></h1>
+      <div id="select_menu">
+        <button onClick="select_categoly('#main');" class="btn_category btn_main" role="button">メインメニュー</button>
+        <button onClick="select_categoly('#side');" class="btn_category btn_side" role="button">サイドメニュー</button>
+        <button onClick="select_categoly('#drink_soft');" class="btn_category btn_drink_soft" role="button">ソフトドリンク</button>
+        <button onClick="select_categoly('#drink_alc');"class="btn_category btn_drink_alc" role="button">アルコール</button>
+        <button onClick="select_categoly('#else');" class="btn_category btn_else" role="button">その他</button>
+      </div>
+    </div>
+    <div id="contents"> 
+      <div id="confirm">
+        <div id="confirm_msg">
+          <p style="font-weight:bold;font-size:144%;text-align:center;padding:0 0 0 5%;line-height:1.2em;">注文メニューを選択してください。</p>
+          <div style="margin: 10% 0 0 8%;">
+          <button class="btn_confirm_l" onClick="closeConfirmDlg();" class="btn_alert_yes">　Ｏ  Ｋ　</button>
+
+          </div>
+        </div>
+      </div>
+
+       <div id="main" class="round_bord">
+         <ul id="menu_main_l" class="menu_tbl">
+<!-- ###LARGEMENU### -->
+           <li class="menu">
+             <div class="btn_order btn_main_l%2" >
+               <div class="name">%2 %3</div>
+<!--
+               <div class="desc">%4<br>%5<br>%6<br>%7<br>%8<br></div>
+               <div class="pay">
+                <div class="pay1_1">カロリー：%9kcal</div>
+                <div class="pay1_2">塩分：%10g</div>
+               </div>
+               <p class="btn_disp_flg" style="display:none;" >0</p>
+-->
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%13</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%14</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%1" />
+             <input type="hidden" class="menu_seq_id" value="%16" />
+           </li>
+<!-- ###LARGEMENU### -->
+         </ul>
+         <ul  id="menu_main_s" class="menu_tbl menu_tbl_addspace">
+<!-- ###SMALLMENU_MAIN### -->
+           <li class="menu">
+             <div class="btn_order2 btn_main" >
+               <div class="name2">%3</div>
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%8</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%9</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%2" />
+             <input type="hidden" class="menu_seq_id" value="%11" />
+           </li>
+<!-- ###SMALLMENU_MAIN### -->
+         </ul>
+         <div class="msg_nomenu" style="display:###MSGNOMENU_MAIN###;">（メインメニュー）<br>ただいまの時間帯はご提供対象外です。</div>
+       </div>
+       <div id="side" class="round_bord">
+         <ul id="menu_side_s" class="menu_tbl">
+<!-- ###SMALLMENU_SIDE### -->
+           <li class="menu">
+             <div class="btn_order2 btn_side">
+               <div class="name2">%3</div>
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%8</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%9</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%2" />
+             <input type="hidden" class="menu_seq_id" value="%11" />
+           </li>
+<!-- ###SMALLMENU_SIDE### -->
+         </ul>
+         <div class="msg_nomenu" style="display:###MSGNOMENU_SIDE###;">（サイドメニュー）<br>ただいまの時間帯はご提供対象外です。</div>
+       </div>
+       <div id="drink_soft" class="round_bord">
+         <ul id="menu_soft_s" class="menu_tbl">
+<!-- ###SMALLMENU_DRINK_SOFT### -->
+           <li class="menu" >
+             <div class="btn_order2 btn_drink_soft" >
+               <div class="name2">%3</div>
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%8</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%9</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%2" />
+             <input type="hidden" class="menu_seq_id" value="%11" />
+           </li>
+<!-- ###SMALLMENU_DRINK_SOFT### -->
+         </ul>
+         <div class="msg_nomenu" style="display:###MSGNOMENU_DRINK_SOFT###;">（ソフトドリンク）<br>ただいまの時間帯はご提供対象外です。</div>
+       </div>
+
+       <div id="drink_alc" class="round_bord">
+         <ul id="menu_alc_s" class="menu_tbl">
+<!-- ###SMALLMENU_DRINK_ALC### -->
+           <li class="menu" >
+             <div class="btn_order2 btn_drink_alc" >
+               <div class="name2">%3</div>
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%8</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%9</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%2" />
+             <input type="hidden" class="menu_seq_id" value="%11" />
+           </li>
+<!-- ###SMALLMENU_DRINK_ALC### -->
+         </ul>
+         <div class="msg_nomenu" style="display:###MSGNOMENU_DRINK_ALC###;">(アルコール)<br>ただいまの時間帯はご提供対象外です。</div>
+       </div>
+
+       <div id="else" class="round_bord">
+         <ul id="menu_else_s" class="menu_tbl">
+<!-- ###SMALLMENU_HOKA### -->
+           <li class="menu">
+             <div class="btn_order2 btn_else" >
+               <div class="name2">%3</div>
+             </div>
+             <div class="btn_suryo_grp">
+               <div class="btn_suryo_nyukyosha">
+                 <div class="btn_suryo_nyukyosha_title">ご入居者</div>
+                 <button class="btn_suryo btn_kasan_nyukyosha">%8</button>
+                 <button class="btn_suryo btn_genzan_nyukyosha">減らす</button>
+               </div>
+               <div class="btn_suryo_guest">
+                 <div class="btn_suryo_guest_title">ゲスト</div>
+                 <button class="btn_suryo btn_kasan_guest"     >%9</button>
+                 <button class="btn_suryo btn_genzan_guest"     >減らす</button>
+               </div>
+             </div>
+             <input type="hidden" class="menuid" value="%2" />
+             <input type="hidden" class="menu_seq_id" value="%11" />
+           </li>
+<!-- ###SMALLMENU_HOKA### -->
+         </ul>
+         <div class="msg_nomenu" style="display:###MSGNOMENU_HOKA###;">（その他）<br>ただいまの時間帯はご提供対象外です。</div>
+       </div>
+       <div style="clear:both;height:100px;display:block;"></div>
+    </div>
+<div id="footer" style="position: fixed !important;position:absolute;left:0;bottom:0;height:65px;width:100%;background:#000000;">
+      <div style="padding-left:2%;height:60px;">
+       <button class="btn_certify send"  >注文やめる</button>
+
+<!--
+       <button class="btn_move btn_move_up" onClick="move_menu('up');">上へ</button>
+       <button class="btn_move btn_move_down" onClick="move_menu('down');" >下へ</button>
+       <button class="btn_current" onClick="go_kakunin();" >注文内容確認</button>
+-->
+
+       <button class="btn_move btn_move_up" >上へ</button>
+       <button class="btn_move btn_move_down" >下へ</button>
+       <button class="btn_current" >注文内容確認</button>
+       <!-- 注文確認ボタンは本来sendクラス指定対象だが、共通スクリプトではなく、go_kakuninの中で独自にdisabledの制御を行うため、指定しない。-->
+      </div>
+    </div>
+  </div>
+<!--hidden  送信用-->
+<form name="userinfo" id="userinfo">
+  <input type="hidden" name="chumon_no" id="chumon_no" value="###CHUMON_NO###" />
+  <input type="hidden" name="nyukyosha_id" id="nyukyosha_id" value="###NYUKYOSHA_ID###" />  
+  <input type="hidden" name="select_menu_id"  id="select_menu_id" />
+  <input type="hidden" name="select_menu_name"  id="select_menu_name" />
+  <input type="hidden" name="select_shokujishurui"  id="select_shokujishurui" />
+
+  <input type="hidden" name="select_menu_seq_id_array"  id="select_menu_seq_id_array" />
+  <input type="hidden" name="select_menu_id_array"  id="select_menu_id_array" />
+  <input type="hidden" name="select_menu_suryo_nyukyosha_array"  id="select_menu_suryo_nyukyosha_array" />
+  <input type="hidden" name="select_menu_suryo_guest_array"  id="select_menu_suryo_guest_array" />
+
+  <input type="hidden" name="MODE"  id="MODE"  value="###MODE###" />
+  <input type="hidden" name="drink_type"  id="drink_type" />
+  <input type="hidden" name="user_type"  id="user_type"  value="###USER_TYPE###" />
+  <input type="hidden" name="receive_time"  id="receive_time"  value="###CHUMON_RECIEVE_TIME###" />
+
+  <input type="hidden" name="target_day"  id="target_day"  value="###TARGET_DAY###" />
+  <input type="hidden" name="target_shokuji_jikantai"  id="target_shokuji_jikantai"  value="###TARGET_SHOKUJI_JIKANTAI###" />
+
+</form>
+<audio class="btnsound"  src="/js/sound01_click.mp3">
+</audio>
+<!--
+<audio id="btnsound" preload="auto">
+<source src="/js/sound01_click.mp3" type="audio/mp3">
+</audio>
+-->
+</body>
+</html>

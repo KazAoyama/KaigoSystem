@@ -1,0 +1,218 @@
+#!/bin/bash
+#
+# SCHEDULE_EVENT_CALENDAR.SEARCH
+# スケジュールカレンダー表示　検索用CGI
+#
+# Written by aoyagi
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+today=$(date +%Y%m%d)
+namedata=$1
+
+
+# 複数選択式プルダウン対応
+awk '$1=="ScheduleKubun"{print $2}' ${namedata} > $tmp-shisetsu_kubun_multiple
+awk '$1=="ScheduleShurui"{print $2}' ${namedata} > $tmp-shisetsu_shurui_multiple
+
+[ ! -s $tmp-shisetsu_kubun_multiple ] && echo "00000" > $tmp-shisetsu_kubun_multiple
+[ ! -s $tmp-shisetsu_shurui_multiple ] && echo "00" > $tmp-shisetsu_shurui_multiple
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+if [ "${MODE}" = "init" ];then
+  EventTateya=1
+  calendarDisplay=month
+  calendarYMD=${today}
+else
+  :
+fi
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 施設
+[ -z "${shisetsu}" -o "${shisetsu}" = "_" ] && error_exit "施設が不明です"
+
+[ -z "${displayShisetsu}" -o "${displayShisetsu}" = "_" ] && displayShisetsu=$shisetsu
+
+echo ${displayShisetsu} > $tmp-displayShisetsu
+
+cp $tmp-shisetsu_shurui_multiple $work_dir/ssm
+cp $tmp-shisetsu_kubun_multiple $work_dir/skm
+
+##############################################################
+# スケジュールタイプマスタ
+##############################################################
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCEDULE_TYPE_MASTER |
+# ケアを抜く(入居者カレンダーも取る) 削除フラグは見ない
+awk '$5=="'${shisetsu}'" && $4!="01"' |
+#awk '$5=="'${shisetsu}'" && $4!="01" && $(NF-2)!=9' |
+awk '$4!="06"' |
+LANG=C sort -k4,4  |
+if [ "$(awk '$1=="00"{print $0}' $tmp-shisetsu_shurui_multiple | gyo)" = "0" ] ; then
+join0 key=4 $tmp-shisetsu_shurui_multiple
+else
+cat -
+fi |
+# 1:ID         2:スケジュールタイプ名 3:色       4:スケジュールタイプ 5:施設
+# 6:有効フラグ 7:処理時間             8:ユーザID
+self 1 3 4    > $tmp-schedule_color_tmp
+
+##############################################################
+# 部屋マスタ
+##############################################################
+if [ $(awk '$1=="00"||$1=="05"{print $0}' $tmp-shisetsu_shurui_multiple | gyo) -gt 0 ] ; then
+  cat ${home_dir}/TBL/FACILITY_MASTER/FACILITY_MASTER |
+  awk '$1=="'${shisetsu}'" && $(NF-2)!=9' |
+  awk '{print $2,"default-color","05"}' >> $tmp-schedule_color_tmp
+fi
+
+cat $tmp-schedule_color_tmp |
+LANG=C sort > $tmp-schedule_color
+
+cp $tmp-schedule_color $work_dir/color
+
+
+# 日付（後）データ
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_ENDDATE  |
+awk '$1=="'${shisetsu}'"&&$(NF-2)!="9"'    > $tmp-schedule_end_moto
+
+cat $tmp-schedule_end_moto |
+# 2:スケジュールID 3:日付（後）
+awk '$3=="00015"'                          |
+self 2 5                                   |
+LANG=C sort -k1,1                          > $tmp-schedule_enddate_guest_shukuhaku
+[ $(gyo $tmp-schedule_enddate_guest_shukuhaku) -eq 0 ] && echo "_" "_" > $tmp-schedule_enddate_guest_shukuhaku
+
+cat $tmp-schedule_end_moto |
+# 2:スケジュールID 3:日付（後）
+awk '$3=="00012"'                          |
+self 2 5                                   |
+LANG=C sort -k1,1                          > $tmp-schedule_enddate_catering
+[ $(gyo $tmp-schedule_enddate_catering) -eq 0 ] && echo "_" "_" > $tmp-schedule_enddate_catering
+
+cp $tmp-schedule_enddate_guest_shukuhaku $work_dir/schedule_enddate_guest_shukuhaku_calendar
+cp $tmp-schedule_enddate_catering $work_dir/schedule_enddate_catering_calendar
+
+
+#--------------------------------------------------------------
+# スケジュール詳細基本ファイルの取得
+# 1:施設        2:スケジュールID 3:スケジュールタイプ 4:スケジュール名 5:開催日
+# 6:開始時刻    7:終了時刻       8:予約状況           9:開催場所       10:費用
+# 11:担当者1    12:担当者2       13:追記              14:建屋          15:課税区分
+# 16:有効フラグ 17:処理時間      18:ユーザID
+#cat ${apdata_dir}/SCHEDULE/SCHEDULE_SHOUSAI |
+cat ${apdata_dir}/SCHEDULE/SCHEDULE_SHOUSAI ${apdata_dir}/SCHEDULE/SCHEDULE_RESERVATION |
+awk '$(NF-2)!="9"'                          |
+awk '$(NF-4)=="1"'                          |
+LANG=C sort -k3,3                           |
+join0 key=3 $tmp-schedule_color             |
+#--------------------------------------------------------------
+###############################
+# 検索
+##############################
+# 施設
+LANG=C sort -k1,1             |
+tee $work_dir/schedule_work1  |
+join0 key=1 $tmp-displayShisetsu        |
+tee $work_dir/schedule_work2  |
+# 建屋
+if [ -z "$EventTateya" -o "$EventTateya" = "_" ] ; then
+   cat -
+else
+   awk '$14=="'$EventTateya'"'
+fi |
+tee $work_dir/schedule_work3  |
+LANG=C sort -k3,3             |
+if [ "$(awk '$1=="00000"{print $0}' $tmp-shisetsu_kubun_multiple | gyo)" = "0" ] ; then
+join0 key=3 $tmp-shisetsu_kubun_multiple
+else
+cat - 
+fi |
+tee $work_dir/schedule_work4  |
+delf NF-2/NF  |
+# 1:スケジュールID 2:スケジュールタイプ 3:スケジュール名 4:開催日 5:開始時刻
+# 6:終了時刻       7:開催場所
+self 2/9 11     |
+LANG=C sort -k2,2    |
+tee $work_dir/before_color |
+join1 key=2 $tmp-schedule_color - |
+# 1:スケジュールID 2:スケジュールタイプ 3:色       4:スケジュール種類 5:スケジュール名
+# 6:開催日         7:開始時刻           8:終了時刻 9:開催場所
+# 1:スケジュールID 2:タイトル   3:開始日 4:開始時間 5:終了日
+# 6:終了時間       7:全日(固定) 8:色 9:スケジュール種類
+awk '{print $1,$5,$6,$7,$6,$8,"_",$3,$4}' > $tmp-schedule_working1
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュールリスト取得エラー"
+
+cp  $tmp-schedule_working1 $work_dir/schedule_working1_calendar
+
+# ゲスト宿泊
+cat $tmp-schedule_working1 |
+LANG=C sort -k1,1 |
+join2 +"_" key=1 $tmp-schedule_enddate_guest_shukuhaku |
+awk '{if($2=="_"){$2=$4};print $0}' |
+self 1 3/NF 2 |
+self 1/4 NF 6/NF-1 > $tmp-schedule_guest_shukuhaku
+
+cp $tmp-schedule_guest_shukuhaku $work_dir/schedule_guest_shukuhaku_calender
+
+# ケータリング
+self 1 3 $tmp-schedule_working1 |
+LANG=C sort -k1,1 |
+join1 key=1 $tmp-schedule_enddate_catering |
+awk '{if($2=="_"){$2=$3};print $0}' |
+sed 's/\///g' |
+mdate 2 3     |
+mdate -e 4 +3 |
+delf 2 3      |
+tarr num=1    |
+LANG=C sort -k1,1 |
+awk '{print $1,substr($2,1,4)"/"substr($2,5,2)"/"substr($2,7,2)}' > $tmp-catering_working1
+
+cp $tmp-catering_working1 $work_dir/catering_working1_calendar
+
+cat $tmp-schedule_working1 |
+LANG=C sort -k1,1 |
+join2 +"_" key=1 - $tmp-catering_working1 |
+awk '{if($NF=="_"){$NF=$3};print $0}'     |
+self 1 2 NF 4 NF 6/NF-1 > $tmp-schedule_catering
+
+cp $tmp-schedule_catering $work_dir/schedule_catering_calendar
+
+cat $tmp-schedule_guest_shukuhaku $tmp-schedule_catering |
+LANG=C sort -k1,6 |
+getlast 1 6       > ${tmp}-schedule_list
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュールリスト取得エラー"
+
+cp ${tmp}-schedule_list $work_dir/schedule_list
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-schedule_list
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,365 @@
+#!/bin/bash
+#
+# KESSHOKUHYOU.SEARCH
+# 欠食表
+#
+# Written by E.Okuda  : 2013/1/25
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 変数の定義
+tmp=/var/tmp/${$}
+namedata=$1
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# ディレクトリ設定
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+today=$(date +%Y%m%d)
+data_dir="/DATA/E-LIFE"
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 年月日の準備
+# -------------------------------------------------------------
+  Nyuukyosha=$(nameread    "Nyuukyosha"     $namedata )
+  TaishouYear=$(nameread   "TaishouYear"    $namedata )
+  TaishouMonth=$(nameread  "TaishouMonth"   $namedata | maezero 1.2)
+  Shisetsu=$(nameread      "shisetsu"       $namedata)
+  Tateya=$(nameread        "Tateya"         $namedata)
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければ 従業員マスタから
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1) # 従業員マスタに指定がなければ>施設建屋フロアマスタの上にある方(シニアがあればシニア)
+#------------------------------------------------------------
+#------------------------------------------------------------
+# 年月
+#----------------------
+search_month=$(echo "${TaishouYear}""${TaishouMonth}")
+this_month=$(date +%Y%m)
+month_number=$(mdate ${this_month}m ${search_month}m)
+search_last_month=$(mdate ${search_month}m/-1)
+
+# 請求確定年月
+kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${Shisetsu} | awk '$(NF-2)!="9"'| getlast 1 1 | self 2)"
+###################
+# 欠食データの取得
+###################
+
+  #確定月～検索対象月までの期間を取得
+  # 確定年月と検索対象月が同じ月だったら
+  if [ "${kakutei_nengetsu}" -eq "${search_month}" ] ; then
+    kesshoku_kakutei_nengetsu=$(echo "${search_month}")
+  # 確定年月の方が先月より前
+  elif [ "${kakutei_nengetsu}" -lt "${search_month}" ] ; then
+    kesshoku_kakutei_nengetsu=$(echo "${kakutei_nengetsu}")
+    # 確定していない、かつ検索対象月より前の月
+    old_month_number=$(mdate "${search_month}"m "${kakutei_nengetsu}"m)
+    mdate -e "${kakutei_nengetsu}"m/+"${old_month_number}" |
+    tarr |
+    tail -n  +2 > $tmp-old_month
+  # 確定年月の方が後
+  else
+    kesshoku_kakutei_nengetsu=$(echo "${search_month}")
+# 1:対象年月
+  fi
+
+
+#-------------
+# 入院外泊情報（セカンド利用）
+#------------=
+# 入院外泊情報を取得（2014/10/03）# 追改修 セカンドだけでなく欠食やその他も出来たので、入院外泊の方を取得へ変更 2014/12/9
+cat ${data_dir}/UNEI/NYUUINGAIHAKU/${Shisetsu}/${Tateya}/RIYOUSHA_NYUUINGAIHAKU |
+awk '$6<="2"&&$(NF-2)!="9"{print $2,$6}'  |
+LANG=C sort -k1,2 > $tmp-second_riyou
+[ "$(gyo $tmp-second_riyou)" = "0" ] && echo "_" "_" > $tmp-second_riyou
+
+  #------------------------
+  # 確定月の処理
+  #------------------------
+
+# 確定データがあるかどうか確認
+if [ "${kakutei_nengetsu}" -ge "${search_month}" -a -s ${data_dir}/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${kesshoku_kakutei_nengetsu}/RIYOUSHA_KESSHOKU_KAKUTEI ] ; then
+
+  # データがあった場合はその利用者のデータを利用
+  cat ${data_dir}/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${kesshoku_kakutei_nengetsu}/RIYOUSHA_KESSHOKU_KAKUTEI |
+  awk '$1=="'${Nyuukyosha}'"{print $0}'  |
+# 1:入居者ID 2:年月日 3:食事番号(朝 昼 夜) 4:欠食情報
+
+  # 欠食情報フィールドにて1や2だったらKSへ置き換え
+  awk '{if($4=="1"||$4=="2"){print $2,$3,"KS","@"}
+        else if($4~/KESSHOKU/){print $2,$3,"KESSHOKU_3","@"}
+        else{print $2,$3,"@","@"}
+       }' > $tmp-kakutei_nengetsu_kakutei_kesshoku
+# 1:年月日 2:食事番号 3:欠食情報 4:"@"
+   
+# 確定データがないが、欠食データがあった場合
+elif [ -s ${data_dir}/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${kesshoku_kakutei_nengetsu}/RIYOUSHA_KESSHOKU ] ; then
+
+  cat ${data_dir}/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${kesshoku_kakutei_nengetsu}/RIYOUSHA_KESSHOKU |
+# 1:利用者(入居者)ID 2:施設ID     3:建屋 4:居室 5:欠食年月日
+# 6:欠食食事         7:入院外泊ID
+  # セカンド利用のデータとjoinする。
+  LANG=C sort -k7,7  |
+  join2 +"@" key=7 $tmp-second_riyou - |
+# 1:利用者(入居者)ID 2:施設ID     3:建屋 4:居室 5:欠食年月日
+# 6:欠食食事         7:入院外泊ID 8:入院外泊セカンドステータス
+  awk '$1=="'${Nyuukyosha}'"&&$2=="'${Shisetsu}'"&&$3=="'${Tateya}'"&&$(NF-2)!="9"{if($8<="2"){UMU="有"}else{UMU="@"};print $5,$6,"KS",UMU}' |
+  LANG=C sort > $tmp-kakutei_nengetsu_mikakutei_before
+
+   if [ -s $tmp-kakutei_nengetsu_mikakutei_before ] ; then
+    # 月データの取得
+    mdate "${kesshoku_kakutei_nengetsu}"m |
+    tarr  |
+    awk '{print $1,"1"}' > $tmp-${kesshoku_kakutei_nengetsu}_month_asa
+# 1:年月日 2:"1"
+    awk '{print $1,"2"}' $tmp-${kesshoku_kakutei_nengetsu}_month_asa > $tmp-${kesshoku_kakutei_nengetsu}_month_hiru
+    awk '{print $1,"3"}' $tmp-${kesshoku_kakutei_nengetsu}_month_asa > $tmp-${kesshoku_kakutei_nengetsu}_month_yoru
+
+    cat $tmp-${kesshoku_kakutei_nengetsu}_month_asa $tmp-${kesshoku_kakutei_nengetsu}_month_hiru $tmp-${kesshoku_kakutei_nengetsu}_month_yoru |
+    LANG=C sort  >$tmp-${kesshoku_kakutei_nengetsu}_data_before
+# 1:年月日 2:食事(1～3)
+    cat $tmp-${kesshoku_kakutei_nengetsu}_data_before  |
+    loopj -d"@" num=2 - $tmp-kakutei_nengetsu_mikakutei_before  > $tmp-kakutei_nengetsu_mikakutei
+# 1:年月日 2:食事番号 3:欠食食事 4:入院外泊有無
+   else
+    : > $tmp-kakutei_nengetsu_mikakutei
+   fi
+# 確定月に確定データ、欠食データ共になし
+else
+ : > $tmp-kakutei_nengetsu_mikakutei
+fi
+
+ #-------------------------
+ # 未確定～検索月の処理
+ #-------------------------
+
+  :  >> $tmp-kesshoku_taishou_before
+  # 未確定月～検索月があれば取得
+  if [ -s $tmp-old_month ] ; then
+    cat $tmp-old_month |
+# 1:年月
+    while read MONTH ;do
+      cat ${data_dir}/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${MONTH}/RIYOUSHA_KESSHOKU |
+# 1:利用者(入居者)ID 2:施設ID     3:建屋 4:居室 5:欠食年月日
+# 6:欠食食事         7:入院外泊ID
+# 入居者データの絞り込み
+      # セカンド利用のデータとjoinする。
+      LANG=C sort -k7,7  |
+      join2 +"@" key=7 $tmp-second_riyou |
+      awk '$1=="'${Nyuukyosha}'"&&$2=="'${Shisetsu}'"&&$3=="'${Tateya}'"&&$(NF-2)!="9"{if($8<="2"){UMU="有"}else{UMU="@"};print $5,$6,"KS",UMU}' |
+      LANG=C sort > $tmp-kesshoku_data_${MONTH}
+# 1:欠食年月日 2:欠食食事 3:KS  4:入院外泊ID
+
+      # 欠食データがあったら
+      if [ -s $tmp-kesshoku_data_${MONTH} ] ; then
+        # 月データの取得
+        mdate "${MONTH}"m |
+        tarr  |
+        awk '{print $1,"1"}' > $tmp-${MONTH}_month_asa
+# 1:年月日 2:"1"
+        awk '{print $1,"2"}' $tmp-${MONTH}_month_asa > $tmp-${MONTH}_month_hiru
+        awk '{print $1,"3"}' $tmp-${MONTH}_month_asa > $tmp-${MONTH}_month_yoru
+
+        cat $tmp-${MONTH}_month_asa $tmp-${MONTH}_month_hiru $tmp-${MONTH}_month_yoru |
+        LANG=C sort  >$tmp-${MONTH}_data_before
+# 1:年月日 2:食事(1～3)
+        cat $tmp-${MONTH}_data_before  |
+        loopj -d"@" num=2 - $tmp-kesshoku_data_${MONTH}  >> $tmp-kesshoku_taishou_before
+# 1:年月日 2:食事番号 3:欠食食事 4:入院外泊有無
+      else
+        :  >> $tmp-kesshoku_taishou_before
+      fi
+    done
+  else
+    : >> $tmp-kesshoku_taishou_before
+  fi
+# 1:年月日 2:食事番号(朝昼夜) 3:欠食 4:"@"
+
+
+  # 確定月未確定データと～検索月データがあったら
+  if [ -s $tmp-kakutei_nengetsu_mikakutei -a $tmp-kesshoku_taishou_before ]; then
+    cat $tmp-kakutei_nengetsu_mikakutei $tmp-kesshoku_taishou_before 
+  # 確定月月のデータのみあったら
+  elif [ -s $tmp-kesshoku_taishou_before ]; then
+    cat $tmp-kesshoku_taishou_before
+  elif [ -s $tmp-kakutei_nengetsu_kakutei_kesshoku ] ; then
+    cat $tmp-kakutei_nengetsu_kakutei_kesshoku
+  # その他(確定月未確定データがあっても当月確定がなければ使いようなし)  
+  else
+    :
+  fi > $tmp-kesshoku_taishou
+
+  #----------------------------------------------
+  # 未確定～検索月に関して欠食数カウントの準備
+  #----------------------------------------------
+# 今回の検索対象があるならば
+if [ -s $tmp-kesshoku_taishou ] ; then
+
+  # ～検索月と確定済みがあればくっつける
+  if [ -s $tmp-kesshoku_taishou -a -s $tmp-kakutei_nengetsu_kakutei_kesshoku ] ; then
+    cat $tmp-kesshoku_taishou $tmp-kakutei_nengetsu_kakutei_kesshoku
+  elif [ -s $tmp-kesshoku_taishou ] ; then
+    cat $tmp-kesshoku_taishou
+  fi |
+# 1:年月日 2:食事番号(朝昼夜) 3:KS 4:"@"
+
+  LANG=C sort -u  |
+  tateyoko        |
+  # KSが3つで欠食1回とカウント
+  sed 's/KS KS KS/欠食 欠食 KESSHOKU_3/g' |
+  sed 's/KS KS/欠食 欠食/g' | 
+  sed 's/KS/欠食/g' > $tmp-data_2
+
+  if [ "$(tateyoko $tmp-data_2 | awk '$1~/^'${search_month}'/{print $0}' | gyo)" != "0" ] ; then
+# 検索月データだけにする
+  cat $tmp-data_2 |
+  tateyoko        |
+  awk '$1~/^'${search_month}'/{print $0}'   |
+  tateyoko        > $tmp-data_3
+  else
+  :
+  fi
+
+# 欠食確定月だけあったら
+elif [ -s $tmp-kakutei_nengetsu_kakutei_kesshoku ] ; then
+  cat $tmp-kakutei_nengetsu_kakutei_kesshoku |
+  LANG=C sort |
+  awk '$1~/^'${search_month}'/{print $0}'   |
+  tateyoko        |
+  sed 's/KS KS/欠食 欠食/g' |
+  sed 's/KS/欠食/g'> $tmp-data_3
+fi
+
+  kesshoku_kaisuu=$(sed 's/[ \t]/\n/g' $tmp-data_3 | grep KESSHOKU_3 | wc -l)
+
+  if [ -s $tmp-data_3 -a "${kesshoku_kaisuu}" != "0" ] ; then
+  for i in $(seq 1 ${kesshoku_kaisuu}) ;do
+    cat $tmp-data_3 |
+    sed 's/KESSHOKU_3/欠食'${i}'/'${i}'' |
+    tateyoko  > $tmp-data_for${i}
+  done 
+
+  cat $tmp-data_for* |
+  LANG=C sort -k1,2  |
+  getlast 1 2        > $tmp-data-all
+
+# 欠食データの作成
+  cat $tmp-data-all  |
+  self 1/3           |
+  map num=1          > $tmp-kesshoku_data
+
+# 入院外泊情報                                                 
+  cat $tmp-data-all |
+  self 1 4          |
+  LANG=C sort       |
+  getlast 1 1       > $tmp-month_data
+
+ elif [ -s $tmp-data_3 -a "${kesshoku_kaisuu}" = "0" ] ; then
+  cat $tmp-data_3 |
+  tateyoko        |
+  self 1/3        |
+  map num=1       > $tmp-kesshoku_data
+
+  cat $tmp-data_3   |
+  tateyoko          |
+  LANG=C sort -k1,2 |
+  self 1 4          |
+  LANG=C sort       |
+  getlast 1 1       > $tmp-month_data
+ else
+  :
+ fi
+
+  if [ -s $tmp-kesshoku_data ]; then
+    cat $tmp-month_data |
+    loopj num=1 $tmp-kesshoku_data - |
+    awk '{print "LIST",$0,substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}'  |
+    self 1 NF 3/NF-1    |
+# 1:"LIST" 2:年月日 3:朝食 4:昼食 5:夕食 6:入院外泊
+
+# DISPLAY用色をつける
+    awk '{print $1,$2,$3,$3!="@"?"pink":"@",$4,$4!="@"?"pink":"@",$5,$5!="@"?"pink":"@",$6}' > $tmp-search_result
+# 1:"LIST" 2:年月日 3:朝食   4:朝食色   5:昼食
+# 6:昼食色 7:夕食   8:夕食色 9:入院外泊
+
+# 欠食回数x欠食金額の計算
+    kesshoku_kingaku=$(expr ${kesshoku_kaisuu} \* 1000)
+
+  # 保険的な処理,欠食がなかったら
+  else
+
+    if [ "$(cat $tmp-*_data_before | awk '$1~/^'${search_month}'/{print $0}' | gyo)" -gt "0" ] ; then
+      cat $tmp-*_data_before  |
+      awk '{print $0,"@"}' |
+      awk '$1~/^'${search_month}'/{print $0}'   
+    else
+      mdate "${search_month}"m |
+      tarr |
+      awk '{print $1,"1"}' > $tmp-${search_month}_month_asa
+# 1:年月日 2:"1"
+      awk '{print $1,"2"}' $tmp-${search_month}_month_asa > $tmp-${search_month}_month_hiru
+      awk '{print $1,"3"}' $tmp-${search_month}_month_asa > $tmp-${search_month}_month_yoru
+
+      cat $tmp-${search_month}_month_asa $tmp-${search_month}_month_hiru $tmp-${search_month}_month_yoru |
+      awk '{print $0,"@"}' |
+      LANG=C sort 
+     fi |
+# 1:年月日 2:食事番号(1:朝 2:昼 3:夜)  3:@
+    map num=1            |
+    # DISPLAY用色と入院外泊情報にダミー
+    awk '{print "LIST",$1!="_"?substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2):"_",$2,"@",$3,"@",$4,"@","@"}' > $tmp-search_result
+# 1:"LIST" 2:年月日 3:朝食   4:朝食色   5:昼食
+# 6:昼食色 7:夕食   8:夕食色 9:入院外泊
+     kesshoku_kaisuu=0
+     kesshoku_kingaku=0
+  fi
+
+
+# 欠食データがなかった場合
+#else
+#   cat $tmp-month_data_before  |
+#   awk '{print $0,"@"}' |
+#   awk '$1~/^'${search_month}'/{print $0}'   |
+# 1:年月日 2:食事番号(1:朝 2:昼 3:夜)  3:@
+#   map num=1            |
+
+# DISPLAY用色と入院外泊情報にダミー
+#   awk '{print "LIST",$1!="_"?substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2):"_",$2,"@",$3,"@",$4,"@","@"}' > $tmp-search_result
+# 1:"LIST" 2:年月日 3:朝食   4:朝食色   5:昼食
+# 6:昼食色 7:夕食   8:夕食色 9:入院外泊
+
+#   kesshoku_kaisuu=0
+#   kesshoku_kingaku=0
+#fi
+
+cp $tmp-* /home/hands/work/okuda
+
+echo "KAISUUKINGAKU" "${kesshoku_kaisuu}" "${kesshoku_kingaku}" |
+if [ -s $tmp-search_result ]; then
+  cat $tmp-search_result -
+else
+  cat -
+fi
+
+
+## 終了
+rm -f $tmp-*
+exit 0

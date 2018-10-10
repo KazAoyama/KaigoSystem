@@ -1,0 +1,260 @@
+#!/bin/bash
+#
+# SHIEN_KEIKAKU1.DISPLAY
+# 支援計画票１　表示用CGI
+#
+# Written by K.Aoyama :20131208
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+# ケアプラン作成日が設定されていない場合、最新のデータを表示
+if [ -z "${hdIkkatsuKijunDate}" -o "${hdIkkatsuKijunDate}" = "_" ] ; then
+  if [ -z "$hdKeikakuSakuseiDate" -o "$hdKeikakuSakuseiDate" = "_" ] ; then
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+  fi
+else
+    cat ${apdata_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_DATE |
+    awk '$(NF-2)!="9"'                                           |
+    awk '$2<="'${hdIkkatsuKijunDate}'"'                          |
+    delf 6/8                                                     |
+    # 1:利用者ID 2:ケアプラン計画作成日(西暦) 3:ケアプラン計画作成日(和暦) 4:ケアプラン作成者ID 5:ケアプラン作成事業者
+    getlast 1 1                                                  >  ${tmp}-careplan_date
+    hdKeikakuSakuseiDate=$(self 2 ${tmp}-careplan_date)
+fi
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明で>
+す"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+echo "${Riyoushaid}" "${hdKeikakuSakuseiDate}" > $tmp-riyoushaid_checklist
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdKeikakuSakuseiDate
+KeikakuSakuseiDate
+ShokaiSakusei
+ShoukaiSakusei
+KeizokuSakusei
+Nintei
+Kaigodo
+Tantousha
+chkItaku
+Kyoukyusha
+ShokaiSakuseiDate
+ShienJigyousha
+Iyoku0
+KadaiFlg0
+AssessmentJoukyou0
+RyouikiKadai0
+Iyoku1
+KadaiFlg1
+AssessmentJoukyou1
+RyouikiKadai1
+Iyoku2
+KadaiFlg2
+AssessmentJoukyou2
+RyouikiKadai2
+Iyoku3
+KadaiFlg3
+AssessmentJoukyou3
+RyouikiKadai3
+Undoufusoku
+EiyouKaizen
+Koukunai
+Tojikomori
+Monowasure
+Utu
+Ryuiten
+FIN
+
+
+cp $tmp-riyoushaid_checklist $work_dir/riyousha_checklist
+#--------------------------------------------------------------
+# ケアプランチェックリストデータ
+#--------------------------------------------------------------
+: > $tmp-checklist_date
+
+if [ -e ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_CHECKLIST ] ; then
+   cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CAREPLAN_CHECKLIST  |
+   join0 key=1/2 $tmp-riyoushaid_checklist |
+   self 3 > $tmp-checklist_date
+fi
+
+cp $tmp-checklist_date $work_dir/checkdate
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# 基本ファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_KEIKAKU1 |
+awk '$(NF-2)!="9"'            |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+if [ -z "${hdKeikakuSakuseiDate}" -o "${hdKeikakuSakuseiDate}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdKeikakuSakuseiDate}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+tee $tmp-result             |
+delf 1                      |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+awk '{print "k",$0}'        > ${tmp}-shien1_base
+
+cp -p $tmp-result $work_dir/result_shien
+
+# 課題リストデータ取得用対象日付
+awk '{print $2}' $tmp-result > $tmp-taishoudate
+
+cp -p $tmp-taishoudate $work_dir/taishoudate_shien
+
+#--------------------------------------------------------------
+# 課題リストデータファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/SHIEN_SOUGOU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2                |
+join1 key=2 $tmp-taishoudate -   |
+# --------------------------
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 7 8 9            |
+sed 's/"//g'          |
+sed 's/_/@/g'         |
+#--------------------------------------------------------------
+awk '{print "l",$0}'        > ${tmp}-shien1_sougou
+
+
+# 基本チェックファイルの取得(BMIが18.5以下は該当チェック項目に足す)
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/KIHONCHECK |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2              |
+if [ "$(gyo $tmp-checklist_date)" = "1" ] ; then
+  join0 key=2 $tmp-checklist_date
+else
+  getlast 1 1
+fi |
+# --------------------------
+self 6                         > $tmp-BMI
+
+# 小数点を計算できないため、１０倍する
+checkBMI=$(self 1 $tmp-BMI | lcalc '$1*10')
+
+:> $tmp-bmi
+if [ "$checkBMI" -lt 185 ] ; then
+  echo "3" > $tmp-bmi
+fi
+
+#--------------------------------------------------------------
+# 必要なカテゴリ数
+seq 2 7 > $tmp-catlist
+# チェックリストファイルの取得
+cat ${pompa_dir}/CAREPLAN_YOBO/${Riyoushaid}/CHECKLIST |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+#
+LANG=C sort -k2,2              |
+if [ "$(gyo $tmp-checklist_date)" = "1" ] ; then
+  join0 key=2 $tmp-checklist_date
+else
+  getlast 1 1
+fi |
+# --------------------------
+self 4                         |
+# BMIの基準を追加
+cat - $tmp-bmi                 |
+LANG=C sort -k1,1              |
+count 1 1                      >  $tmp-check_value_work1
+
+cp $tmp-check_value_work1 $work_dir/check_value_work
+
+cat $tmp-check_value_work1      > $tmp-check_value
+
+join2 +0 key=1 $tmp-check_value $tmp-catlist |
+awk '{print "c","C"$1,$2}'     >  $tmp-check_result
+
+cp -p $tmp-check_result $work_dir/check_result
+
+
+
+# ケアプランデータを表示
+cat ${tmp}-shien1_base ${tmp}-shien1_sougou $tmp-check_result
+
+
+## 終了
+rm -f $tmp-*
+exit 0

@@ -1,0 +1,167 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_SHOKUJI.UPLOAD
+#
+#
+# Written by E.Okuda
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#Functions{{{############################################################
+# エラー終了
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#}}}Functions############################################################
+#=== 初期化 ===
+tmp=/var/tmp/${$}
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#-------------------------------------------------------------
+#shisetsu_name=$1
+#shokuji_pompa_dir=/home/hands/E-LIFE/SHOKUJI/POMPA/0003/01
+#shokuji_data_dir=/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/0003/01
+#-----------------------------------------------------------------------
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE6 - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE6" $mime > $tmp-excel_file
+
+shokuji_pompa_dir=/home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}
+shokuji_pompa_senier_dir=${shokuji_pompa_dir}/01
+shokuji_data_dir=/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/01
+
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE6/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/csv/ || $1~/xls/' > $tmp-filemark
+
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+# 準備
+if [ -s /DATA/E-LIFE/SHOKUJI/KANRI/${Shisetsu}/SHOKUJI_MENU_ID ] ; then
+  now_shokuji_menuid="$(cat /DATA/E-LIFE/SHOKUJI/KANRI/${Shisetsu}/SHOKUJI_MENU_ID)"
+else 
+  now_shokuji_menuid="0"
+fi
+
+##　元エクセル #TODO 要確認 フラグや中身の値が少し違う場合あるため要確認！！！！
+# 1:メニューID  2:削除フラグ(-1,0)     3:食事名 4:カテゴリーID 5:DisoNo　
+# 6:？          7:タイムゾーン(朝昼夜) 8:色番号 9:食事種別
+
+if [ "$(cat $tmp-filemark)" == "csv" ] ; then
+  cat ${excel}    |
+  sed 's/,/ /g'     
+else
+  cat ${excel}    |
+  e2t2 1 a2 i-    
+fi |
+
+maezero 9.2       |
+LANG=C sort -k9,9 -k5,5 |
+awk '{print $0,$2=="0"?"1":"9","'${Shisetsu}'","01","0",$7~/1/?"1":"0",$7~/2/?"1":"0",$7~/3/?"1":"0","001","20100101","99999999","_"}' |
+# 1:メニューID  2:削除フラグ(-1,0)     3:食事名 4:カテゴリーID 5:DisoNo　
+# 6:？          7:タイムゾーン(朝昼夜) 8:色番号 9:食事種別     10:削除フラグ
+# 11:施設ID     12:建屋ID              13:"0"   14:朝食フラグ  15:昼食フラグ
+# 16:夜食フラグ 17:"001"               18:期間  19:期間
+self 1 3 9 11/13 13 13 13 14/16 13 NF-2 NF-1 NF-3 NF NF NF NF NF 10 |
+# 1:メニューid 2:メニュー名   3:食事種類     4:施設ID          5:建屋ID
+# 6:入居者価格 7:ゲスト１価格 8:ゲスト２価格 9:スタッフ価格    10:朝食
+# 11:昼食      12:夕食        13:おやつ      14:期間From(西暦) 15:期間To(西暦)
+# 16:表示色    17:予備項目1   18:予備項目2   19:予備項目3      20:予備項目4
+# 21:予備項目5
+awk '{print $0,"2014060100000000","UserID"}'  |
+rank                                          |
+awk '{print $1+"'${now_shokuji_menuid}'",$0}' |
+delf 2                                        |
+maezero 1.3                                  > $tmp-shokuji_menu
+# 1:NEWメニューID 2:メニューid 3:メニュー名   4:食事種類     5:施設ID
+# 6:建屋ID        7:入居者価格 8:ゲスト１価格 9:ゲスト２価格 10:スタッフ価格
+# 11:朝食         12:昼食      13:夕食        14:おやつ      15:期間From(西暦)
+# 16:期間To(西暦) 17:表示色    18:予備項目1   19:予備項目2   20:予備項目3
+# 21:予備項目4    22:予備項目5
+#self 1 3 NF                        > $tmp-shokuji_menu
+
+[ -s $tmp-shokuji_menu -a "$(retu $tmp-shokuji_menu)" = "25" ] || error_exit "行数エラー"
+
+mkdir -p /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}
+
+# 食事実績取込用
+cp $tmp-shokuji_menu /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SHOKUJI_MENU_${Shisetsu}
+
+
+# 食事メニュー
+if [ -s /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU ] ; then
+  cp -p /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/back/SHOKUJI_MENU_${cur_time}
+
+  cat $tmp-shokuji_menu |
+  delf 2                |
+  cat - /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU |
+  LANG=C sort -u        > $tmp-shokuji_menu_result
+   cp -p $tmp-shokuji_menu_result /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU
+else
+  cat $tmp-shokuji_menu |
+  delf 2                |
+  LANG=C sort -u        > /home/hands/E-LIFE/SHOKUJI/POMPA/${Shisetsu}/SHOKUJI_MENU
+fi
+
+# 食事メニュー管理番号
+mkdir -p /DATA/E-LIFE/SHOKUJI/KANRI/${Shisetsu}
+
+cat $tmp-shokuji_menu |
+self 1                |
+LANG=C sort           |
+tail -1               > /DATA/E-LIFE/SHOKUJI/KANRI/${Shisetsu}/SHOKUJI_MENU_ID
+
+#sed 's/\// /g'  |
+#maezero 6.2 7.2 |
+#  sed 's/True/9/g'       |
+#  sed 's/False/1/g'      |
+#  sed 's/TRUE/9/g'       |
+#  sed 's/FALSE/1/g'      > $tmp-data
+# 1:オーダーID    2:削除フラグ 3:サービスタイプ       4:UserID     5:オーダー年
+# 6:オーダー月    7:オーダー日 8:タイムゾーン(朝昼夜) 9:めにゅーID 10:カテゴリーID
+# 11:価格(税込み) 12:量
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+echo "result ok"
+
+exit 0

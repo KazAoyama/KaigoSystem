@@ -1,0 +1,125 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.TATEKAE 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+# 立替金の集計
+
+# ${seikyu_dir}/TATEKAEKIN/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.TATEKAEKIN
+# 1:立替日付       2:立替対象    3:対象者ID      4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ 7:立替項目    8:摘要          9:入金額       10:出金額
+# 11:所属建屋      12:所属フロア 13:所属ユニット 14:ID          15:登録時間
+## 各項目
+##   立替対象
+##     nyukyosha：たぶん入居者
+##   入出金フラグ
+##     1：入金　2：出金
+##   立替方法
+##     1：現金　2：請求書　3：その他  #立替方法は全てが請求対象になった(04/03)
+##   立替項目フラグ
+##     1：入金　2：出金
+
+# --------------------------------------
+# ファイルがなければここで終了
+[ ! -e ${seikyu_dir}/TATEKAEKIN/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.TATEKAEKIN ] && exit 0
+# --------------------------------------
+
+# --------------------------------------
+# 立て替え金で請求に関係あるのは出金のみ
+# 入金は別ルートでお金が動くため
+
+# 有効なもの(立替対象：入居者、入出金フラグ：出金)に絞る
+cat ${seikyu_dir}/TATEKAEKIN/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.TATEKAEKIN |
+awk '$2=="nyukyosha" && $4=="2"'   |
+tee ${tmp}-tatekae_kakunin         |
+# 必要な項目に絞る
+self 3 10                          |
+# 1:対象者 2:出金額
+
+# 対象者キーで集計する
+LANG=C sort                        |
+sm2 1 1 2 2                        |
+
+# inputの形にする
+#   行分類フラグ＝20：個別利用料明細行
+#   項目ID＝tatekae
+#   請求年月日＝処理月月初とする
+#   非課税フラグ＝税とか関係ないので2：非課税固定
+awk '{print "'${seikyu_syori_month}'",$1,"20","tatekae","'${seikyu_syori_month}'"01,\
+            "2",$2,$2,"0",substr('${seikyu_syori_month}',1,4)"年"substr('${seikyu_syori_month}',5,2)"月分　別紙参照",\
+            "0","1","'${current_time}'","'${userid}'","_"}' |
+# 1:処理月          2:入居者ID    3:行分類フラグ 4:項目ID  5:請求年月日
+# 6:非課税フラグ    7:金額税抜き  8:金額税込み   9:税額    10:内訳1
+# 11:特別処理フラグ 12:削除フラグ 13:更新時間    14:更新者 15:アンスコ
+self 1  2  3  NF 4  NF 5  6  7  8  \
+     9  10 NF 11 NF NF NF NF NF NF \
+     NF NF NF NF 12 13 14          |
+# 1:処理月    2:入居者ID   3:行分類フラグ 4:アンスコ        5:項目ID
+# 6:アンスコ  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1     13:アンスコ    14:特別処理フラグ 15:アンスコ
+# 16:アンスコ 17:アンスコ  18:アンスコ    19:アンスコ       20:アンスコ
+# 21:アンスコ 22:アンスコ  23:アンスコ    24:アンスコ       25:削除フラグ
+# 26:更新時間 27:更新者
+LANG=C sort                        > ${tmp}-TATEKAE_INPUT #集計対象!!
+# --------------------------------------
+
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(TATEKAE)"
+# --------------------------------------
+# 入居者向けの立替金が何もなかったら終了
+[ $(gyo ${tmp}-tatekae_kakunin) = 0 ] && exit 0
+
+# --------------------------------------
+# 列チェック
+
+[ "$(retu ${tmp}-TATEKAE_INPUT)" != "27" ] && error_exit "処理中にエラーが発生しました(TATEKAE)"
+[ "$(retu ${tmp}-TATEKAE_INPUT | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(TATEKAE)"
+[ "$(awk 'NF!="27"' ${tmp}-TATEKAE_INPUT | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(TATEKAE)"
+# --------------------------------------
+
+# --------------------------------------
+# 処理開始時と終了時の合計額の確認
+
+start_goukei="$(self 10 ${tmp}-tatekae_kakunin | sm2 0 0 1 1)"
+end_goukei="$(self 10 ${tmp}-TATEKAE_INPUT | sm2 0 0 1 1)"
+[ "${start_goukei}" != "${end_goukei}" ] && error_exit "処理中にエラーが発生しました(TATEKAE)"
+# --------------------------------------
+#---------------------------------------------------------------
+
+exit 0
+

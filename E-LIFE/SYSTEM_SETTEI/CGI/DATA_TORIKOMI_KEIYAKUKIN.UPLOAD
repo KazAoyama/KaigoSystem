@@ -1,0 +1,290 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_KEIYAKUKIN.UPLOAD
+#
+# データ取込契約金情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  cp -p $tmp-* /home/hands/work/okuda
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE8 - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE8" $mime > $tmp-excel_file
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE8/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+# 一時金ますた
+cat ${excel} |
+#cat $tmp-excel_file |
+e2t2 1 a2 k-  > $tmp-data
+# 1:IchijikinKindID 2:name          3:EnableFlag    4:DeprecTypeID    5:TaxTypeID
+# 6:AzukariCode     7:FstDeprecCode 8:OrdDeprecCode 9:TaikyoHasuuType 10:TaikyoHasuuKeta
+# 11:CoolingOffFlag
+
+
+# 一時金実績
+cat ${excel} |
+#cat $tmp-excel_file |
+e2t2 2 a2 s- |
+LANG=C sort  |
+getlast 1 1  > $tmp-data2
+# 1:IchijikinInfoID  2:DelFlag              3:ServiceType  4:UserID           5:IchijikinKindID
+# 6:BeginDate        7:EndDate              8:Ichijikin    9:Ichijikin_Tax    10:NoReturn
+# 11:NoReturn_Tax    12:DeprecNum           13:ProcDate    14:CoolingoffDate  15:DailyDeprecFlg
+# 16:IchijikinReturn 17:IchijikinReturn_Tax 18:DeprecMoney 19:DeprecMoney_Tax
+
+
+[ -s "$tmp-data" ] || error_exit "エクセルデータが不正です"
+[ -s "$tmp-data2" ] || error_exit "エクセルデータが不正です"
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+if [ -s /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/KEIYAKUKIN_ID ] ; then
+ now_keiyakuid=$(cat /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/KEIYAKUKIN_ID)
+else
+ now_keiyakuid="000"
+fi
+
+# マスタ準備 
+cat $tmp-data        |
+awk '{print $1,"'${Shisetsu}'",$2,"1",$3!="0"?"1":"2","2014070100000000","00078"}' |
+# 1:一時金ID   2:施設   3:一時金名 4:表示順(とりあえず全部1) 5:有効フラグ
+# 6:更新年月日 7:更新者
+rank                 |
+awk '{print $1+"'${now_keiyakuid}'",$0}' |
+maezero 1.3          |
+self 3 1 4/NF        |
+LANG=C sort          > $tmp-keiyakukin_master_${Shisetsu}
+# 1:一時金ID   2:契約金NEWID 3:施設 4:一時金名 5:有効フラグ
+# 6:更新年月日 7:更新者
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "契約金マスタ作成に失敗しました"
+[ -s $tmp-keiyakukin_master_${Shisetsu} ] || error_exit "契約金マスタ作成に失敗しました"
+
+
+# 実績
+cat $tmp-data2        |
+# 1:IchijikinInfoID  2:DelFlag              3:ServiceType  4:UserID           5:IchijikinKindID
+# 6:BeginDate        7:EndDate              8:Ichijikin    9:Ichijikin_Tax    10:NoReturn
+# 11:NoReturn_Tax    12:DeprecNum           13:ProcDate    14:CoolingoffDate  15:DailyDeprecFlg
+# 16:IchijikinReturn 17:IchijikinReturn_Tax 18:DeprecMoney 19:DeprecMoney_Tax
+self 4/8 12 10 15 2   |
+# 1:Userid   2:一時金ID 3:償却開始日 4:償却終了日 5:金額
+# 6:償却回数 7:非返却金 8:日割フラグ 9:削除フラグ
+awk '{print $1,"'${Shisetsu}'",$2,$3,$4,$5,$6,$7,$8!="0"?"1":"2","_","_","_","_","99999999","_","_","_","_","_",$9=="0"?"1":"9","2014070100000000","00078"}'   > $tmp-keiyakukin_jisseki_before
+# 1:Userid    2:施設ID        3:一時金ID      4:償却開始日          5:償却終了日
+# 6:金額      7:償却回数      8:非返却金      9:算出方法(日割/月割) 10:特販ID
+# 11:値引額   12:値引き後金額 13:特販期間FROM 14:特販期間TO         15:予備1
+# 16:予備2    17:予備3        18:予備4        19:予備5              20:削除フラグ
+# 21:更新時間 22:更新者
+
+[ -s $tmp-keiyakukin_jisseki_before ] || error_exit "契約金実績取込に失敗しました"
+
+[ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu}" ] || error_exit "新利用者IDをひも付けるテー>ブルがありません。先に利用者情報をアップロードしてください"
+
+  #------------------------------
+  # 実績に新契約金IDを日も付ける
+  #------------------------------
+cat $tmp-keiyakukin_master_${Shisetsu}         |
+self 1 2 |
+cjoin1 key=3 - $tmp-keiyakukin_jisseki_before  |
+delf 3   |
+# 1:Userid    2:施設ID        3:契約金NEWID   4:償却開始日          5:償却終了日
+# 6:金額      7:償却回数      8:非返却金      9:算出方法(日割/月割) 10:特販ID
+# 11:値引額   12:値引き後金額 13:特販期間FROM 14:特販期間TO         15:予備1
+# 16:予備2    17:予備3        18:予備4        19:予備5              20:削除フラグ
+# 21:更新時間 22:更新者
+
+  #----------------------
+  # 利用者IDをくっつける
+  #----------------------
+
+cjoin1 +ng key=1 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} - > $tmp-riyousha_keiyakukin_ok 2> $tmp-riyousha_keiyakukin_${Shisetsu}_riyoushaid_ng
+# 1:Userid      2:新利用者ID 3:施設ID        4:契約金NEWID   5:償却開始日
+# 6:償却終了日  7:金額       8:償却回数      9:非返却金      10:算出方法(日割/月割)
+# 11:特販ID     12:値引額    13:値引き後金額 14:特販期間FROM 15:特販期間TO
+# 16:予備1      17:予備2     18:予備3        19:予備4        20:予備5
+# 21:削除フラグ 22:更新時間  23:更新者
+
+
+  #----------------------
+  # 契約情報とひも付ける
+  #----------------------
+  [ -s "/home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKU_${Shisetsu}" ] || error_exit "契約をひも付けるテーブルがありません。先に契約情報(あるいは居室情報)をアップロードしてください"
+
+  self 1 2 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKU_${Shisetsu} |
+  getlast 1 1  > $tmp-riyousha_keiyakuid
+
+  cat $tmp-riyousha_keiyakukin_ok |
+  delf 1                          |
+  LANG=C sort -u                  |
+  cjoin1 +ng key=1 $tmp-riyousha_keiyakuid - > $tmp-riyousha_keiyakukin_keiyaku_ok 2>$tmp-riyousha_keiyakukin_${Shisetsu}_keiyaku_ng
+
+  cat $tmp-riyousha_keiyakukin_keiyaku_ok |
+# 1:新利用者ID  2:契約ID    3:施設ID        4:契約金NEWID   5:償却開始日
+# 6:償却終了日  7:金額      8:償却回数      9:非返却金      10:算出方法(日割/月割)
+# 11:特販ID     12:値引額   13:値引き後金額 14:特販期間FROM 15:特販期間TO
+# 16:予備1      17:予備2    18:予備3        19:予備4        20:予備5
+# 21:削除フラグ 22:更新時間 23:更新者
+  LANG=C sort -u |
+  rank ref=1     |
+# 1:番号                 2:新利用者ID  3:契約ID    4:施設ID        5:契約金NEWID
+# 6:償却開始日           7:償却終了日  8:金額      9:償却回数      10:非返却金
+# 11:算出方法(日割/月割) 12:特販ID     13:値引額   14:値引き後金額 15:特販期間FROM
+# 16:特販期間TO          17:予備1      18:予備2    19:予備3        20:予備4
+# 21:予備5               22:削除フラグ 23:更新時間 24:更新者
+  self 2 4 3 5 1 6/NF > $tmp-riyousha_keiyaku_result_${Shisetsu} 
+
+[ -s $tmp-riyousha_keiyaku_result_${Shisetsu} ] || error_exit  
+
+#keiyakukingyo=$(gyo $tmp-riyousha_keiyaku_result_${Shisetsu})
+
+#[ "$(gyo $tmp-keiyakukin_jisseki_before)" = "${keiyakukingyo}" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+
+#------------------------------------------------
+
+# 取り込んだデータをまずは指定の場所へ
+# 利用料実績
+# 利用料マスタ
+# 利用料管理番号
+
+   mkdir -p /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}
+
+    cp -p $tmp-riyousha_keiyaku_result_${Shisetsu} /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_KEIYAKUKIN_"${Shisetsu}"
+    cp -p $tmp-keiyakukin_master_${Shisetsu} /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/KEIYAKUKIN_MASTER_"${Shisetsu}"
+
+    cp -p $tmp-*ng /home/hands/work/okuda/DATA_TORIKOMI_DATA/${Shisetsu}/
+
+#--------------3
+# 契約金マスタ
+#---------------
+     self 3 2 4/NF $tmp-keiyakukin_master_${Shisetsu} |
+     cat /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/KEIYAKUKIN_MASTER - |
+     LANG=C sort -u  |
+     getlast 1 2     > $tmp-KEIYAKUKIN_MASTER
+
+# TODO HANEI --
+    mkdir -p /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/back
+    cp -p /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/KEIYAKUKIN_MASTER /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/back/KEIYAKUKIN_MASTER_${cur_time}
+    cp -p $tmp-KEIYAKUKIN_MASTER /home/hands/work/okuda/DATA_TORIKOMI_RESULT/KEIYAKUKIN_MASTER
+    cp -p $tmp-KEIYAKUKIN_MASTER /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/RIYOURYOU/KEIYAKUKIN_MASTER
+    cp -p $tmp-KEIYAKUKIN_MASTER /home/hands/E-LIFE/TBL/RIYOURYOU_MASTER/KEIYAKUKIN_MASTER
+#---
+#--------------
+# 契約金実績
+#--------------
+   cat $tmp-riyousha_keiyaku_result_${Shisetsu} /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKUKIN |
+   LANG=C sort -u |
+   getlast 1 5  > $tmp-RIYOUSHA_KEIYAKUKIN
+
+# TODO HANEI --
+   if [ -s "/home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKUKIN" ] ; then
+      mkdir -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back
+       cp -p /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKUKIN /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/back/RIYOUSHA_KEIYAKUKIN_${cur_time}
+   else
+      :
+   fi
+   cp -p $tmp-RIYOUSHA_KEIYAKUKIN /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KEIYAKUKIN
+   cp -p $tmp-RIYOUSHA_KEIYAKUKIN /home/hands/E-LIFE/UNEI/POMPA/RIYOUSHA/RIYOUSHA_KEIYAKUKIN
+   cp -p $tmp-RIYOUSHA_KEIYAKUKIN /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KEIYAKUKIN
+##--------
+
+#----------------
+# 契約金管理番号
+#----------------
+    # 利用料ID
+    NEW_KEIYAKUKINID="$(tail -1 $tmp-keiyakukin_master_${Shisetsu} | self 2)"
+    NOW_KEIYAKUKINID="$(cat /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/KEIYAKUKIN_ID)"
+    
+    if [ "${NEW_KEIYAKUKINID}" -gt "${NOW_KEIYAKUKINID}" ] ; then
+
+      echo "${NEW_KEIYAKUKINID}"  > /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/KEIYAKUKIN_ID_"${Shisetsu}"
+
+      mkdir -p /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/back
+      cp -p /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/KEIYAKUKIN_ID /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/back/KEIYAKUKIN_ID_${cur_time}
+
+## TODO HANEI --
+      echo "${NEW_KEIYAKUKINID}" > /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/KEIYAKUKIN_ID
+##--
+
+# 更新した本データのコピー
+      echo "${NEW_KEIYAKUKINID}"  >  /home/hands/work/okuda/DATA_TORIKOMI_RESULT/KEIYAKUKIN_ID
+      cp -p $tmp-RIYOUSHA_KEIYAKUKIN /home/hands/work/okuda/DATA_TORIKOMI_RESULT/RIYOUSHA_KEIYAKUKIN
+
+    else
+     :
+    fi
+
+cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA
+#-------------------------------------------------------------
+
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

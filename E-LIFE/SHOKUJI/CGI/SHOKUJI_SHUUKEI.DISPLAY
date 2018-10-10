@@ -1,0 +1,571 @@
+#!/bin/bash
+#
+# SHOKUJI_SHUUKEI.DISPLAY
+# 食事集計ディスプレイCGI
+#
+# Written by E.Okuda :2014/01/08
+
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ディレクトリ設定
+
+app_dir="${home_dir}/SHOKUJI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+kengen_dir="/home/hands/E-LIFE/TBL/KENGEN_KANRI"
+data_dir="/DATA/E-LIFE"
+riyousha_dir="${data_dir}/UNEI/RIYOUSHA"
+
+cgi_name="SHOKUJI_SHUUKEI.CGI"
+#-------------------------------------------------------------
+# 変数の定義
+namedata="$1"
+checkfile="$2"
+data="$3"
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# 必要な値の取得
+name-source $namedata > $tmp-source
+source $tmp-source
+
+[ ! -z ${NYUUINGAIHAKUID} ] && MODE="search"
+#-------------------------------------------------------------
+#--------------------------------------------------------------
+# ログインUSER名と施設の取得
+cat /home/hands/E-LIFE/TBL/JYUUGYOUIN_MASTER/USER_MASTER  |
+tee ${tmp}-jugyoin        |
+# 1:USER_ID 2:ユーザー名
+awk '$1=="'${userid}'"'   |
+# 1:USER_ID 2:ユーザー名
+self 2                    > ${tmp}-usermei
+
+
+self 1 2 /home/hands/E-LIFE/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_GROUP_MASTER > $tmp-jigyousho_group_mst
+self 1 2 /home/hands/E-LIFE/TBL/SHISETSU_MASTER/SHISETSU_KIHON          > $tmp-shisetsu_mst
+
+cat $tmp-shisetsu_mst $tmp-jigyousho_group_mst > $tmp-disp_shisetsu_mst
+
+
+# 施設名はログインユーザーの権限のある施設を取得
+cat /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/KENGEN_KANRI/USER_KENGEN/${userid}.USER_KENGEN |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+LANG=C sort -u -k2,2n                                      |
+self 1 2                                                   > ${tmp}-kengen
+# 1:userid 2:SHISETSU_ID
+if [ "$(cat ${tmp}-kengen | getfirst 1 1 | self 2)" = "0000" ];then
+  awk '$1!="0000"{print $1,$2}' $tmp-disp_shisetsu_mst      |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+# 1:SHISESTU_ID 2:施設名
+else
+  cat ${tmp}-kengen                        |
+  # 1:userid 2:SHISETSU_ID
+  join1 key=2 $tmp-disp_shisetsu_mst |
+# 1:userid 2:SHISETSU_ID 3:施設名
+  awk '$2!=0{print $2,$3}'                 |
+  awk '{print $0,"'${shisetsu}'"}'              |
+  awk '{if($1==$3){print $1,$2,"selected"}else{print $1,$2,""}}'  > ${tmp}-shisetsu_kengen
+fi
+
+select_shisetsu=$(awk '$3=="selected"{print $2}' ${tmp}-shisetsu_kengen)
+awk '$3!="selected"{print $1,$2}' ${tmp}-shisetsu_kengen > $tmp-shisetsu_taishou
+#-----------------------------------------------------------
+
+
+#-------------------------------------------------------------
+# ユーザー名取得
+#[ ! -z "$USER_ID" ] && USER_NAME="$(grep "^$USER_ID " ${tbl_dir}/JYUGYOIN_NAME | awk '{print $2}')"
+USERID=$(nameread  "userid"  $namedata)
+USERNAME="$(awk '$1=="'${userid}'"{print $2}' ${tbl_dir}/USER/USER_ID | head -1)"
+SHISETSUID="$(nameread  "shisetsu"  $namedata)"
+SHISETSUNAME="$(awk '$1=="'${SHISETSUID}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_KIHON | head -1)"
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+Shisetsu="$(nameread  "shisetsu"  $namedata)"
+Tateya="$(nameread  "Tateya"  $namedata)"
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya="$(awk '$1=="'${USERID}'"&&$2=="'${Shisetsu}'"{print $3}' ${tbl_dir}/JYUUGYOUIN_MASTER/USER_SHISETSU)" # 建屋がなければデフォルトシニア
+[ -z "${Tateya}" -o "${Tateya}" = "_" ] && Tateya=$(awk '$1=="'${Shisetsu}'"{print $2}' ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR | LANG=C sort |uniq |head -1)
+[ -z "${MODE}" -o "${MODE}" = "_" ] && MODE="init"
+#-------------------------------------------------------------
+
+if [ "$MODE" = "search" ]; then
+# 選択している
+  Tateya=$(nameread        "Tateya"        $namedata)
+elif [ "$MODE" = "init" ] ; then
+  Hyouji_Kikan="Day"
+  Nengetsuhi="$(date +%Y%m%d | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')"
+else
+  Nengetsuhi=$(nameread "Nengetsuhi"  $namedata)
+fi
+#-------------------------------------------------------------
+#-------------------------------------------------------------
+# formhame 前の実体参照変換
+calsed "&" "&amp;" ${namedata} |
+calsed "<" "&lt;"              |
+calsed ">" "&gt;"              |
+calsed "\"" "&quot;"           > $tmp-namedata
+
+#-------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init)
+   Hyouji_Kikan="Day"
+   TaishouYear=""
+   TaishouMonth=""
+   Nengetsuhi="$(echo ${today} | awk '{print substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}')"
+   Taishousha="03"
+   Shuukei="2"
+   HyoujiKoumoku=""
+    
+   # 空のリストデータを作成する
+        : > $tmp-header
+        : > $tmp-listdata
+        : > $tmp-header
+        : > $tmp-header_taishousha
+        : > $tmp-header_asahiruyoru
+        :  > $tmp-YuukouListHtml
+  ;;
+
+  # 検索結果表示
+  search)
+   if [ "$(gyo ${data})" != "0" ] ; then
+
+     # メニュー別集計のとき
+     if [ ! -z "${Shuukei}" -a "${Shuukei}" = "2" ] ; then
+       
+       cat ${data}   |
+       # 1:居室     2:利用者ID 3:利用社名 4:金額(メニュー名＋（食べた人))ごと･･･
+       #ヘッダー部分抜き出す-----------------------------------------------------
+       awk '$1=="*"{print $0}' |
+       delf 1/3      |
+       # メニュー名＋（食べた人) .......
+       tateyoko      |     
+       tee $tmp-headertee |
+       # これにくっついてる8桁の数字（ゲストフラグ+食事種類+朝食夕食判定フラグ＋表示順+メニューID）はがす
+       awk '{if($1~/^[0-9][0-9][0-9][0-9]/){print substr($1,9),$2=substr($1,4,1)}
+             else{print $1,$2=substr($1,4,1)}
+            }' |
+       rank          |
+       # 1:ランク 2:メニューID+ゲストフラグ 3:朝昼夜
+       self 1 NF 2 3  |
+       LANG=C sort -k1,1n             |
+       awk '{if(length($3)>15){print $1,$2,substr($3,1,8)"<br>"substr($3,9,8)"<br>"substr($3,17,8)"<br>"substr($3,25,8),$4}
+            else if(length($3)>10){print $1,$2,substr($3,1,8)"<br>"substr($3,9,8),$4}
+            else{print $0}
+            }'        |
+#       tee $tmp-teeeeeee |
+       awk '{if($NF=="1"){print $0,"red","#FFF2F2"}
+             else if($NF=="2"){print $0,"#FF6600","#FFFFEB"} 
+             else if($NF=="3"){print $0,"blue","#F3FFFF"} 
+             else{print $0,"green","#F5FFF5"} 
+            }'        |
+        delf 4        >$tmp-header
+       # 1:number   2:メニューid 3:メニュー名+() 4:朝昼夜
+       # ヘッダー完成----------------------------------------------------------
+       menu_number=$(gyo $tmp-header | awk '{print $1+1}')
+
+       cp $tmp-headertee $work_dir/headertee
+
+       # ヘッダーの朝昼夜・・・
+       cat $tmp-headertee |
+       awk '{print substr($1,4,1),substr($1,2,2)}' |
+       # 1:朝昼夜・・・ 2:食事種類main side・・・
+       awk '{if($1=="1"){print $2,"朝"}
+             else if($1=="2"){print $2,"昼"}
+             else if($1=="3"){print $2,"夜"}
+             else{print $2,"おやつ"}
+            }'            |
+       awk '{if($1=="01"){print $2"(メイン)","#FF85AD"}
+             else if($1=="02"){print $2"(サイド)","#79BC9A"}
+             else if($1=="03"){print $2"(ドリンク)","#D0D0FF"}
+             else{print $2"(その他)","#B5B591"}
+            }'            |
+       
+       count 1 2          > $tmp-header_asahiruyoru
+
+       # ヘッダーの入居者とか・・・
+       cat $tmp-headertee |
+       awk '{print substr($1,1,1)}' |
+       awk '{if($1=="1"){print $1,"入居者","#FFD119"}
+             else if($1=="2"){print $1,"ゲスト１","#DE7BFF"}
+             else if($1=="3"){print $1,"ゲスト２","#FF6CDA"}
+             else if($1=="4"){print $1,"スタッフ","#8AA7FF"}
+            }'            |
+       count 1 3          > $tmp-header_taishousha
+
+       #データ部分抜き出す
+       cat ${data}             |
+       awk '$1!="*"{print $0}' |
+       # 1:居室     2:利用者ID 3:利用社名 4:金額(メニューごと)･･･
+
+       # 横合計値 # 20140902追記
+       awk 'BEGIN{print SUM}{SUM=0;for(i=4;i<=NF;i++){print $0,SUM+=$i}}' |
+       getlast 1 3             |
+       comma 4/NF              > $tmp-listdata
+
+#       :  > $tmp-YuukouListHtml
+
+       # 情報HTML作成
+       for i in $(seq 1 ${menu_number})
+         do
+        num="$(expr 3 + $i )"
+        menuid=$(cat $tmp-header | awk '$1=="'${i}'"{print $2}')
+
+        menuname=$(cat $tmp-header | awk '$1=="'${i}'"{print $3}' | sed 's/<br>//g')
+       
+cat  <<- FIN >> $tmp-YuukouListHtml
+    <td style="width:130px; text-align:center; border:#bbbbbb solid 1px;" value="${menuid}_%2"><span rel="tooltip" title="${menuname}">%${num}</span></td>
+FIN
+       done
+
+     # 食事集計のとき
+       elif [ ! -z "${Shuukei}" -a "${Shuukei}" = "1" ] ; then
+         cp ${data} $work_dir/data_shokuji_jisseki
+         cat ${data}   |
+         # 1:居室　 2:USERID 3:USER名 4～食事種類区分ごとの数量(金額)計
+         # 1行目はヘッダー、最終行は合計
+         #ヘッダー部分抜き出す-----------------------------------------------------
+         awk '$1=="*"{print $0}' |
+         delf 1/3      |
+         tateyoko      |
+         rank          |
+         # 1:rank 2:食事区分、種類（101,102..）
+         LANG=C sort -k2,2 |
+         tee $work_dir/kubun_shurui_mae |
+         join1 key=2 /home/hands/E-LIFE/TBL/CONFIG/SHOKUJI_KUBUN_SHURUI |
+         # 1:rank 2:食事区分、種類（101,102..）3:食事区分種類名（朝食(メ)とか） 
+         LANG=C sort -k1,1n  >$tmp-header
+         # ヘッダー完成----------------------------------------------------------
+         menu_number=$(gyo $tmp-header | awk '{print $1+1}')         
+
+        :  > $tmp-YuukouListHtml
+
+       # 情報HTML作成
+       for i in $(seq 1 ${menu_number}) 
+        do
+        num="$(expr 3 + $i )"
+        menuid=$(cat $tmp-header | awk '$1=="'${i}'"{print $2}')
+
+        menuname=$(cat $tmp-header | awk '$1=="'${i}'"{print $3}' | sed 's/<br>//g')
+        [ -z "${menuname}" ] && menuname="合計"
+
+cat  <<- FIN >> $tmp-YuukouListHtml
+    <td style="text-align:center; border:#bbbbbb solid 1px;" value="${menuid}_%2"><span rel="tooltip" title="${menuname}">%${num}</span></td>
+FIN
+       done
+
+       #データ部分抜き出す
+       cat ${data}             |
+       awk '$1!="*"{print $0}' |
+
+       # 横合計値 # 20140902追記
+       awk 'BEGIN{print SUM}{SUM=0;for(i=4;i<=NF;i++){print $0,SUM+=$i}}' |
+       getlast 1 3             |
+       # 1:居室     2:利用者ID 3:利用社名 4:金額(食事種類ごと)･･･
+
+       comma 4/NF |
+
+  if [ "${Taishousha}" = "00" ] ; then
+       delf 2     |
+       awk '{if($1!="@"){print $0,substr($1,1,4)"/"substr($1,5,2)"/"substr($1,7,2)}
+             else{print $0,$1}
+            }'    |
+      self NF 2/NF-1
+  else
+       cat -
+  fi |
+
+       sed 's/_/@/g' > $tmp-listdata
+     fi
+   
+    # データがなかった場合
+    else
+        : > $tmp-header
+        : > $tmp-listdata
+        : > $tmp-header
+        : > $tmp-header_taishousha
+        : > $tmp-header_asahiruyoru
+        :  > $tmp-YuukouListHtml
+    fi
+
+  ;;
+
+esac
+
+#[ -z "${TableWIDTH}" -o "${TableWIDTH}" == "_" ] && TableWIDTH="4000px"
+#if [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "90" ] ; then
+#  TableWIDTH="6000px"
+#elif [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "60" ] ; then
+#  TableWIDTH="5000px"
+#elif [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "30" ] ; then
+if [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "30" ] ; then
+  TableWIDTH="4000px"
+elif [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "15" ] ; then
+  TableWIDTH="2000px"
+elif [ -s $tmp-header -a "$(gyo $tmp-header)" -ge "3" ] ; then
+  TableWIDTH="1000px"
+else
+  TableWIDTH="500px"
+fi 
+
+# 最大行
+  cat $tmp-listdata |
+  gyo                > $tmp-saidai_gyo
+
+# 表示行と表示データの用意
+  cat $tmp-listdata |
+  head -200         > $tmp-list_result
+
+  gyo $tmp-list_result >$tmp-hyouji_gyo
+
+ awk 'NF!="0"' $tmp-list_result |
+ retu > $tmp-colsnumber
+
+saidai_gyo="$(cat $tmp-saidai_gyo)"
+hyouji_gyo="$(cat $tmp-hyouji_gyo)"
+
+#----------------------
+#--
+## 建屋取得 
+#--
+
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR  |
+# 1:施設ID 2:建屋ID 3:フロア
+awk '$1=="'${Shisetsu}'"{print $2}'                   |
+LANG=C sort |
+uniq |
+join1 key=1 ${tbl_dir}/SHISETSU_MASTER/TATEYA_NAME -           |
+self 1 3                                                > $tmp-tateya_kari
+# 1:建屋ID 2:建屋名
+#-
+
+  cat $tmp-tateya_kari |
+
+# 建屋が選択されていたらselected
+awk '{if($1=="'${Tateya}'"){print $0,"selected"}
+        else{print $0,"@"}
+       }'    > $tmp-tateya_name
+
+#------------------------------------------------------------
+#----------------------------------------------------------
+# プルダウンの用意
+
+# 集計
+echo "1" "2" |
+tarr         |
+awk '{if($1=="1"){print $0,"食事別集計"}
+      else if($1=="2"){print $0,"メニュー別集計"}
+     }'      |
+awk '{if($1=="'${Shuukei}'"){print $0,"selected"}
+      else{print $0,"@"}
+     }'      > $tmp-shuukei_data
+
+
+# 年号の用意
+echo "2003"  > $tmp-years
+startyear="2003" # 2013年はイーライフ設立年。これより前の請求年月は発生しない
+thisyear="$(date +%Y)"
+
+# 2003年から来年まえでの西暦年号を取得
+while [ "${startyear}" -le "${thisyear}" ] ; do
+# echo "${startyear}"
+ startyear=$((startyear+1))
+ echo "${startyear}"
+done   >> $tmp-years
+
+[ -z "${TaishouYear}" -o "${TaishouYear}" = "_" ] && TaishouYear="$(date +%Y)"
+
+cat $tmp-years |
+LANG=C sort -k1,1nr |
+awk '{if($1=="'${TaishouYear}'"){print $1,$1,"selected"}
+     else{print $1,$1,"@"}}' > $tmp-years_data
+
+# 月用意
+echo "1 2 3 4 5 6 7 8 9 10 11 12" |
+tarr > $tmp-month
+
+[ -z "${TaishouMonth}" -o "${TaishouMonth}" = "_" ] && TaishouMonth="$(date +%-m)"
+
+cat $tmp-month |
+awk '{if($1=="'${TaishouMonth}'"){print $1,$1,"selected"}
+     else{print $1,$1,"@"}}' > $tmp-month_data
+
+#対象者の選択状況保存
+[ "${Taishousha}" == "01" ] && SELECT_NYUUKYO="selected"
+[ "${Taishousha}" == "02" ] && SELECT_STAFF="selected"
+[ "${Taishousha}" == "03" ] && SELECT_BOTH="selected"
+[ "${Taishousha}" == "04" ] && SELECT_NYUUKYONOMI="selected"
+[ "${Taishousha}" == "00" ] && SELECT_DAY="selected"
+
+# 日付表以外は入居者名のヘッダー
+if [ "${Taishousha}" != "00" ] ; then
+  DAYHEADER="none"
+  MANHEADER="@"
+else
+  DAYHEADER="@"
+  MANHEADER="none"
+fi
+#-------------------------------------------------------------
+# 嵌め込みデータの作成
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERNAME### ${USERNAME}
+###SHISETSUID### ${SHISETSUID}
+###SHISETSUNAME### ${SHISETSUNAME}
+###DROPDOWN_ACTIVE2### active
+###LI_SHOKUJI7### active
+###KESSHOKUKAISUU### ${KESSHOKUKAISUU}
+###KESSHOKUKINGAKU### ${KESSHOKUKINGAKU}
+###NyuuingaihakuKikanFrom### ${NyuuingaihakuKikanFrom}
+###NyuuingaihakuKikanTo### ${NyuuingaihakuKikanTo}
+###USERID### ${userid}
+###SHISETSUID### ${shisetsu}
+###PASSWORD### ${password}
+###NENGETSUHI### ${Nengetsuhi}
+###SELECT_SHISETSU### $select_shisetsu
+###SELECT_NYUUKYO### $SELECT_NYUUKYO
+###SELECT_STAFF### $SELECT_STAFF
+###SELECT_BOTH### $SELECT_BOTH
+###SELECT_NYUUKYONOMI### $SELECT_NYUUKYONOMI
+###SELECT_DAY### $SELECT_DAY
+###DAYHEADER### ${DAYHEADER}
+###MANHEADER### ${MANHEADER}
+###TableWIDTH### ${TableWIDTH}
+FIN
+
+# 表示期間
+if [ ! -z "${Hyouji_Kikan}" -a "${Hyouji_Kikan}" = "Day" ] ; then
+  echo "###DAYCHECKED###" "checked" >> ${tmp}-calsed
+  echo "###DAYDISP###" "@" >> ${tmp}-calsed
+  echo "###MONTHCHECKED###" "@" >> ${tmp}-calsed
+  echo "###MONTHDISP###" "none" >> ${tmp}-calsed
+else
+  echo "###DAYCHECKED###" "@" >> ${tmp}-calsed
+  echo "###DAYDISP###" "none" >> ${tmp}-calsed
+  echo "###MONTHCHECKED###" "checked" >> ${tmp}-calsed
+  echo "###MONTHDISP###" "@" >> ${tmp}-calsed
+fi
+
+# 表示項目
+if [ ! -z "${HyoujiKoumoku}" -a "${HyoujiKoumoku}" = "Kingaku" ] ; then
+  echo "###KINGAKUCHECKED###" "checked" >> ${tmp}-calsed
+  echo "###GHKINGAKUCHECKED###" "@" >> ${tmp}-calsed
+  echo "###SUURYOUCHECKED###" "@" >> ${tmp}-calsed
+elif [ ! -z "${HyoujiKoumoku}" -a "${HyoujiKoumoku}" = "GHKingaku" ] ; then
+  echo "###GHKINGAKUCHECKED###" "checked" >> ${tmp}-calsed
+  echo "###KINGAKUCHECKED###" "@" >> ${tmp}-calsed
+  echo "###SUURYOUCHECKED###" "@" >> ${tmp}-calsed
+else
+  echo "###SUURYOUCHECKED###" "checked" >> ${tmp}-calsed
+  echo "###KINGAKUCHECKED###" "@" >> ${tmp}-calsed
+  echo "###GHKINGAKUCHECKED###" "@" >> ${tmp}-calsed
+fi
+
+#-----------------------------------------------------------
+# 登録・印刷ボタンの表示
+# 施設名はログインユーザーの権限のある施設を取得
+cat ${kengen_dir}/USER_KENGEN/${userid}.USER_KENGEN    |
+# 1:userid 2:SHISETSU_ID 3:KENGEN_GROUP 4:appID 5:MENU_NAME
+# 6:DROPDOWN_STATUS 7:CGI_NAME 8:RINK_STATUS 9:CGI_STATUS 10:登録日時
+awk '$7=="SHOKUJI_SHUUKEI.CGI"{print $2,$9}' |
+LANG=C sort > $tmp-dispkengen_all
+# 1:施設ID 2:STATUS
+
+cat $tmp-dispkengen_all |
+if [ -s $tmp-dispkengen_all -a $(self 1 $tmp-dispkengen_all |head -1) = "0000" ] ; then
+  awk '{print $2}' |
+  head -1
+else
+  awk '$1=="'${shisetsu}'"{print $0}' |
+  LANG=C sort |
+  getlast 1 1 |
+  self 2
+fi > $tmp-dispkengen
+
+
+# 権限がない人は新規登録や出力が出来ない
+if [ $(cat $tmp-dispkengen) = "3" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### @"   >> $tmp-calsed
+elif [$(cat $tmp-dispkengen) = "2" ] ;then
+  echo "###SHINKITOUROKUDISP### @" >> $tmp-calsed
+  echo "###TOUROKUDISP### @" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+else
+  echo "###SHINKITOUROKUDISP### none" >> $tmp-calsed
+  echo "###TOUROKUDISP### none" >> $tmp-calsed
+  echo "###PRINTDISP### none"   >> $tmp-calsed
+fi
+
+#----------------------------------
+
+cat ${tmp}-calsed ${checkfile} > ${tmp}-calsed_result
+#cp $tmp-* /home/hands/work/okuda
+
+# htmlの作成
+# 縦日付の時
+if [ "${Shuukei}" = "2" ] ; then
+  cat ${html_dir}/SHOKUJI_SHUUKEI1.html |
+  cat -\
+      ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+      ${html_dir}/SHOKUJI_SHUUKEI2.html    |
+  mojihame -lheader_asahiruyoru - $tmp-header_asahiruyoru  |
+  mojihame -lheader_taishousha - $tmp-header_taishousha    
+else
+  cat ${html_dir}/SHOKUJI_SHUUKEI1.html |
+  cat -\
+      ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+      ${html_dir}/SHOKUJI_SHUUKEI3.html 
+fi  |
+  mojihame -lheader_menu - $tmp-header  |
+  mojihame -l###COLSNUMBER### - $tmp-colsnumber  |
+  cat -\
+      $tmp-YuukouListHtml\
+      ${html_dir}/SHOKUJI_SHUUKEI4.html |
+  mojihame -l###USER__NAME### - ${tmp}-usermei |
+  mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+  mojihame -ltateya_select - $tmp-tateya_name     |
+  mojihame -lshuukei_select - $tmp-shuukei_data   |
+  mojihame -lyear_select - $tmp-years_data        |
+  mojihame -lmonth_select - $tmp-month_data       |
+  mojihame -llist1_result - $tmp-listdata    | 
+#else
+#  # 食事別集計の時
+#  cat ${html_dir}/SHOKUJI_SHUUKEI1.html |
+#  cat -\
+#      ${home_dir}/KYOUTSU/HTML/MENUBAR.html\
+#      ${html_dir}/SHOKUJI_SHUUKEI2.html |
+#  #データの嵌め込み
+#  mojihame -l###USER__NAME### - ${tmp}-usermei |
+#  mojihame -l###SHISETSU_TAISHOU### - ${tmp}-shisetsu_taishou |
+#  mojihame -ltateya_select - $tmp-tateya_name     |
+#  mojihame -lshuukei_select - $tmp-shuukei_data   |
+#  mojihame -lyear_select - $tmp-years_data        |
+#  mojihame -lmonth_select - $tmp-month_data       |
+#  mojihame -llist1_result - $tmp-listdata     
+#fi |
+calsed -f $tmp-calsed_result - |
+#tee /home/hands/work/okuda/Result |
+sed 's/###SPACE###/ /g' |
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+
+# 終了
+rm -f $tmp-*
+exit 0
+

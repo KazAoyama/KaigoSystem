@@ -1,0 +1,477 @@
+#!/bin/bash
+#
+# KOJINJYOUHOU_SHOUSAI_SONOTA.TOUROKU
+# その他情報登録(加算給付同意)
+#
+# Written by E.Okuda 2013/12/26
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d%H%M%S"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/UNEI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/RIYOUSHA"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/RIYOUSHA"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 利用者データ
+  RIYOUSHAID="$(nameread "RIYOUSHAID" ${namedata})"
+
+# 利用者IDがなければ不正
+  [ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "データが不正です。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 利用者緊急時個人情報テーブル
+#--------------------------------------------------------------
+  #####################
+  # 利用者緊急時個人情報テーブル
+  #####################
+  KinkyuujiNyuukyobi="$(nameread     "KinkyuujiNyuukyobi"   $namedata | sed 's/\///g')"
+  KinkyuujiKoushinbi=$(date +%Y%m%d)
+  KinkyuujiJyuusho="$(nameread       "KinkyuujiJyuusho"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKoteiTel="$(nameread      "KinkyuujiKoteiTel"   $namedata )"
+  KinkyuujiKeitaiTel="$(nameread     "KinkyuujiKeitaiTel"   $namedata )"
+  
+  KinkyuujiKibouIryoukikan1="$(nameread    "KinkyuujiKibouIryoukikan1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKibouIryoukikan2="$(nameread    "KinkyuujiKibouIryoukikan2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKibouIryoukikan3="$(nameread    "KinkyuujiKibouIryoukikan3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiDameIryoukikan1="$(nameread     "KinkyuujiDameIryoukikan1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiDameIryoukikan2="$(nameread     "KinkyuujiDameIryoukikan2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiDameIryoukikan3="$(nameread     "KinkyuujiDameIryoukikan3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+
+  # 希望医療機関電話番号
+  KinkyuujiKibouIryoukikanTel1="$(nameread    "KinkyuujiKibouIryoukikanTel1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKibouIryoukikanTel2="$(nameread    "KinkyuujiKibouIryoukikanTel2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKibouIryoukikanTel3="$(nameread    "KinkyuujiKibouIryoukikanTel3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  
+  KinkyuujiRenrakuShimei1="$(nameread      "KinkyuujiRenrakuShimei1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuZokugara1="$(nameread    "KinkyuujiRenrakuZokugara1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKoteiTel1="$(nameread    "KinkyuujiRenrakuKoteiTel1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKeitaiTel1="$(nameread   "KinkyuujiRenrakuKeitaiTel1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuJyuusho1="$(nameread     "KinkyuujiRenrakuJyuusho1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuShimei2="$(nameread      "KinkyuujiRenrakuShimei2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuZokugara2="$(nameread    "KinkyuujiRenrakuZokugara2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKoteiTel2="$(nameread    "KinkyuujiRenrakuKoteiTel2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKeitaiTel2="$(nameread   "KinkyuujiRenrakuKeitaiTel2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuJyuusho2="$(nameread     "KinkyuujiRenrakuJyuusho2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuShimei3="$(nameread      "KinkyuujiRenrakuShimei3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuZokugara3="$(nameread    "KinkyuujiRenrakuZokugara3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKoteiTel3="$(nameread    "KinkyuujiRenrakuKoteiTel3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuKeitaiTel3="$(nameread   "KinkyuujiRenrakuKeitaiTel3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiRenrakuJyuusho3="$(nameread     "KinkyuujiRenrakuJyuusho3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+
+  KinkyuujiByoumei1="_"
+  KinkyuujiIryoukikan1="_"
+  KinkyuujiIryoukikanTel1="_"
+  KinkyuujiIryoukikanIshi1="_"
+  KinkyuujiSonota1="_"
+  KinkyuujiByoumei2="_"
+  KinkyuujiIryoukikan2="_"
+  KinkyuujiIryoukikanTel2="_"
+  KinkyuujiIryoukikanIshi2="_"
+  KinkyuujiSonota2="_"
+  KinkyuujiByoumei3="_"
+  KinkyuujiIryoukikan3="_"
+  KinkyuujiIryoukikanTel3="_"
+  KinkyuujiIryoukikanIshi3="_"
+  KinkyuujiSonota3="_"
+
+#  KinkyuujiByoumei1="$(nameread            "KinkyuujiByoumei1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikan1="$(nameread         "KinkyuujiIryoukikan1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanTel1="$(nameread      "KinkyuujiIryoukikanTel1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanIshi1="$(nameread     "KinkyuujiIryoukikanIshi1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiSonota1="$(nameread             "KinkyuujiSonota1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoumei2="$(nameread            "KinkyuujiByoumei2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikan2="$(nameread         "KinkyuujiIryoukikan2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanTel2="$(nameread      "KinkyuujiIryoukikanTel2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanIshi2="$(nameread     "KinkyuujiIryoukikanIshi2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiSonota2="$(nameread             "KinkyuujiSonota2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoumei3="$(nameread            "KinkyuujiByoumei3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikan3="$(nameread         "KinkyuujiIryoukikan3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanTel3="$(nameread      "KinkyuujiIryoukikanTel3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiIryoukikanIshi3="$(nameread     "KinkyuujiIryoukikanIshi3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiSonota3="$(nameread             "KinkyuujiSonota3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiAllergy=$(nameread "KinkyuujiAllergy" $namedata)
+  [ -z "${KinkyuujiAllergy}" ] && KinkyuujiAllergy="_" 
+  KinkyuujiAllergyBikou="$(nameread        "KinkyuujiAllergyBikou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiKansenshou="$(nameread          "KinkyuujiKansenshou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKansenshou="_"
+  KinkyuujiKansenshouBikou="$(nameread     "KinkyuujiKansenshouBikou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+# 新感染症入力
+  rdKansen1="$(nameread     "rdKansen1"   $namedata)"
+  [ -z "${rdKansen1}" ] && rdKansen1="_"
+  txtKansen1="$(nameread     "txtKansen1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  rdKansen2="$(nameread     "rdKansen2"   $namedata)"
+  [ -z "${rdKansen2}" ] && rdKansen2="_"
+  txtKansen2="$(nameread     "txtKansen2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  rdKansen3="$(nameread     "rdKansen3"   $namedata)"
+  [ -z "${rdKansen3}" ] && rdKansen3="_"
+  txtKansen3="$(nameread     "txtKansen3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  
+#  KinkyuujiKaigonintei="$(nameread         "KinkyuujiKaigonintei"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKaigonintei="_"
+#  KinkyuujiShinshou="$(nameread            "KinkyuujiShinshou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiShinshou="_"
+  KinkyuujiKetsueki="$(nameread            "KinkyuujiKetsueki"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiKetsuekiRh="$(nameread          "KinkyuujiKetsuekiRh"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  [ -z "${KinkyuujiKetsuekiRh}" ] && KinkyuujiKetsuekiRh="_"
+  KinkyuujiKetsuekiBikou="$(nameread       "KinkyuujiKetsuekiBikou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiHaienWakuchin="$(nameread       "KinkyuujiHaienWakuchin"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiHaienWakuchinBikou="$(nameread  "KinkyuujiHaienWakuchinBikou"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiNaifukuyaku="$(nameread         "KinkyuujiNaifukuyaku"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  
+  KinkyuujiByoureki1="_"
+  KinkyuujiByourekiNenrei1="_"
+  KinkyuujiByourekiChiryouhou1="_"
+  KinkyuujiByoureki2="_"
+  KinkyuujiByourekiNenrei2="_"
+  KinkyuujiByourekiChiryouhou2="_"
+  KinkyuujiByoureki3="_"
+  KinkyuujiByourekiNenrei3="_"
+  KinkyuujiByourekiChiryouhou3="_"
+  KinkyuujiByoureki4="_"
+  KinkyuujiByourekiNenrei4="_"
+  KinkyuujiByourekiChiryouhou4="_"
+  KinkyuujiByoureki5="_"
+  KinkyuujiByourekiNenrei5="_"
+  KinkyuujiByourekiChiryouhou5="_"
+
+#  KinkyuujiByoureki1="$(nameread           "KinkyuujiByoureki1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiNenrei1="$(nameread     "KinkyuujiByourekiNenrei1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiChiryouhou1="$(nameread "KinkyuujiByourekiChiryouhou1"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoureki2="$(nameread           "KinkyuujiByoureki2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiNenrei2="$(nameread     "KinkyuujiByourekiNenrei2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiChiryouhou2="$(nameread "KinkyuujiByourekiChiryouhou2"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoureki3="$(nameread           "KinkyuujiByoureki3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiNenrei3="$(nameread     "KinkyuujiByourekiNenrei3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiChiryouhou3="$(nameread "KinkyuujiByourekiChiryouhou3"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoureki4="$(nameread           "KinkyuujiByoureki4"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiNenrei4="$(nameread     "KinkyuujiByourekiNenrei4"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiChiryouhou4="$(nameread "KinkyuujiByourekiChiryouhou4"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByoureki5="$(nameread           "KinkyuujiByoureki5"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiNenrei5="$(nameread     "KinkyuujiByourekiNenrei5"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+#  KinkyuujiByourekiChiryouhou5="$(nameread "KinkyuujiByourekiChiryouhou5"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+  KinkyuujiMoushiokuri="$(nameread "KinkyuujiMoushiokuri"   $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+
+# 現病
+cat ${namedata} > $tmp-namadeta
+#awk '$1~/GenbyouId*/{print $0}' |
+#LANG=C sort     |
+#awk '{if($2=="_"){gsub(/GenbyouId/,"",$1);print $1}
+#      else{print $2}
+#     }'         |
+#maezero 1.2     > $tmp-genbyouid
+
+
+cat ${namedata}                |
+#awk '$1~/GenbyouId/{print gsub(/GenbyouId/,"",$1)}' |
+awk '$1~/GenbyouId/{print $1}' |
+sed 's/GenbyouId//g'           |
+awk '{print $1+1}'             |
+maezero 1.2     > $tmp-genbyouid
+
+cat ${namedata} |
+awk '$1~/GenbyouByoumei/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-genbyoubyoumei
+
+cat ${namedata} |
+awk '$1~/GenbyouIryoukikanName/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-genbyouiryoukikanmei
+
+cat ${namedata} |
+awk '$1~/GenbyouTel/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-genbyoutel
+
+cat ${namedata} |
+awk '$1~/GenbyouDoctorName/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-genbyouishimei
+
+cat ${namedata} |
+awk '$1~/GenbyouSonota/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-genbyousonota
+
+genbyougyo="$(gyo $tmp-genbyouid)"
+[ "$(gyo $tmp-genbyoubyoumei)" = "${genbyougyo}" -a "$(gyo $tmp-genbyouiryoukikanmei)" = "${genbyougyo}" -a "$(gyo $tmp-genbyoutel)" = "${genbyougyo}" -a "$(gyo $tmp-genbyouishimei)" = "${genbyougyo}" -a "$(gyo $tmp-genbyousonota)" = "${genbyougyo}" ] || error_exit
+
+ycat $tmp-genbyouid $tmp-genbyoubyoumei $tmp-genbyouiryoukikanmei $tmp-genbyoutel $tmp-genbyouishimei $tmp-genbyousonota |
+sed 's/  */ /g'  |
+awk '$2!="_"'    |
+sed 's/"/”/g'    |
+#sed 's/\'/”/g'    |
+awk '{print "'${RIYOUSHAID}'",$0,"1","'${cur_time}'","'${USERID}'"}'  > $tmp-genbyou_new_data
+
+if [ -s ${pompa_dir}/RIYOUSHA_GENBYOU ] ; then
+  awk '$1=="'${RIYOUSHAID}'"{print $0,"9"}' ${pompa_dir}/RIYOUSHA_GENBYOU |
+# 1:利用者(入居者)ID 2:現病ID 3:病名       4:医療機関名 5:TEL
+# 6:医師名           7:その他 8:削除フラグ 9:更新日     10:更新者
+  self 1/NF-4 NF NF-2 NF-1    |
+  cat - $tmp-genbyou_new_data |
+  LANG=C sort -k1,2 -k9,9     |
+  getlast 1 2                 |
+  delf NF-1 NF                |
+  awk '{print $0,"'${cur_time}'","'${USERID}'"}' > $tmp-genbyou_input
+elif [ -s $tmp-genbyou_new_data ] ; then
+ cat $tmp-genbyou_new_data    > $tmp-genbyou_input
+else
+ :
+fi
+
+# 既往歴
+cat ${namedata}                |
+#awk '$1~/GenbyouId/{print gsub(/GenbyouId/,"",$1)}' |
+awk '$1~/ByourekiId/{print $1}' |
+sed 's/ByourekiId//g'           |
+awk '{print $1+1}'             |
+maezero 1.2     > $tmp-byourekiid
+
+cat ${namedata} |
+awk '$1~/ByourekiByoumei/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-byourekibyoumei
+
+cat ${namedata} |
+awk '$1~/ByourekiNenrei/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-byourekinenrei
+
+cat ${namedata} |
+awk '$1~/ByourekiHouhou/{print $0}' |
+LANG=C sort     |
+self 2          > $tmp-byourekihouhou
+
+byourekigyo="$(gyo $tmp-byourekiid)"
+[ "$(gyo $tmp-byourekibyoumei)" = "${byourekigyo}" -a "$(gyo $tmp-byourekinenrei)" = "${byourekigyo}" -a "$(gyo $tmp-byourekihouhou)" = "${byourekigyo}" ] || error_exit
+
+ycat $tmp-byourekiid $tmp-byourekibyoumei $tmp-byourekinenrei $tmp-byourekihouhou |
+sed 's/  */ /g'  |
+awk '$2!="_"'    |
+sed 's/"/”/g'    |
+awk '{print "'${RIYOUSHAID}'",$0,"1","'${cur_time}'","'${USERID}'"}'  > $tmp-byoureki_new_data
+
+if [ -s ${pompa_dir}/RIYOUSHA_BYOUREKI ] ; then
+  awk '$1=="'${RIYOUSHAID}'"{print $0,"9"}' ${pompa_dir}/RIYOUSHA_BYOUREKI |
+# 1:利用者(入居者)ID 2:既往歴ID 3:既往歴1：病名 4:既往歴1：年齢 5:既往歴1：治療法
+# 6:削除フラグ       7:更新日   8:更新者
+  self 1/NF-4 NF NF-2 NF-1    |
+  cat - $tmp-byoureki_new_data |
+  LANG=C sort -k1,2 -k7,7     |
+  getlast 1 2                 |
+  delf NF-1 NF                |
+  awk '{print $0,"'${cur_time}'","'${USERID}'"}' > $tmp-byoureki_input
+elif [ -s $tmp-byoureki_new_data ] ; then
+ cat $tmp-byoureki_new_data    > $tmp-byoureki_input
+else
+ :
+fi
+
+
+  # 追加データの作成
+  echo "${RIYOUSHAID}" "${KinkyuujiJyuusho}" "${KinkyuujiKoteiTel}" "${KinkyuujiKeitaiTel}" "${KinkyuujiNyuukyobi}" "${KinkyuujiKoushinbi}" "${KinkyuujiKibouIryoukikan1}" "${KinkyuujiKibouIryoukikan2}" "${KinkyuujiKibouIryoukikan3}" "${KinkyuujiDameIryoukikan1}" "${KinkyuujiDameIryoukikan2}" "${KinkyuujiDameIryoukikan3}" "${KinkyuujiRenrakuShimei1}" "${KinkyuujiRenrakuZokugara1}" "${KinkyuujiRenrakuKoteiTel1}" "${KinkyuujiRenrakuKeitaiTel1}" "${KinkyuujiRenrakuJyuusho1}" "${KinkyuujiRenrakuShimei2}" "${KinkyuujiRenrakuZokugara2}" "${KinkyuujiRenrakuKoteiTel2}" "${KinkyuujiRenrakuKeitaiTel2}" "${KinkyuujiRenrakuJyuusho2}" "${KinkyuujiRenrakuShimei3}" "${KinkyuujiRenrakuZokugara3}" "${KinkyuujiRenrakuKoteiTel3}" "${KinkyuujiRenrakuKeitaiTel3}" "${KinkyuujiRenrakuJyuusho3}" "${KinkyuujiByoumei1}" "${KinkyuujiIryoukikan1}" "${KinkyuujiIryoukikanTel1}" "${KinkyuujiIryoukikanIshi1}" "${KinkyuujiSonota1}" "${KinkyuujiByoumei2}" "${KinkyuujiIryoukikan2}" "${KinkyuujiIryoukikanTel2}" "${KinkyuujiIryoukikanIshi2}" "${KinkyuujiSonota2}" "${KinkyuujiByoumei3}" "${KinkyuujiIryoukikan3}" "${KinkyuujiIryoukikanTel3}" "${KinkyuujiIryoukikanIshi3}" "${KinkyuujiSonota3}" "${KinkyuujiAllergy}" "${KinkyuujiAllergyBikou}" "${KinkyuujiKansenshou}" "${KinkyuujiKansenshouBikou}" "${KinkyuujiKaigonintei}" "${KinkyuujiShinshou}" "${KinkyuujiKetsueki}" "${KinkyuujiKetsuekiRh}" "${KinkyuujiKetsuekiBikou}" "${KinkyuujiHaienWakuchin}" "${KinkyuujiHaienWakuchinBikou}" "${KinkyuujiNaifukuyaku}" "${KinkyuujiByoureki1}" "${KinkyuujiByourekiNenrei1}" "${KinkyuujiByourekiChiryouhou1}" "${KinkyuujiByoureki2}" "${KinkyuujiByourekiNenrei2}" "${KinkyuujiByourekiChiryouhou2}" "${KinkyuujiByoureki3}" "${KinkyuujiByourekiNenrei3}" "${KinkyuujiByourekiChiryouhou3}" "${KinkyuujiByoureki4}" "${KinkyuujiByourekiNenrei4}" "${KinkyuujiByourekiChiryouhou4}" "${KinkyuujiByoureki5}" "${KinkyuujiByourekiNenrei5}" "${KinkyuujiMoushiokuri}" "1" "${cur_time}" "${USERID}"  > $tmp-riyousha_kinkyuuji_data_input
+# 1:利用者(入居者)ID         2:住所                 3:固定電話              4:携帯電話             5:入居日
+# 6:更新日                   7:希望医療機関1        8:希望医療機関2         9:希望医療機関3        10:希望しない金融機関1
+# 11:希望しない金融機関2     12:希望しない金融機関3 13:緊急時連絡先1：氏名  14:緊急時連絡先1：続柄 15:緊急時連絡先1：固定電話
+# 16:緊急時連絡先1：携帯電話 17:緊急時連絡先1：住所 18:緊急時連絡先2：氏名  19:緊急時連絡先2：続柄 20:緊急時連絡先2：固定電話
+# 21:緊急時連絡先2：携帯電話 22:緊急時連絡先2：住所 23:緊急時連絡先3：氏名  24:緊急時連絡先3：続柄 25:緊急時連絡先3：固定電話
+# 26:緊急時連絡先3：携帯電話 27:緊急時連絡先3：住所 28:治療病1：病名        29:治療病1：医療機関名 30:治療病1：電話番号
+# 31:治療病1：医師           32:治療病1：その他     33:治療病2：病名        34:治療病2：医療機関名 35:治療病2：電話番号
+# 36:治療病2：医師           37:治療病2：その他     38:治療病3：病名        39:治療病3：医療機関名 40:治療病3：電話番号
+# 41:治療病3：医師           42:治療病3：その他     43:アレルギー           44:アレルギー備考      45:感染症
+# 46:感染症備考              47:介護認定            48:身体障害者手帳       49:血液型              50:血液型Rh式
+# 51:血液型備考              52:肺炎球菌ワクチン    53:肺炎球菌ワクチン備考 54:内服薬              55:既往歴1：病名
+# 56:既往歴1：年齢           57:既往歴1：治療法     58:既往歴2：病名        59:既往歴2：年齢       60:既往歴2：治療法
+# 61:既往歴3：病名           62:既往歴3：年齢       63:既往歴3：治療法      64:既往歴4：病名       65:既往歴4：年齢
+# 66:既往歴4：治療法         67:既往歴5：病名       68:既往歴5：年齢        69:既往歴5：治療法     70:削除フラグ
+# 71:更新日時                72:更新者
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+  # 感染症を含んだデータの作成(20150204)
+# 1:利用者(入居者)ID        2:HBs抗原プラスマイナス 3:HBs抗原備考 4:HCV抗体プラスマイナス 5:HCV抗体備考
+# 6:RPR法定性プラスマイナス 7:RPR法定性備考         8:希望医療機関電話番号1       9:希望医療機関電話番号2                 10:希望医療機関伝湾番号3
+# 11:その他感染症コメント                  12:予備5                13:予備6      14:予備7                15:予備8
+# 16:予備9                  17:予備10               18:削除フラグ 19:更新日時             20:更新者
+  echo "${RIYOUSHAID}" "${rdKansen1}" "${txtKansen1}" "${rdKansen2}" "${txtKansen2}" "${rdKansen3}" "${txtKansen3}" "${KinkyuujiKibouIryoukikanTel1}" "${KinkyuujiKibouIryoukikanTel2}" "${KinkyuujiKibouIryoukikanTel3}" "${txtareaKansenSonota}" "_" "_" "_" "_" "_" "_" "1" "${cur_time}" "${USERID}" > ${tmp}-riyousha_kinkyuuji_tsuika_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+### INPUTデータの作成
+### 後で見てわかりやすいように書く
+#echo "${INPUT_TEXT1} _"           |
+
+### 加工済みのデータだけを元にして一旦selfする
+#self NF 1  NF NF NF NF            |
+# 1:ID         2:入力内容 3:入力者 4:入力者名 5:最終更新日時
+# 6:最終更新者
+# 最終的に更新情報を代入
+#awk '{$1="'${data_id}'";
+#      $3="'${USER_ID}'";
+#      $4="'${USER_NAME}'";
+#      $5="'${cur_time}'";
+#      $6="'${USER_ID}'";
+#      print}'                     > $tmp-sample_input
+### ここでのtmpファイル名は更新時に使うので注意すること
+#--------------------------------------------------------------
+#cp -p $tmp-* /home/hands/work/okuda
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+RIYOUSHA_KINKYUUJI_KOJINJYOUHOU RIYOUSHA_KINKYUUJI_KOJINJYOUHOU
+RIYOUSHA_KINKYUUJI_KOJINJYOUHOU_TSUIKA RIYOUSHA_KINKYUUJI_KOJINJYOUHYOU_TSUIKA
+FIN
+
+[ -s $tmp-genbyou_input ] && echo "RIYOUSHA_GENBYOU RIYOUSHA_GENBYOU" >> $tmp-target-table
+[ -s $tmp-byoureki_input ] && echo "RIYOUSHA_BYOUREKI RIYOUSHA_BYOUREKI" >> $tmp-target-table
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+riyousha_kinkyuuji_data RIYOUSHA_KINKYUUJI_KOJINJYOUHOU 1 71 72 ${pompa_dir} ${input_dir}
+riyousha_kinkyuuji_tsuika RIYOUSHA_KINKYUUJI_KOJINJYOUHOU_TSUIKA 1 19 20 ${pompa_dir} ${input_dir}
+FIN
+
+[ -s $tmp-genbyou_input ] && echo "genbyou RIYOUSHA_GENBYOU 2 9 10 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+[ -s $tmp-byoureki_input ] && echo "byoureki RIYOUSHA_BYOUREKI 2 7 8 ${pompa_dir} ${input_dir}" >> $tmp-koushin_pompa
+
+#--------------------------------------------------------------
+
+cat $tmp-target-table |
+awk '$1!~/*tbl_dir*/{print $0}' |
+while read file_name base ;do
+ cp ${pompa_dir}/${file_name} ${pompa_dir}/back/${file_name}.${today}
+done
+
+#cp $tmp-* /home/hands/work/okuda
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/RIYOUSHA
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/RIYOUSHA/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result touroku_ok"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

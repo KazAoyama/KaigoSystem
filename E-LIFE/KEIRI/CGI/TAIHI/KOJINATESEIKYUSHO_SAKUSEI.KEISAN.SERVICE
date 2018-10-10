@@ -1,0 +1,150 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.SERVICE 施設請求計算部分のCGI
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+function error_exit {
+  message="${1}"
+  echo "${message}"
+  exit 1
+}
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 引数設定
+namefile=${1}
+work="/home/hands/E-LIFE/KEIRI/WORK"
+# 変数
+eval $(name-source ${namefile})
+seikyu_syori_month="${year}${month}"
+seikyu_syori_next_month="$(mdate ${seikyu_syori_month}m/+1)"
+seikyu_syori_two_next_month="$(mdate ${seikyu_syori_month}m/+2)"
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+seikyu_syori_two_last_month="$(mdate ${seikyu_syori_month}m/-2)"
+#---------------------------------------------------------------
+
+#---------------------------------------------------------------
+# 3.実績系をとりまとめする(税はデータに入ってるから計算しない)
+
+# ${seikyu_dir}/SERVICE_TOUROKU/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.SERVICE_TOUROKU
+# -
+# 1:利用者ID     2:請求年月日 3:サービス項目ID 4:税抜き単価 5:数量
+# 6:税込み合計額 7:備考       8:課税区分       9:税率       10:単価消費税額
+# 11:税込み単価  12:userid    13:ID            14:登録日時
+
+# --------------------------------------
+# ファイルがなければここで終了
+[ ! -e ${seikyu_dir}/SERVICE_TOUROKU/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.SERVICE_TOUROKU ] && exit 0
+# --------------------------------------
+
+# マスタ準備
+awk '$1=="'${shisetsu}'" && $(NF-2)!=9' /home/hands/E-LIFE/TBL/SEIKYU/SERVICE_MASTER |
+self 3 6                                                                             > $tmp-service_mas
+
+cat /home/hands/E-LIFE/TBL/SEIKYU/SHUKEIGROUP_MASTER                                 |
+awk '$3=="'${shisetsu}'" && $(NF-2)!=9{print $1,$4}'                                 > $tmp-shukei_master
+
+LANG=C sort -k2,2 $tmp-service_mas                                                   |
+join2 key=2 $tmp-shukei_master                                                       |
+self 1 3                                                                             > $tmp-service_shukei
+cp $tmp-service_shukei ${work}/service_master
+
+seikyu_syori_last_month="$(mdate ${seikyu_syori_month}m/-1)"
+
+# --------------------------------------
+cat ${seikyu_dir}/SERVICE_TOUROKU/${shisetsu}/${seikyu_syori_month}/${seikyu_syori_month}.SERVICE_TOUROKU |
+self 1/8                           |
+# 1:利用者ID     2:請求年月日 3:サービス項目ID 4:税抜き単価 5:数量
+# 6:税込み合計額 7:備考       8:課税区分
+awk '{zeinuki_goukei=$4*$5;
+      zeigaku=$6-zeinuki_goukei;
+      print $0,zeinuki_goukei,zeigaku}' |
+# 1:利用者ID     2:請求年月日 3:サービス項目ID 4:税抜き単価   5:数量
+# 6:税込み合計額 7:備考       8:課税区分       9:税抜き合計額 10:税額
+
+tee ${tmp}-service_kakunin         |
+
+# キー(利用者、項目ID)が同じものを集計する
+self 1 3 8 5 9 6                   |
+# 1:利用者ID     2:サービス項目ID 3:課税区分 4:数量 5:税抜き合計額
+# 6:税込み合計額
+LANG=C sort                        |
+sm2 1 3 4 6                        |
+tee ${work}/service_buta |
+LANG=C sort -k2,2                 |
+join2 +"20" key=2 $tmp-service_shukei |
+self 1 2 4/NF 3                   |
+# 課税区分を変換する
+awk '{if($3=="1")
+        {$3="1"}
+      else if($3=="0")
+        {$3="2"};
+      print $0,"'${seikyu_syori_month}'"}' |
+self 1 NF 2 3 4 5 6 7               |
+# 1:利用者ID     2:請求年月日   3:サービス項目ID 4:課税区分 5:数量
+# 6:税抜き合計額 7:税込み合計額 8:行分類フラグ
+tee ${work}/azamino |
+# inputの形にする
+#   行分類フラグ＝20：個別利用料明細行
+#   項目ID＝service${サービスID}
+#   請求年月日：項目IDごとに集計するので代表して処理月月初の値をいれる
+if [ "${shisetsu}" = "0004" ];then
+  awk '{if($3=="00066"){$2="'${seikyu_syori_last_month}'"};print}' |
+awk '{print "'${seikyu_syori_month}'",$1,$8,"service"$3,"'${seikyu_syori_month}'",\
+            $4,$6,$7,$7-$6,substr($2,1,4)"年"substr($2,5,2)"月分(数量"$5")　別紙参照",\
+            "0","1","'${current_time}'","'${userid}'","_"}' 
+else
+awk '{print "'${seikyu_syori_month}'",$1,$8,"service"$3,$2,\
+            $4,$6,$7,$7-$6,substr($2,1,4)"年"substr($2,5,2)"月分(数量"$5")　別紙参照",\
+            "0","1","'${current_time}'","'${userid}'","_"}' 
+fi                                 |
+# 1:処理月          2:入居者ID    3:行分類フラグ 4:項目ID  5:請求年月日
+# 6:非課税フラグ    7:金額税抜き  8:金額税込み   9:税額    10:内訳1
+# 11:特別処理フラグ 12:削除フラグ 13:更新時間    14:更新者 15:アンスコ
+self 1  2  3  NF 4  NF 5  6  7  8  \
+     9  10 NF 11 NF NF NF NF NF NF \
+     NF NF NF NF 12 13 14          |
+# 1:処理月    2:入居者ID   3:行分類フラグ 4:契約ID          5:項目ID
+# 6:契約枝番  7:請求年月日 8:非課税フラグ 9:金額税抜き      10:金額税込み
+# 11:税額     12:内訳1     13:内訳2       14:特別処理フラグ 15:予備
+# 16:予備     17:予備      18:予備        19:予備           20:予備
+# 21:予備     22:予備      23:予備        24:予備           25:削除フラグ
+# 26:更新時間 27:更新者
+LANG=C sort                        > ${tmp}-SERVICE_INPUT #集計対象!!
+# --------------------------------------
+
+# --------------------------------------
+# パイプでエラーがあったら終了
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "処理中にエラーが発生しました(SERVICE)"
+# --------------------------------------
+
+# --------------------
+# 列チェック
+
+[ "$(retu ${tmp}-SERVICE_INPUT)" != "27" ] && error_exit "処理中にエラーが発生しました(SERVICE)"
+[ "$(retu ${tmp}-SERVICE_INPUT | gyo)" != "1" ] && error_exit "処理中にエラーが発生しました(SERVICE)"
+[ "$(awk 'NF!="27"' ${tmp}-SERVICE_INPUT | gyo)" != "0" ] && error_exit "処理中にエラーが発生しました(SERVICE)"
+# --------------------
+
+# --------------------
+# 処理開始時の合計額と最終的に作成したファイルの合計額の確認
+
+start_goukei="$(self 6 ${tmp}-service_kakunin | sm2 0 0 1 1)"
+end_goukei="$(self 10 ${tmp}-SERVICE_INPUT | sm2 0 0 1 1)"
+[ "${start_goukei}" != "${end_goukei}" ] && error_exit "処理中にエラーが発生しました(SERVICE)"
+# --------------------
+#---------------------------------------------------------------
+
+exit 0
+

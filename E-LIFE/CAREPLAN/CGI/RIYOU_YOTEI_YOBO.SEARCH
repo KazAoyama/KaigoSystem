@@ -1,0 +1,206 @@
+#!/bin/bash
+#
+# RIYOU_YOTEI_YOBO.SEARCH
+# 利用予定票（介護）　検索用CGI
+#
+# Written by K.Aoyama :20140724
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CAREPLAN/CGI/CAREPLAN.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+curseirekiyear=$(date +%Y)
+curmonth=$(date +%m)
+
+# 対象年
+[ -z "${hdTaishouYear}" -o "${hdTaishouYear}" = "_" ] && hdTaishouYear=$curseirekiyear
+# 対象月
+[ -z "${taishoumonth}" -o "${taishoumonth}" = "_" ] && taishoumonth=$curmonth
+
+KYOUTSU_TBL=${home_dir}/TBL
+
+curday=$hdTaishouYear$taishoumonth"01"
+
+# 時期によって有効なサービスコードの年月日を出す。
+ls -F ${KYOUTSU_TBL}/SERVICECODE |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-dir_date
+
+dir_date=$(cat $tmp-dir_date)
+
+
+# 事業所マスタ取得(2014/6/6)
+self 1 3 ${home_dir}/TBL/JIGYOUSHO_MASTER/JIGYOUSHO_MASTER > $tmp-jigyousho_id_servicetype
+
+
+# サービスコードをセットし、表示
+# 訪問介護サービス区分レコード取得
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKAIGO_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_houmonkaigo
+# 訪問入浴サービス区分レコード取得
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_HOUMONNYUYOKU_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_houmonnyuyoku
+# 訪問看護
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONKANGO_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_houmonkango
+# 通所介護
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TSUSHOKAIGO_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_tsushokaigo
+# 短期入所生活介護
+# 1:ID     2:事業所タイプ     3:サービスコード   4:サービス名   5:施設等の区分
+# 6:多床室 7:ユニット型準個室 8:ユニットケア減算 9:夜間体制減算 10:超過
+# 11:欠員  12:介護度          13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_TANKI_NYUKYO_SEIKATSU_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_tankinyusho
+# 短期入所療養介護老短
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTAN_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_tankinyusho_ryouyou_routan
+# 短期入所療養介護療養型
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名   5:最小時間
+# 6:最大時間 7:施設等の区分       8:ユニットケア減算   9:夜間体制減算 10:超過
+# 11:欠員    12:介護度            13:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TANKI_NYUSHO_RYOUYOU_ROUTANIGAI_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_tankinyusho_ryouyou_routan_igai
+# 訪問リハビリ
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_HOUMONRIHABIRI_YOBO    |
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:施設タイプ 6:同一
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_houmonrihabiri
+# 通所リハビリ
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービス名 5:最小時間
+# 6:最大時間 7:超過フラグ   8:人欠フラグ     9:施設タイプ 10:介護度
+# 11:単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_TSUSHORIHABIRI_YOBO    |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_tsushorihabiri
+# 福祉用具レンタル
+# 1:ID 2:事業者タイプ 3:サービスコード 4:サービス名 5:単位数
+cat ${KYOUTSU_TBL}/SERVICECODE/$dir_date/SERVICECODE_FUKUSHIYOUGU_TAIYO_YOBO   |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_fukushiyougu_taiyo
+# 居宅療養管理
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_KYOTAKU_RYOUYOU_KANRI_YOBO |
+awk '{print $2,$3,$4}' > ${tmp}-servicecode_kyotaku_ryouyou
+# 認知症通所介護
+# 1:ID       2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:最小時間
+# 6:最大時間 7:施設等の区分       8:超過               9:欠員             10:介護度
+# 11:単位    12:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHI_TSUSHOKAIGO_YOBO |
+awk '{print $2,$3,$4}'  > $tmp-servicecode_ninchi_tsusho
+# 小規模多機能
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:同一
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_SHOUKIBO_TAKINOU_YOBO  |
+awk '{print $2,$3,$4}'   > $tmp-servicecode_shoukibo
+# 認知症対応型（短期利用外）
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設等の区分
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHISHOU_TAIOU_TANKIGAI_YOBO   |
+awk '{print $2,$3,$4}'  >  $tmp-servicecode_nintchi_taiou_tankigai
+# 認知症対応型（短期利用）
+# 1:ID     2:サービスコード種類 3:サービスコード項目 4:サービスコード名 5:施設等の区分
+# 6:介護度 7:超過               8:欠員               9:単位             10:集計単位
+cat ${KYOUTSU_TBL}/SERVICECODE/${dir_date}/SERVICECODE_NINCHISHOU_TAIOU_TANKI_YOBO |
+awk '{print $2,$3,$4}'  > $tmp-servicecode_nintchi_taiou_tanki
+
+cat ${tmp}-servicecode_houmonkaigo ${tmp}-servicecode_houmonnyuyoku ${tmp}-servicecode_houmonkango ${tmp}-servicecode_tsushokaigo ${tmp}-servicecode_tankinyusho $tmp-servicecode_houmonrihabiri $tmp-servicecode_fukushiyougu_taiyo ${tmp}-servicecode_tsushorihabiri ${tmp}-servicecode_tankinyusho_ryouyou_routan ${tmp}-servicecode_tankinyusho_ryouyou_routan_igai ${tmp}-servicecode_kyotaku_ryouyou $tmp-servicecode_ninchi_tsusho $tmp-servicecode_shoukibo $tmp-servicecode_nintchi_taiou_tankigai  $tmp-servicecode_nintchi_taiou_tanki |
+LANG=C sort -k1,2 > $tmp-servicecode
+
+# サービス種類
+cat ${KYOUTSU_TBL}/CONFIG/KAIGOHOKEN_SERVICE_TYPE |
+self 1 3                                          > $tmp-service_syurui
+
+mdate -a ${hdTaishouYear}${taishoumonth}m         |
+awk '{print substr($1,7,2),$2}'                   > $tmp-youbi
+
+# 利用票ファイルの取得
+  cat ${apdata_dir}/GETSUGAKU_RIYOU_YOBO/${Riyoushaid}/SERVICE_YOTEI_YOBO   |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$2=="'${Riyoushaid}'"&&$(NF-2)!="9"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+# 日付
+# --------------------------
+# 
+awk '$3=="'${hdTaishouYear}'"&&$4=="'$taishoumonth'"'  |
+# --------------------------
+#--------------------------------------------------------------
+# 1:サービス実施日 2:開始時間 3:終了時間 4:サービス種類コード 5:サービスコード
+# 6:事業者ID
+self 5 8 9 6 7 10 |
+LANG=C sort -k4,5 |
+# 1:サービス実施日   2:開始時間 3:終了時間 4:サービス種類コード 5:サービスコード
+# 6:サービスコード名 7:事業者ID
+join1 key=4/5 $tmp-servicecode |
+LANG=C sort -k7,7     |
+# 1:サービス実施日   2:開始時間 3:終了時間 4:サービス種類コード 5:サービスコード
+# 6:サービスコード名 7:事業者ID 8:事業社名
+join1 key=7 $tmp-jigyousho_id_servicetype |
+LANG=C sort -k4,4     |
+# 1:サービス実施日 2:開始時間         3:終了時間 4:サービス種類コード 5:サービス種類名
+# 6:サービスコード 7:サービスコード名 8:事業者ID 9:事業社名
+join1 key=4 $tmp-service_syurui > $tmp-service_yotei_yobo_rec
+
+:> $tmp-final_record
+cat $tmp-youbi           |
+while read date youbi ; do
+  cat $tmp-service_yotei_yobo_rec |
+  awk '$1=="'$date'"{print $0,"'$youbi'"}' > $tmp-chukan_date1
+  if [ "$(gyo $tmp-chukan_date1)" = "0" ] ; then
+     echo "$date" "@" "@" "@" "@" "@" "@" "@" "@" "$youbi" > $tmp-chukan_date1
+  fi
+# 1:サービス実施日 2:開始時間         3:終了時間 4:サービス種類コード 5:サービス種類名
+# 6:サービスコード 7:サービスコード名 8:事業者ID 9:事業社名           10:曜日
+  cat $tmp-chukan_date1 >> $tmp-final_record
+: ;done
+
+cat $tmp-final_record |
+LANG=C sort -k1,4    |
+# 1:サービス実施日   2:曜日     3:開始時間 4:終了時間 5:サービス種類名
+# 6:サービスコード名 7:事業社名
+self 1 10 2 3 5 7 9  |
+awk '{print "l",$0}'  >  ${tmp}-service_yotei_record
+
+
+cat ${tmp}-service_yotei_record
+
+## 終了
+rm -f $tmp-*
+exit 0

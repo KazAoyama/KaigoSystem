@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# SHOKUJI_PATTERN_TOUROKU.SHINKI
+# 食事パターン登録新規
+#
+# Written by E.Okuda 20140314
+
+#--------------------------------------------------------------
+# ログ
+exec 2> /home/hands/E-LIFE/SHOKUJI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source  /home/hands/E-LIFE/SHOKUJI/CGI/SHOKUJI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+# 変数設定
+tmp=/var/tmp/${$}
+today=$(date +%Y%m%d)
+yday=$(mdate ${today}/-1)
+thismonth="$(date +%Y%m)"
+# ディレクトリ設定
+home_dir="/home/hands/E-LIFE"
+app_dir="${home_dir}/SHOKUJI"
+input_dir="${app_dir}/INPUT"
+kanri_dir="/DATA/E-LIFE/SHOKUJI/KANRI"
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $lock_dir/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+  Shisetsu=$(nameread            "shisetsu"    $namedata)
+  Tateya=$(nameread              "SelectTateya"      $namedata)
+  Kyoshitsu=$(nameread           "SelectKyoshitsu" $namedata)
+  USERID=$(nameread              "USERID"      $namedata)
+  RIYOUSHAID=$(nameread          "SelectTaishousha"    $namedata)
+  EtsuranHenkouShinki=$(nameread "EtsuranHenkouShinki" $namedata)
+  ShinkiKikanFrom=$(nameread       "ShinkiKikanFrom"       $namedata | sed 's/\///g')
+  ShinkiKikanTo=$(nameread         "ShinkiKikanTo"         $namedata | sed 's/\///g') 
+
+#[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && RIYOUSHAID=$(nameread "Nyuukyosha" $namedata)
+#--------------------------------------------------------------
+# テーブル続き
+ pompa_dir="${app_dir}/POMPA/${Shisetsu}/${Tateya}"
+ mkdir -p ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN
+ touch ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER
+
+ seikyu_dir="/DATA/E-LIFE/SEIKYU/SHISETSU/SHOKUJI/${Shisetsu}/${Tateya}/${thismonth}"
+ mkdir -p ${seikyu_dir}
+ touch ${seikyu_dir}/RIYOUSHA_SHOKUJI_JISSEKI_SEIKYUDATA
+
+
+#--------------------------------------------------------------
+# 入力チェック
+[ -z "${RIYOUSHAID}" -o "${RIYOUSHAID}" = "_" ] && error_exit "利用者情報が不正です。"
+
+# 対象日のチェック
+
+  [ -z "${ShinkiKikanFrom}" -o "${ShinkiKikanFrom}" = "_" ] && error_exit "期間(自)を入力してください。"
+  [ -z "${ShinkiKikanTo}" -o "${ShinkiKikanTo}" = "_" ] && ShinkiKikanTo="99999999"
+
+  echo "${ShinkiKikanFrom}" |
+  awk '$1!="_"{print $0}' |
+  awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-taishoubifrom_error
+
+  echo "${ShinkiKikanTo}" |
+  awk '$1!="_"{print $0}' |
+  awk '$1!~/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$/{print $0}' > $tmp-taishoubito_error
+
+  [ -s $tmp-taishoubifrom_error ] && error_exit "期間(自)の値が不正です。"
+  [ -s $tmp-taishoubito_error ] && error_exit "期間(至)の値が不正です。"
+
+  isdate "${ShinkiKikanFrom}"  
+  echo $?  > $tmp-taishoubifrom
+  [ "$(cat $tmp-taishoubifrom)" != "0" ] && error_exit "期間(自)に不正な日付が入力されています。"
+  if [ "${ShinkiKikanTo}" != "99999999" ] ; then
+    isdate "${ShinkiKikanTo}"  
+    echo $?  > $tmp-taishoubito
+    [ "$(cat $tmp-taishoubito)" != "0" ] && error_exit "期間(至)は不正な日付が入力されています。"
+  fi
+
+  [ "${ShinkiKikanFrom}" -gt "${ShinkiKikanTo}" ]  && error_exit "期間(自)は期間(至)より前の日付を入力してください。"
+
+
+  # 既存データとの比較
+  awk '$1=="'${RIYOUSHAID}'"&&$3=="'${Shisetsu}'"&&$(NF-2)!="9"{print $0}' ${pompa_dir}/RIYOUSHA_SHOKUJI_PATTERN/RIYOUSHA_SHOKUJI_PATTERN_HEADER > $tmp-kizondata
+# 1:利用者ID 2:食事パターンID 3:施設ID 4:建屋 5:居室
+# 6:期間From 7:期間To
+
+ if [ -s $tmp-kizondata ] ; then
+   cat $tmp-kizondata |
+   awk '{if($6>"'${ShinkiKikanFrom}'"&&$6<="'${ShinkiKikanTo}'"){print $0}
+        else if($6<="'${ShinkiKikanFrom}'"&&$7>="'${ShinkiKikanTo}'"){print $0}
+        else if($7>="'${ShinkiKikanFrom}'"&&$7<"'${ShinkiKikanTo}'"){print $0}
+        else if($6>="'${ShinkiKikanFrom}'"&&$7<="'${ShinkiKikanTo}'"){print $0}
+       }'            > $tmp-taishoubi_choufuku_error
+ else
+   : > $tmp-kizondata
+ fi
+ if [ -s $tmp-taishoubi_choufuku_error ] ; then
+  [ "$(cat $tmp-taishoubi_choufuku_error | gyo)" != "0" ] && error_exit "期間に重複するデータがあります。"
+ fi 
+   # 入力された8桁日付が請求確定後のデータかどうか
+  #----------------------------
+  kakutei_nengetsu="$(LANG=C sort -k1,1 /DATA/E-LIFE/SEIKYU/SHISETSU/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} | awk '$(NF-2)!="9"' | getlast 1 1 | self 2)"
+  kakunin_nengetsu="$(echo "${ShinkiKikanFrom}" | self 1.1.6)"
+
+  [ "${kakutei_nengetsu}" -lt "${kakunin_nengetsu}" ] || error_exit "請求確定月以前のデータを入力することはできません。"
+
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#cp $tmp-* /home/hands/work/okuda
+
+  # 入力された8桁日付が入居期間内かどうか
+  #------------------------------------------
+
+  nyuukyobi="$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"{print $7}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS | head -1)"
+  taikyobi="$(awk '$1=="'${Shisetsu}'"&&$2=="'${Tateya}'"&&$5=="'${Kyoshitsu}'"&&$6=="'${RIYOUSHAID}'"{print $8}' /DATA/E-LIFE/UNEI/RIYOUSHA/SHISETSU_RIYOUSHA_STATUS | head -1)"
+
+  [ "${ShinkiKikanFrom}" -ge "${nyuukyobi}" ] || error_exit "パターン登録は入居期間内の日付を指定してください。"
+  [ "${ShinkiKikanTo}" == "99999999" -o "${ShinkiKikanTo}" -le "${taikyobi}" ] || error_exit "パターン登録は入居期間内の日付を指定してください。"
+  
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+  # 入力された日付が2ヶ月以上前だとエラー
+  #--------------------------------------------
+
+  ShinkiKikanFromMonth="$(echo "${ShinkiKikanFrom}" | awk '{print substr($1,1,6)}')"
+  ThisMonth="$(date +%Y%m)"
+  MonthSa="$(mdate ${ThisMonth}m ${ShinkiKikanFromMonth}m)"
+
+  [ "${MonthSa}" -gt "1" ] && error_exit "2ヶ月以上前のパターン登録はできません。"
+
+
+echo "result ok"
+
+
+## 終了
+rm -f $tmp-*
+

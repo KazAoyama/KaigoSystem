@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_SUIIHYO_SHOUSAI.SEARCH : 介護実績推移表詳細データ検索用CGI
+#
+# Usage : KAIGOJISSEKI_SUIIHYO_SHOUSAI.SEARCH ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+# 画面の描画モードを決定する。
+MODE="$(nameread "MODE" ${namefile})"
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="shosai"
+fi
+
+# 年月の取得
+echo ${nengetsu} > ${tmp}-nengetsu
+echo ${riyosha_name} > ${tmp}-taishosha
+
+# 検索する年月の日にちを取得
+dayday=$(echo ${sendword}  |
+awk '{gsub(/+++/," ",$1);print}'  |
+awk '{print $2}'  |
+maezero 1.2)
+
+searchday=$(echo $nengetsu$dayday)
+echo ${searchday} > ${tmp}-searchday
+
+# 検索する介護分類を決める
+case "${bunrui_select}" in
+  shokuji )
+    BUNRUI="1"
+  ;;
+  haisetsu )
+    BUNRUI="2"
+  ;;
+  nyuyoku )
+    BUNRUI="3"
+  ;;
+  senmen )
+    BUNRUI="4"
+  ;;
+  kihon_dousa )
+    BUNRUI="5"
+  ;;
+  iryo_kenkou )
+    BUNRUI="6"
+  ;;
+  shinri_shakai )
+    BUNRUI="7"
+  ;;
+  all )
+    BUNRUI="0"
+  ;;
+esac
+
+# 検索する
+cat ${pompa_dir}/${shisetsu}/${nengetsu}/${nengetsu}.DISPLAY_KAIGOJISSEKI_IKKATSU   |
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+# 11:実施者 12:登録日時間 13:ID
+LANG=C sort -k1,1n                                                      |
+join0 key=1 ${tmp}-taishosha                                            |
+LANG=C sort -k4,4n                                                      |
+if [ "${BUNRUI}" = "0" ];then
+  LANG=C sort -k2,2n                                                      |
+  join0 key=2 ${tmp}-searchday                                            > ${tmp}-search_kekka
+else
+  join0 key=4 <(echo "${BUNRUI}")                                         |
+  LANG=C sort -k2,2n                                                      |
+  join0 key=2 ${tmp}-searchday                                            > ${tmp}-search_kekka
+fi                                                                      
+# 1:対象者 2:実施日 3:訪問介護共有フラグ 4:介護分類 5:介護項目 6:開始時間 7:内容 8:介助場所 9:備考 10:終了時間
+# 11:実施者 12:登録日時間 13:ID
+
+
+cat ${tmp}-search_kekka
+
+# 終了
+rm -f $tmp-*
+
+exit 0

@@ -1,0 +1,112 @@
+#!/bin/bash
+#
+# KENKOUSHINDANSHO.UPLOAD
+#
+# 
+# Written by aoyagi
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/UNEI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+work="/home/hands/E-LIFE/UNEI/WORK"
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep upload - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "upload" $mime > $tmp-keiyakusho
+cp $tmp-keiyakusho ${work}/keikuyakuhiko
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+tee ${work}/butakeiyaku |
+awk '$0~/upload/'                     |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/pdf/ || $1~/PDF/' > $tmp-filemark
+
+# 権限がなければエラー終了
+ [ "${TOUROKUDISP}" = "none" ] && error_exit "権限がありません。"
+
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "PDFではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# アップロードされた画像をJAN-数字.jpgにして、TMP_IMAGEに置く
+mkdir -p ${tenpu_dir}/KENKOUSHINDANSHO/${riyosha_name}
+
+cp -p $tmp-keiyakusho ${tenpu_dir}/KENKOUSHINDANSHO/${riyosha_name}/${cur_time}_${riyosha_name}_KENKOUSHINDANSHO.pdf
+
+# 備考を保存
+[ -z ${biko} ] && biko="_"
+echo ${tenpu_dir}/KENKOUSHINDANSHO/${riyosha_name}/${cur_time}_${riyosha_name}_KENKOUSHINDANSHO.pdf ${biko} "1" ${cur_time} ${userid} > $tmp-biko_pompa
+mkdir -p /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO
+mkdir -p /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO/${shisetsu}
+if [ -e /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO/${shisetsu}/${riyosha_name} ];then
+  cat /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO/${shisetsu}/${riyosha_name} $tmp-biko_pompa | LANG=C sort -k1,1 > $tmp-new_pompa
+  mv $tmp-new_pompa /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO/${shisetsu}/${riyosha_name}
+else
+  mv $tmp-biko_pompa /home/hands/E-LIFE/UNEI/POMPA/KENKOUSHINDANSHO/${shisetsu}/${riyosha_name}
+fi
+[ ${?} != "0" ] && error_exit "???"
+
+
+
+
+#echo "result ok"
+#-------------------------------------------------------------
+
+
+# 終了
+rm -f $tmp-*
+exit 0

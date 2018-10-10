@@ -1,0 +1,1291 @@
+#!/bin/bash
+#
+# CARE_SHISETSU_ASSESSMENT.TOUROKU : アセスメント登録
+#
+# Usage : CARE_SHISETSU_ASSESSMENT.TOUROKU
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+rm -f $tmp-*
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#---- 処理日時 ----
+sdaytime=$(date +%Y%m%d%H%M%S)
+
+
+# 引数設定
+namedata=$1
+
+
+# デフォルト値セット
+# 基本情報
+hdShokaiSakuseidate="_"
+txtShokaiSakuseidate="_"
+slShokaiJissibasho="_"
+slShokaiKinyusha="_"
+slAssessmentRiyu="_"
+txtNyukyoNengappi="_"
+txtNyukyoshaFurigana="_"
+slNyukyoshaSeibetsu="_"
+slNyukyoshaSeinengappiWareki="_"
+slNyukyoshaSeinengappiYear="_"
+slNyukyoshaSeinengappiMonth="_"
+slNyukyoshaSeinengappiDay="_"
+hdNyukyoshaSeinengappi="_"
+txtNyukyoshaNenrei="_"
+txtNyukyoshaShimei="_"
+txtNyukyoshaJusho="_"
+txtNyukyoshaDenwabangou="_"
+slNyukyoshaSetaikubun="_"
+txtShokaiSoudanUketsukegappi="_"
+slSoudsanUketsukehouhou="_"
+slSoudanIraisha="_"
+txtSoudanKeiro="_"
+txtSoudanNaiyou="_"
+txtSeikatsureki="_"
+txtGenzaiSeikatsujoukyou="_"
+tab4Netakiri="_"
+tab4Ninchishou="_"
+slYoukaigodo="_"
+txtNinteinengappi="_"
+hdNinteinengappi="_"
+txtNinteiKikanStart="_"
+txtNinteiKikanEnd="_"
+hdNinteiKikanStart="_"
+hdNinteiKikanEnd="_"
+txtKaigohokenHihokenshaBangou="_"
+txtIryouHoken="_"
+slShintaiShougaishaTu="_"
+txtShintaiShougaishaSyu="_"
+txtShintaiShougaishaKyu="_"
+txtShintaiShougaishaBui="_"
+slSeikatsuhogo="_"
+txtSeikatsuhogoJukyushaBangou="_"
+txtSeikatsuhogoFutanshaBangou="_"
+
+# 家族構成(追加形式)
+#NyukyoshaKazokuVal="_"
+#NyukyoshaKazokuShimei0="_"
+#NyukyoshaKazokuZokugara0="_"
+#NyukyoshaKazokuNenrei0="_"
+#NyukyoshaKazokuKenkou0="_"
+
+# 緊急連絡先(追加形式)
+#NyukyoshaKinkyuVal="_"
+#NyukyoshaKinkyuShimei0="_"
+#NyukyoshaKinkyuZokugara0="_"
+#NyukyoshaKinkyuJusho0="_"
+#NyukyoshaKinkyuDenwa0="_"
+
+# 利用サービス(追加形式)
+#RiyouServiceVal="_"
+#slGenzaiKaigoServiceShubetsu0="_"
+#txtGenzaiKaigoServiceJigyousho0="_"
+#txtGenzaiKaigoServiceBiko0="_"
+
+# 課題分析
+txtAssessmentSakuseidate0="_"
+slAssessmentJissibasho0="_"
+slAssessmentRiyu0="_"
+slAssessmentKinyusha0="_"
+RiyoushaNozomuSeikatsu="_"
+KazokuNozomuSeikatsu="_"
+rdKaigoryoku="_"
+txtOmonaKaigoshamei="_"
+slOmonaKaigoshazokugara="_"
+slOmonaKaigoshaDoukyo="_"
+txtSonotaKaigoshamei="_"
+slSonotaKaigoshazokugara="_"
+slSonotaKaigoshaDoukyo="_"
+txtKaigoHiyou="_"
+txtKaigoKangae="_"
+txtKaigoryoukuKadai="_"
+IchinichiSeikatsu6="_"
+IchinichiSeikatsu7="_"
+IchinichiSeikatsu8="_"
+IchinichiSeikatsu9="_"
+IchinichiSeikatsu10="_"
+IchinichiSeikatsu11="_"
+IchinichiSeikatsu12="_"
+IchinichiSeikatsu13="_"
+IchinichiSeikatsu14="_"
+IchinichiSeikatsu15="_"
+IchinichiSeikatsu16="_"
+IchinichiSeikatsu17="_"
+IchinichiSeikatsu18="_"
+IchinichiSeikatsu19="_"
+IchinichiSeikatsu20="_"
+IchinichiSeikatsu21="_"
+IchinichiSeikatsu22="_"
+IchinichiSeikatsu23="_"
+IchinichiSeikatsu0="_"
+IchinichiSeikatsu1="_"
+IchinichiSeikatsu2="_"
+IchinichiSeikatsu3="_"
+IchinichiSeikatsu4="_"
+IchinichiSeikatsu5="_"
+slNicchuuSugoshikata="_"
+slGaisyutuHindo="_"
+txtShinchou="_"
+txtTaiju="_"
+txtBMI="_"
+txtHeijouKetsuatsu="_"
+txtHeinetsu="_"
+txtareaKenkouJoutai="_"
+txtareaKansenshou="_"
+slAlergy="_"
+txtareaAlergy="_"
+txtareaFukuyaku="_"
+txtareaInshuKitsuen="_"
+
+# 受診病院(追加形式)
+#JushinJoukyouVal="_"
+#txtJushinByouinmei0="_"
+#txtJushinIshimei0="_"
+#slJushinShinryouKamoku0="_"
+#txtJushinDenwabangou0="_"
+#txtJushinJoukyou0="_"
+
+# 傷病(追加形式)
+#ShoubyouVal="_"
+#txtShoubyoumei0="_"
+#slShoubyouumu0="_"
+#txtShoubyoubui0="_"
+
+# ADL
+rdADLNegaeri1="_"
+slADLNegaeriNedoko1="_"
+chkBedsaku1="_"
+txtBedHonsu1="_"
+txtADLNegaeri1="_"
+rdADLOkiagari1="_"
+txtADLOkiagari1="_"
+rdADLTachiagari1="_"
+txtADLTachiagari1="_"
+rdADLZaiHoji1="_"
+txtADLZaiHoji1="_"
+rdADLRitsuiHoji1="_"
+txtADLRitsuiHoji1="_"
+rdADLIjou1="_"
+txtADLIjou1="_"
+rdADLOkunaiHokou1="_"
+slADLOkunaiHokou1="_"
+slADLOkunaiTentouRisk1="_"
+txtADLOkunaiHokou1="_"
+rdADLOkugaiHokou1="_"
+slADLOkugaiHokou1="_"
+slADLOkugaiTentouRisk1="_"
+txtADLOkugaiHokou1="_"
+rdADLButton1="_"
+txtADLButton1="_"
+rdADLUwagi1="_"
+txtADLUwagi1="_"
+rdADLZubon1="_"
+txtADLZubon1="_"
+rdADLKutsushita1="_"
+txtADLKutsushita1="_"
+rdADLSengan1="_"
+txtADLSengan1="_"
+rdADLSeihatsu1="_"
+txtADLSenihtsu1="_"
+rdADLTsumekiri1="_"
+txtADLTsumekiri1="_"
+rdADLHigesori1="_"
+txtADLHigesori1="_"
+rdADLHamigaki1="_"
+txtADLHamigaki1="_"
+rdADLGishi1="_"
+txtADLGishi1="_"
+rdADLGishiKanri1="_"
+txtADLGishiKanri1="_"
+rdADLGishiSenjou1="_"
+txtADLGishiSenjou1="_"
+rdADLSenshin1="_"
+slADLNyuyokuHindo1="_"
+slADLNyuyokuHouhou1="_"
+slADLNyuyokuBasho1="_"
+txtADLSenshin1="_"
+rdADLSenpatsu1="_"
+slADLSenpatsuHindo1="_"
+slADLSenpatsuHouhou1="_"
+slADLSenpatsuBasho1="_"
+txtADLSenpatsu1="_"
+rdADLYokusouDeiri1="_"
+txtADLYokusouDeiri1="_"
+rdShokujiJoukyou1="_"
+slShokujiJoukyouBasho1="_"
+slShokujiJoukyouWay1="_"
+txtShokujiJoukyouType1="_"
+rdShokujiEnka1="_"
+txtShokujiEnka1="_"
+rdSuibunSessyu1="_"
+slSuibunSessyuSeigen1="_"
+slSuibunSessyuToromi1="_"
+txtSuibunSessyuRyou1="_"
+rdShokujiMusekomi1="_"
+txtShokujiMusekomi1="_"
+rdShokujiShushokuKeitai1="_"
+slShokujiShushokuKeitaiNaiyou1="_"
+txtShokujiKeitaiType1="_"
+rdShokujiFukushokuKeitai1="_"
+slShokujiFukushokuKeitaiNaiyou1="_"
+txtShokujiFukushokuKeitaiType1="_"
+rdShokumotsuAlergy1="_"
+txtShokumotsuAlergy1="_"
+rdKinshishoku1="_"
+txtKinshishoku1="_"
+rdShokujiShikou1="_"
+txtShokujiShikou1="_"
+rdEiyouJoutai1="_"
+txtEiyouJoutaibasho1="_"
+rdKoukuJoutai1="_"
+slKoukuJoutaiGishi1="_"
+slKoukuJoutaiNaiyou1="_"
+txtKoukuJoutaiRyou1="_"
+rdHaisetsuKoui1="_"
+slHaisetsuKouiWay1="_"
+txtHaisetsuKouiType1="_"
+rdHaisetsuKoui2="_"
+slHaisetsuKouiWay2="_"
+txtHaisetsuKouiType2="_"
+rdNyoui1="_"
+txtNyouiNicchuHindo1="_"
+txtNyouiYakanHindo1="_"
+txtNyouiBiko1="_"
+rdBeni1="_"
+slBeniBentsuTaisaku1="_"
+txtBeniNicchuHindo1="_"
+txtBeniYakanHindo1="_"
+txtBeniBiko1="_"
+rdNyouShikkin1="_"
+txtNyouShikkinHindo1="_"
+txtNyouShikkinYakanHindo1="_"
+txtNyouShikkinBiko1="_"
+rdBenShikkin1="_"
+txtBenShikkinHindo1="_"
+txtBenShikkinYakanHindo1="_"
+txtBenShikkinBiko1="_"
+rdYouguShiyou1="_"
+slYouguType1="_"
+txtYouguShiyou1="_"
+txtYakanKotonaru1="_"
+txtYakanKotonaru2="_"
+txtYakanKotonaru3="_"
+
+
+# IADL
+rdIADLChouri1="_"
+txtIADLChouri1="_"
+rdIADLSouji1="_"
+txtIADLSouji1="_"
+rdIADLSentaku1="_"
+txtIADLSentaku1="_"
+rdIADLKaimono1="_"
+txtIADLKaimono1="_"
+rdIADLKinsenKanri1="_"
+txtIADLKinsenKanri1="_"
+rdIADLKusuriKanri1="_"
+txtIADLKusuriKanri1="_"
+rdIADLDenwaRiyou1="_"
+txtIADLDenwaRiyou1="_"
+rdIADLKoutsuKikan1="_"
+txtIADLKoutsuKikan1="_"
+rdShiryoku1="_"
+slMegane1="_"
+txtShiryoku1="_"
+rdChouryoku1="_"
+slHochouki1="_"
+txtChouryoku1="_"
+rdIshiSotsu1="_"
+slKotobaShougai1="_"
+txtIshiSotsu1="_"
+txtRikairyoku1="_"
+rdShijiHanno1="_"
+txtShijiHanno1="_"
+rdSankaIyoku1="_"
+txtSankaIyoku1="_"
+rdTashaKakawari1="_"
+txtTashaKakawari1="_"
+rdSoushitsukan1="_"
+txtSoushitsukan1="_"
+rdKodokukan1="_"
+txtKodokukan1="_"
+rdTiikiKyouryoku1="_"
+txtTiikiKyouryoku1="_"
+txtSukinakoto1="_"
+txtKirainakoto1="_"
+slKyojuKeitai="_"
+slKyojuFloor="_"
+slKyojuType="_"
+slKyojuELV="_"
+txtKyojuKeitaiKadai="_"
+slKyojuYokushitsu="_"
+slKyojuYokusou="_"
+slKyojuShower="_"
+txtKyojuYokushitsuKadai="_"
+txtareaFukinKankyo="_"
+slKyojuTesuri="_"
+txtKyojuTesuri="_"
+txtKyojuTesuriKadai="_"
+slKyojuDansa="_"
+txtKyojuDansaKadai="_"
+slKyojuShitsunai="_"
+txtKyojuShitsunaiKadai="_"
+slKyojuEisei="_"
+txtKyojuEiseikadai="_"
+slKyojuReidanbouUmu="_"
+slKyojuReidanbouShitsuon="_"
+txtKyojuReidanboukadai="_"
+slKyojuPet="_"
+txtKyojuPet="_"
+
+
+# その他タブ
+rdNinchiMonowasure1="_"
+txtNinchiMonowasure1="_"
+rdNinchiKettei1="_"
+txtNinchiKettei1="_"
+rdMondaiHigaiteki1="_"
+txtMondaiHigaiteki1="_"
+rdMondaiOchitsukinashi1="_"
+txtMondaiOchitsukinashi1="_"
+rdMondaiSawa1="_"
+txtMondaiSawa1="_"
+rdMondaiHitoriDetai1="_"
+txtMondaiHitoriDetai1="_"
+rdMondaiKanjoFuan1="_"
+txtMondaiKanjoFuan1="_"
+rdMondaiSyusyu1="_"
+txtMondaiSyusyu1="_"
+rdMondaiHiruyoru1="_"
+txtMondaiHiruyoru1="_"
+rdMondaiKowasu1="_"
+txtMondaiKowasu1="_"
+rdMondaiOnajiHanashi1="_"
+txtMondaiOnajiHanashi1="_"
+rdMondaiHitorigoto1="_"
+txtMondaiHitorigoto1="_"
+rdMondaiOogoe1="_"
+txtMondaiOogoe1="_"
+rdMondaiJibunKatte1="_"
+txtMondaiJibunKatte1="_"
+rdMondaiTeiko1="_"
+txtMondaiTeiko1="_"
+rdMondaiMatomaranai1="_"
+txtMondaiMatomaranai1="_"
+txtareaMondai="_"
+chkNicchuDokkyo="_"
+chkGyakutai="_"
+chkTerminal="_"
+chkSeinenKouken="_"
+chkTokubetsuSonota="_"
+txtareaGutaitekiJoukyou="_"
+txtareaTokubetsuBiko="_"
+
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${USER_ID}" -o "${USER_ID}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "対象者を選択して下さい"
+# 作成年月日
+[ -z "${hdShokaiSakuseidate}" -o "${hdShokaiSakuseidate}" = "_" ] && error_exit "作成年月日を入力して下さい"
+# 認定期間
+[ "$hdNinteiKikanStart" -gt "$hdNinteiKikanEnd" ] && error_exit "認定期間を確認して下さい"
+# 認定種別
+[ "$slYoukaigodo" == "0" -a "$txtNinteinengappi" != "_" ] && error_exit "認定情報を確認して下さい"
+[ "$slYoukaigodo" == "0" -a "$hdNinteiKikanStart" != "_" ] && error_exit "認定情報を確認して下さい"
+[ "$slYoukaigodo" == "0" -a "$hdNinteiKikanEnd" != "_" ] && error_exit "認定情報を確認して下さい"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# データ作成
+# 基本情報
+# 1:利用者ID              2:作成年月日(西暦)            3:作成年月日(和暦)              4:実施場所              5:記入者
+# 6:アセスメント理由      7:入居年月日                  8:ふりがな                      9:性別                  10:生年月日(元号)
+# 11:生年月日(年和暦)     12:生年月日(月和暦)           13:生年月日(日和暦)             14:生年月日(西暦)       15:年齢
+# 16:利用者氏名           17:住所                       18:電話番号                     19:世帯区分             20:初回相談受付月日
+# 21:受付方法             22:依頼者                     23:相談経路                     24:相談内容             25:生活暦
+# 26:現在の生活状況       27:障害高齢者の日常生活自立度 28:認知症高齢者の日常生活自立度 29:認定介護度           30:認定年月日(和暦)
+# 31:認定年月日(西暦)     32:認定期間開始日(和暦)       33:認定期間終了日(和暦)         34:認定期間開始日(西暦) 35:認定期間終了日(西暦)
+# 36:介護保険被保険者番号 37:医療保険                   38:身体障害者手帳有無           39:身体障害者手帳種     40:身体障害者手帳級
+# 41:身体障害者部位       42:生活保護有無               43:生活保護受給者番号           44:生活保護負担者番号
+cat <<- FIN | grep -v ^# > ${tmp}-assessment_kihonjoho_0
+1  利用者ID                     $Riyoushaid                   
+2  作成年月日(西暦)             $hdShokaiSakuseidate          
+3  作成年月日(和暦)             $txtShokaiSakuseidate         
+4  実施場所                     $slShokaiJissibasho           
+5  記入者                       $slShokaiKinyusha             
+6  アセスメント理由             $slAssessmentRiyu             
+7  入居年月日                   $txtNyukyoNengappi            
+8  ふりがな                     $txtNyukyoshaFurigana         
+9  性別                         $slNyukyoshaSeibetsu          
+10 生年月日(元号)               $slNyukyoshaSeinengappiWareki 
+11 生年月日(年和暦)             $slNyukyoshaSeinengappiYear   
+12 生年月日(月和暦)             $slNyukyoshaSeinengappiMonth  
+13 生年月日(日和暦)             $slNyukyoshaSeinengappiDay    
+14 生年月日(西暦)               $hdNyukyoshaSeinengappi       
+15 年齢                         $txtNyukyoshaNenrei           
+16 利用者氏名                   $txtNyukyoshaShimei           
+17 住所                         $txtNyukyoshaJusho            
+18 電話番号                     $txtNyukyoshaDenwabangou      
+19 世帯区分                     $slNyukyoshaSetaikubun        
+20 初回相談受付月日             $txtShokaiSoudanUketsukegappi 
+21 受付方法                     $slSoudsanUketsukehouhou      
+22 依頼者                       $slSoudanIraisha              
+23 相談経路                     $txtSoudanKeiro               
+24 相談内容                     $txtSoudanNaiyou              
+25 生活暦                       $txtSeikatsureki              
+26 現在の生活状況               $txtGenzaiSeikatsujoukyou     
+27 障害高齢者の日常生活自立度   $tab4Netakiri                 
+28 認知症高齢者の日常生活自立度 $tab4Ninchishou               
+29 認定介護度                   $slYoukaigodo                 
+30 認定年月日(和暦)             $txtNinteinengappi            
+31 認定年月日(西暦)             $hdNinteinengappi             
+32 認定期間開始日(和暦)         $txtNinteiKikanStart          
+33 認定期間終了日(和暦)         $txtNinteiKikanEnd            
+34 認定期間開始日(西暦)         $hdNinteiKikanStart           
+35 認定期間終了日(西暦)         $hdNinteiKikanEnd             
+36 介護保険被保険者番号         $txtKaigohokenHihokenshaBangou
+37 医療保険                     $txtIryouHoken                
+38 身体障害者手帳有無           $slShintaiShougaishaTechou    
+39 身体障害者手帳種             $txtShintaiShougaishaSyu      
+40 身体障害者手帳級             $txtShintaiShougaishaKyu      
+41 身体障害者部位               $txtShintaiShougaishaBui      
+42 生活保護有無                 $slSeikatsuhogo               
+43 生活保護受給者番号           $txtSeikatsuhogoJukyushaBangou
+44 生活保護負担者番号           $txtSeikatsuhogoFutanshaBangou
+FIN
+
+# 項目有無チェック
+cat ${tmp}-assessment_kihonjoho_0 |
+awk 'NF!="3"'                     |
+tee ${tmp}-assessment_kihonjoho_check |
+self 2                            |
+yarr                              |
+tr " " ","                        |
+awk '{print "基本情報：以下の項目が不正です。"$1}' > $tmp-err_message
+
+[ -s ${tmp}-assessment_kihonjoho_check ] && error_exit $(cat $tmp-err_message)
+
+cat ${tmp}-assessment_kihonjoho_0 |
+self 3                            |
+yarr                              > ${tmp}-assessment_kihonjoho
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 課題
+# 1:作成年月日1         2:実施場所1           3:アセスメント理由1       4:記入者1        5:利用者の望む生活
+# 6:家族の望む生活      7:介護力有無          8:主な介護者氏名          9:主な介護者続柄 10:主な介護者同居状態
+# 11:その他の介護者氏名 12:その他の介護者続柄 13:その他の介護者同居状態 14:介護費用      15:介護に対する考え
+# 16:介護力の課題       17:1日の生活(00)      18:1日の生活(00)          19:1日の生活(00) 20:1日の生活(00)
+# 21:1日の生活(00)      22:1日の生活(00)      23:1日の生活(00)          24:1日の生活(00) 25:1日の生活(00)
+# 26:1日の生活(00)      27:1日の生活(00)      28:1日の生活(00)          29:1日の生活(00) 30:1日の生活(00)
+# 31:1日の生活(00)      32:1日の生活(00)      33:1日の生活(00)          34:1日の生活(00) 35:1日の生活(00)
+# 36:1日の生活(00)      37:1日の生活(00)      38:1日の生活(00)          39:1日の生活(00) 40:1日の生活(00)
+# 41:日中の過ごし方     42:外出の頻度         43:身長                   44:体重          45:BMI
+# 46:血圧               47:平熱               48:健康状態               49:感染症        50:薬アレルギー有無
+# 51:薬アレルギー       52:服薬内容           53:飲酒喫煙
+cat <<- FIN | grep -v ^# > ${tmp}-asessment_kadai_0
+1  作成年月日1            $txtAssessmentSakuseidate0
+2  実施場所1              $slAssessmentJissibasho0  
+3  アセスメント理由1      $slAssessmentRiyu0        
+4  記入者1                $slAssessmentKinyusha0    
+5  利用者の望む生活       $RiyoushaNozomuSeikatsu   
+6  家族の望む生活         $KazokuNozomuSeikatsu     
+7  介護力有無             $rdKaigoryoku             
+8  主な介護者氏名         $txtOmonaKaigoshamei      
+9  主な介護者続柄         $slOmonaKaigoshazokugara  
+10 主な介護者同居状態     $slOmonaKaigoshaDoukyo    
+11 その他の介護者氏名     $txtSonotaKaigoshamei     
+12 その他の介護者続柄     $slSonotaKaigoshazokugara 
+13 その他の介護者同居状態 $slSonotaKaigoshaDoukyo   
+14 介護費用               $txtKaigoHiyou            
+15 介護に対する考え       $txtKaigoKangae           
+16 介護力の課題           $txtKaigoryoukuKadai      
+17 1日の生活(00)          $IchinichiSeikatsu6       
+18 1日の生活(00)          $IchinichiSeikatsu7       
+19 1日の生活(00)          $IchinichiSeikatsu8       
+20 1日の生活(00)          $IchinichiSeikatsu9       
+21 1日の生活(00)          $IchinichiSeikatsu10      
+22 1日の生活(00)          $IchinichiSeikatsu11      
+23 1日の生活(00)          $IchinichiSeikatsu12      
+24 1日の生活(00)          $IchinichiSeikatsu13      
+25 1日の生活(00)          $IchinichiSeikatsu14      
+26 1日の生活(00)          $IchinichiSeikatsu15      
+27 1日の生活(00)          $IchinichiSeikatsu16      
+28 1日の生活(00)          $IchinichiSeikatsu17      
+29 1日の生活(00)          $IchinichiSeikatsu18      
+30 1日の生活(00)          $IchinichiSeikatsu19      
+31 1日の生活(00)          $IchinichiSeikatsu20      
+32 1日の生活(00)          $IchinichiSeikatsu21      
+33 1日の生活(00)          $IchinichiSeikatsu22      
+34 1日の生活(00)          $IchinichiSeikatsu23      
+35 1日の生活(00)          $IchinichiSeikatsu0       
+36 1日の生活(00)          $IchinichiSeikatsu1       
+37 1日の生活(00)          $IchinichiSeikatsu2       
+38 1日の生活(00)          $IchinichiSeikatsu3       
+39 1日の生活(00)          $IchinichiSeikatsu4       
+40 1日の生活(00)          $IchinichiSeikatsu5       
+41 日中の過ごし方         $slNicchuuSugoshikata     
+42 外出の頻度             $slGaisyutuHindo          
+43 身長                   $txtShinchou              
+44 体重                   $txtTaiju                 
+45 BMI                    $txtBMI                   
+46 血圧                   $txtHeijouKetsuatsu       
+47 平熱                   $txtHeinetsu              
+48 健康状態               $txtareaKenkouJoutai      
+49 感染症                 ${txtareaKansenshou}      
+50 薬アレルギー有無       ${slAlergy}               
+51 薬アレルギー           ${txtareaAlergy}          
+52 服薬内容               $txtareaFukuyaku          
+53 飲酒喫煙               ${txtareaInshuKitsuen}    
+FIN
+# 項目有無チェック
+cat ${tmp}-asessment_kadai_0      |
+awk 'NF!="3"'                     |
+tee ${tmp}-asessment_kadai_check  |
+self 2                            |
+yarr                              |
+tr " " ","                        |
+awk '{print "課題：以下の項目が不正です。"$1}' > $tmp-err_message
+
+[ -s ${tmp}-asessment_kadai_check ] && error_exit $(cat $tmp-err_message)
+
+cat ${tmp}-asessment_kadai_0      |
+self 3                            |
+yarr                              > ${tmp}-asessment_kadai
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# ADL
+# 1:寝返りチェック1      2:寝返り場所1            3:ベッド柵有無            4:ベッド柵本数               5:寝返り内容1
+# 6:起き上がりチェック1  7:起き上がり内容1        8:立ち上がりチェック      9:立ち上がり内容             10:座位保持チェック
+# 11:座位保持内容        12:立位保持チェック      13:立位保持内容           14:移乗チェック1             15:移乗内容1
+# 16:屋内歩行チェック1   17:屋内歩行方法1         18:屋内転倒リスク         19:屋内歩行内容1             20:屋外歩行チェック1
+# 21:屋外歩行方法1       22:屋外転倒リスク        23:屋外歩行内容1          24:ボタンかけはずしチェック1 25:ボタンかけはずし内容1
+# 26:上着着衣チェック1   27:上着着衣内容1         28:ズボン着衣チェック1    29:ズボン着衣内容1           30:靴下着衣チェック
+# 31:靴下着衣内容        32:洗顔チェック1         33:洗顔内容1              34:洗髪チェック1             35:洗髪内容1
+# 36:爪切りチェック1     37:爪切り内容1           38:髭剃りチェック1        39:髭剃り内容1               40:歯磨きチェック
+# 41:歯磨き内容          42:義歯チェック          43:義歯内容               44:義歯管理チェック          45:義歯管理内容
+# 46:義歯洗浄チェック    47:義歯洗浄内容          48:洗身チェック1          49:洗身頻度                  50:洗身方法
+# 51:洗身場所            52:洗身内容1             53:洗髪チェック1          54:洗髪頻度                  55:洗髪方法
+# 56:洗髪場所            57:洗髪内容              58:浴槽への出入りチェック 59:浴槽への出入り内容        60:食事チェック1
+# 61:食事場所1           62:食事方法1             63:食事内容1              64:嚥下チェック1             65:嚥下内容1
+# 66:水分摂取1           67:水分摂取制限1         68:水分摂取トロミ1        69:水分摂取量                70:むせこみチェック1
+# 71:むせこみ内容1       72:主食食事形態チェック1 73:主食食事形態タイプ1    74:主食食事形態内容1         75:副食食事形態チェック1
+# 76:副食食事形態タイプ1 77:副食食事形態内容1     78:食物アレルギーチェック 79:食物アレルギー内容        80:禁止食チェック
+# 81:禁止食内容          82:食事嗜好チェック      83:食事嗜好内容           84:栄養状態チェック1         85:栄養状態内容1
+# 86:口腔状態チェック1   87:口腔状態義歯1         88:口腔状況1              89:口腔内容1                 90:排泄行為チェック1
+# 91:排泄方法1           92:排泄内容1             93:排泄行為チェック2      94:排泄方法2                 95:排泄内容2
+# 96:尿意チェック1       97:尿意日中回数1         98:尿意夜間回数1          99:尿意内容1                 100:便意チェック1
+# 101:便通対策           102:便意日中回数1        103:便意夜間回数1         104:便意内容1                105:尿失禁チェック1
+# 106:尿失禁日中回数1    107:尿失禁夜間回数1      108:尿失禁内容1           109:便失禁チェック1          110:便失禁日中回数1
+# 111:便失禁夜間回数1    112:便失禁内容1          113:用具使用チェック1     114:用具タイプ1              115:用具使用内容1
+# 116:夜間状況1          117:夜間状況2            118:夜間状況3
+cat <<- FIN | grep -v ^# > ${tmp}-assessment_ADL_0
+1   寝返りチェック1           $rdADLNegaeri1                  
+2   寝返り場所1               $slADLNegaeriNedoko1            
+3   ベッド柵有無              ${chkBedsaku1}                  
+4   ベッド柵本数              ${txtBedHonsu1}                 
+5   寝返り内容1               $txtADLNegaeri1                 
+6   起き上がりチェック1       $rdADLOkiagari1                 
+7   起き上がり内容1           $txtADLOkiagari1                
+8   立ち上がりチェック        $rdADLTachiagari1               
+9   立ち上がり内容            $txtADLTachiagari1              
+10  座位保持チェック          ${rdADLZaiHoji1}                
+11  座位保持内容              ${txtADLZaiHoji1}               
+12  立位保持チェック          $rdADLRitsuiHoji1               
+13  立位保持内容              $txtADLRitsuiHoji1              
+14  移乗チェック1             $rdADLIjou1                     
+15  移乗内容1                 $txtADLIjou1                    
+16  屋内歩行チェック1         $rdADLOkunaiHokou1              
+17  屋内歩行方法1             $slADLOkunaiHokou1              
+18  屋内転倒リスク            $slADLOkunaiTentouRisk1         
+19  屋内歩行内容1             $txtADLOkunaiHokou1             
+20  屋外歩行チェック1         $rdADLOkugaiHokou1              
+21  屋外歩行方法1             $slADLOkugaiHokou1              
+22  屋外転倒リスク            $slADLOkugaiTentouRisk1         
+23  屋外歩行内容1             $txtADLOkugaiHokou1             
+24  ボタンかけはずしチェック1 $rdADLButton1                   
+25  ボタンかけはずし内容1     $txtADLButton1                  
+26  上着着衣チェック1         $rdADLUwagi1                    
+27  上着着衣内容1             $txtADLUwagi1                   
+28  ズボン着衣チェック1       $rdADLZubon1                    
+29  ズボン着衣内容1           $txtADLZubon1                   
+30  靴下着衣チェック          $rdADLKutsushita1               
+31  靴下着衣内容              $txtADLKutsushita1              
+32  洗顔チェック1             $rdADLSengan1                   
+33  洗顔内容1                 $txtADLSengan1                  
+34  洗髪チェック1             $rdADLSeihatsu1                 
+35  洗髪内容1                 $txtADLSenihtsu1                
+36  爪切りチェック1           $rdADLTsumekiri1                
+37  爪切り内容1               $txtADLTsumekiri1               
+38  髭剃りチェック1           $rdADLHigesori1                 
+39  髭剃り内容1               $txtADLHigesori1                
+40  歯磨きチェック            $rdADLHamigaki1                 
+41  歯磨き内容                $txtADLHamigaki1                
+42  義歯チェック              $rdADLGishi1                    
+43  義歯内容                  $txtADLGishi1                   
+44  義歯管理チェック          $rdADLGishiKanri1               
+45  義歯管理内容              $txtADLGishiKanri1              
+46  義歯洗浄チェック          $rdADLGishiSenjou1              
+47  義歯洗浄内容              $txtADLGishiSenjou1             
+48  洗身チェック1             $rdADLSenshin1                  
+49  洗身頻度                  $slADLNyuyokuHindo1             
+50  洗身方法                  $slADLNyuyokuHouhou1            
+51  洗身場所                  $slADLNyuyokuBasho1             
+52  洗身内容1                 $txtADLSenshin1                 
+53  洗髪チェック1             $rdADLSenpatsu1                 
+54  洗髪頻度                  $slADLSenpatsuHindo1            
+55  洗髪方法                  $slADLSenpatsuHouhou1           
+56  洗髪場所                  $slADLSenpatsuBasho1            
+57  洗髪内容                  $txtADLSenpatsu1                
+58  浴槽への出入りチェック    $rdADLYokusouDeiri1             
+59  浴槽への出入り内容        $txtADLYokusouDeiri1            
+60  食事チェック1             $rdShokujiJoukyou1              
+61  食事場所1                 $slShokujiJoukyouBasho1         
+62  食事方法1                 $slShokujiJoukyouWay1           
+63  食事内容1                 $txtShokujiJoukyouType1         
+64  嚥下チェック1             $rdShokujiEnka1                 
+65  嚥下内容1                 $txtShokujiEnka1                
+66  水分摂取1                 $rdSuibunSessyu1                
+67  水分摂取制限1             $slSuibunSessyuSeigen1          
+68  水分摂取トロミ1           $slSuibunSessyuToromi1          
+69  水分摂取量                $txtSuibunSessyuRyou1           
+70  むせこみチェック1         $rdShokujiMusekomi1             
+71  むせこみ内容1             $txtShokujiMusekomi1            
+72  主食食事形態チェック1     $rdShokujiShushokuKeitai1       
+73  主食食事形態タイプ1       $slShokujiShushokuKeitaiNaiyou1 
+74  主食食事形態内容1         $txtShokujiKeitaiType1          
+75  副食食事形態チェック1     $rdShokujiFukushokuKeitai1      
+76  副食食事形態タイプ1       $slShokujiFukushokuKeitaiNaiyou1
+77  副食食事形態内容1         $txtShokujiFukushokuKeitaiType1 
+78  食物アレルギーチェック    $rdShokumotsuAlergy1            
+79  食物アレルギー内容        $txtShokumotsuAlergy1           
+80  禁止食チェック            $rdKinshishoku1                 
+81  禁止食内容                $txtKinshishoku1                
+82  食事嗜好チェック          $rdShokujiShikou1               
+83  食事嗜好内容              $txtShokujiShikou1              
+84  栄養状態チェック1         $rdEiyouJoutai1                 
+85  栄養状態内容1             $txtEiyouJoutaibasho1           
+86  口腔状態チェック1         $rdKoukuJoutai1                 
+87  口腔状態義歯1             $slKoukuJoutaiGishi1            
+88  口腔状況1                 $slKoukuJoutaiNaiyou1           
+89  口腔内容1                 $txtKoukuJoutaiRyou1            
+90  排泄行為チェック1         $rdHaisetsuKoui1                
+91  排泄方法1                 $slHaisetsuKouiWay1             
+92  排泄内容1                 $txtHaisetsuKouiType1           
+93  排泄行為チェック2         $rdHaisetsuKoui2                
+94  排泄方法2                 $slHaisetsuKouiWay2             
+95  排泄内容2                 $txtHaisetsuKouiType2           
+96  尿意チェック1             $rdNyoui1                       
+97  尿意日中回数1             $txtNyouiNicchuHindo1           
+98  尿意夜間回数1             $txtNyouiYakanHindo1            
+99  尿意内容1                 $txtNyouiBiko1                  
+100 便意チェック1             $rdBeni1                        
+101 便通対策                  $slBeniBentsuTaisaku1           
+102 便意日中回数1             $txtBeniNicchuHindo1            
+103 便意夜間回数1             $txtBeniYakanHindo1             
+104 便意内容1                 $txtBeniBiko1                   
+105 尿失禁チェック1           $rdNyouShikkin1                 
+106 尿失禁日中回数1           $txtNyouShikkinHindo1           
+107 尿失禁夜間回数1           $txtNyouShikkinYakanHindo1      
+108 尿失禁内容1               $txtNyouShikkinBiko1            
+109 便失禁チェック1           $rdBenShikkin1                  
+110 便失禁日中回数1           $txtBenShikkinHindo1            
+111 便失禁夜間回数1           $txtBenShikkinYakanHindo1       
+112 便失禁内容1               $txtBenShikkinBiko1             
+113 用具使用チェック1         $rdYouguShiyou1                 
+114 用具タイプ1               $slYouguType1                   
+115 用具使用内容1             $txtYouguShiyou1                
+116 夜間状況1                 $txtYakanKotonaru1              
+117 夜間状況2                 $txtYakanKotonaru2              
+118 夜間状況3                 $txtYakanKotonaru3              
+FIN
+# 項目有無チェック
+cat ${tmp}-assessment_ADL_0       |
+awk 'NF!="3"'                     |
+tee ${tmp}-assessment_ADL_check   |
+self 2                            |
+yarr                              |
+tr " " ","                        |
+awk '{print "ADL：以下の項目が不正です。"$1}' > $tmp-err_message
+
+[ -s ${tmp}-assessment_ADL_check ] && error_exit $(cat $tmp-err_message)
+
+cat ${tmp}-assessment_ADL_0       |
+self 3                            |
+yarr                              > ${tmp}-assessment_ADL
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+#IADL
+# 1:調理チェック1            2:調理内容1             3:掃除チェック1        4:掃除内容1          5:洗濯チェック1
+# 6:洗濯内容1                7:買い物チェック1       8:買い物内容1          9:金銭管理チェック1  10:金銭管理内容1
+# 11:薬の管理チェック1       12:薬の管理内容1        13:電話の利用チェック1 14:電話の利用内容1   15:交通機関チェック1
+# 16:交通機関内容1           17:視力チェック1        18:メガネ有無          19:視力内容1         20:聴力チェック1
+# 21:補聴器有無              22:聴力内容1            23:意思疎通チェック1   24:言語障害有無      25:意思疎通内容1
+# 26:理解力内容              27:指示への反応チェック 28:指示への反応内容    29:参加意欲チェック1 30:参加意欲内容1
+# 31:他者との関わりチェック1 32:他者との関わり内容1  33:喪失感チェック1     34:喪失感内容1       35:孤独感チェック1
+# 36:孤独感内容1             37:地域の協力チェック1  38:地域の協力内容1     39:好きなこと        40:嫌いなこと
+# 41:居住形態                42:居住階数             43:居住タイプ          44:エレベータ有無    45:居住形態課題
+# 46:浴室有無                47:浴槽有無             48:シャワー有無        49:浴室課題          50:付近環境
+# 51:手すり有無              52:手すり内容           53:手すり課題          54:段差有り          55:段差課題
+# 56:室内状況                57:室内課題             58:衛生状態            59:衛生状態課題      60:冷暖房有無
+# 61:室温管理有無            62:冷暖房課題           63:ペット有無          64:ペット課題
+cat <<- FIN | grep -v ^# > ${tmp}-assessment_IADL_0
+1  調理チェック1           $rdIADLChouri1           
+2  調理内容1               $txtIADLChouri1          
+3  掃除チェック1           $rdIADLSouji1            
+4  掃除内容1               $txtIADLSouji1           
+5  洗濯チェック1           $rdIADLSentaku1          
+6  洗濯内容1               $txtIADLSentaku1         
+7  買い物チェック1         $rdIADLKaimono1          
+8  買い物内容1             $txtIADLKaimono1         
+9  金銭管理チェック1       $rdIADLKinsenKanri1      
+10 金銭管理内容1           $txtIADLKinsenKanri1     
+11 薬の管理チェック1       $rdIADLKusuriKanri1      
+12 薬の管理内容1           $txtIADLKusuriKanri1     
+13 電話の利用チェック1     $rdIADLDenwaRiyou1       
+14 電話の利用内容1         $txtIADLDenwaRiyou1      
+15 交通機関チェック1       $rdIADLKoutsuKikan1      
+16 交通機関内容1           $txtIADLKoutsuKikan1     
+17 視力チェック1           $rdShiryoku1             
+18 メガネ有無              $slMegane1               
+19 視力内容1               $txtShiryoku1            
+20 聴力チェック1           $rdChouryoku1            
+21 補聴器有無              $slHochouki1             
+22 聴力内容1               $txtChouryoku1           
+23 意思疎通チェック1       $rdIshiSotsu1            
+24 言語障害有無            $slKotobaShougai1        
+25 意思疎通内容1           $txtIshiSotsu1           
+26 理解力内容              $txtRikairyoku1          
+27 指示への反応チェック    $rdShijiHanno1           
+28 指示への反応内容        $txtShijiHanno1          
+29 参加意欲チェック1       $rdSankaIyoku1           
+30 参加意欲内容1           $txtSankaIyoku1          
+31 他者との関わりチェック1 $rdTashaKakawari1        
+32 他者との関わり内容1     $txtTashaKakawari1       
+33 喪失感チェック1         $rdSoushitsukan1         
+34 喪失感内容1             $txtSoushitsukan1        
+35 孤独感チェック1         $rdKodokukan1            
+36 孤独感内容1             $txtKodokukan1           
+37 地域の協力チェック1     $rdTiikiKyouryoku1       
+38 地域の協力内容1         $txtTiikiKyouryoku1      
+39 好きなこと              $txtSukinakoto1          
+40 嫌いなこと              $txtKirainakoto1         
+41 居住形態                $slKyojuKeitai           
+42 居住階数                $slKyojuFloor            
+43 居住タイプ              $slKyojuType             
+44 エレベータ有無          $slKyojuELV              
+45 居住形態課題            $txtKyojuKeitaiKadai     
+46 浴室有無                $slKyojuYokushitsu       
+47 浴槽有無                $slKyojuYokusou          
+48 シャワー有無            $slKyojuShower           
+49 浴室課題                $txtKyojuYokushitsuKadai 
+50 付近環境                $txtareaFukinKankyo      
+51 手すり有無              $slKyojuTesuri           
+52 手すり内容              $txtKyojuTesuri          
+53 手すり課題              $txtKyojuTesuriKadai     
+54 段差有り                $slKyojuDansa            
+55 段差課題                $txtKyojuDansaKadai      
+56 室内状況                $slKyojuShitsunai        
+57 室内課題                $txtKyojuShitsunaiKadai  
+58 衛生状態                $slKyojuEisei            
+59 衛生状態課題            $txtKyojuEiseikadai      
+60 冷暖房有無              $slKyojuReidanbouUmu     
+61 室温管理有無            $slKyojuReidanbouShitsuon
+62 冷暖房課題              $txtKyojuReidanboukadai  
+63 ペット有無              $slKyojuPet              
+64 ペット課題              $txtKyojuPet             
+FIN
+
+# 項目有無チェック
+cat ${tmp}-assessment_IADL_0      |
+awk 'NF!="3"'                     |
+tee ${tmp}-assessment_IADL_check  |
+self 2                            |
+yarr                              |
+tr " " ","                        |
+awk '{print "IADL：以下の項目が不正です。"$1}' > $tmp-err_message
+
+[ -s ${tmp}-assessment_IADL_check ] && error_exit $(cat $tmp-err_message)
+
+cat ${tmp}-assessment_IADL_0      |
+self 3                            |
+yarr                              > ${tmp}-assessment_IADL
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# その他
+# 1:物忘れチェック1      2:物忘れ内容1           3:日常の意思決定チェック1 4:日常の意思決定内容1 5:被害的チェック1
+# 6:被害的内容1          7:落ち着き無しチェック1 8:落ち着き内容1           9:作話チェック1       10:作話内容1
+# 11:外出意欲チェック1   12:外出意欲内容1        13:感情不安定チェック1    14:感情不安定内容1    15:収集癖チェック1
+# 16:収集癖内容1         17:昼夜逆転チェック1    18:昼夜逆転内容1          19:壊すチェック1      20:壊す内容1
+# 21:同じ話チェック1     22:同じ話内容1          23:独り言チェック1        24:独り言内容1        25:大声チェック1
+# 26:大声内容1           27:自分勝手チェック1    28:自分勝手内容1          29:介護抵抗チェック1  30:介護抵抗内容1
+# 31:話まとまりチェック1 32:話まとまり内容1      33:日常生活の課題         34:日中独居チェック   35:虐待チェック
+# 36:ターミナルチェック  37:成年後見チェック     38:その他チェック         39:具体的な状況       40:備考
+cat <<- FIN | grep -v ^# > ${tmp}-sonota_0
+1  物忘れチェック1         $rdNinchiMonowasure1     
+2  物忘れ内容1             $txtNinchiMonowasure1    
+3  日常の意思決定チェック1 $rdNinchiKettei1         
+4  日常の意思決定内容1     $txtNinchiKettei1        
+5  被害的チェック1         $rdMondaiHigaiteki1      
+6  被害的内容1             $txtMondaiHigaiteki1     
+7  落ち着き無しチェック1   $rdMondaiOchitsukinashi1 
+8  落ち着き内容1           $txtMondaiOchitsukinashi1
+9  作話チェック1           $rdMondaiSawa1           
+10 作話内容1               $txtMondaiSawa1          
+11 外出意欲チェック1       $rdMondaiHitoriDetai1    
+12 外出意欲内容1           $txtMondaiHitoriDetai1   
+13 感情不安定チェック1     $rdMondaiKanjoFuan1      
+14 感情不安定内容1         $txtMondaiKanjoFuan1     
+15 収集癖チェック1         $rdMondaiSyusyu1         
+16 収集癖内容1             $txtMondaiSyusyu1        
+17 昼夜逆転チェック1       $rdMondaiHiruyoru1       
+18 昼夜逆転内容1           $txtMondaiHiruyoru1      
+19 壊すチェック1           $rdMondaiKowasu1         
+20 壊す内容1               $txtMondaiKowasu1        
+21 同じ話チェック1         $rdMondaiOnajiHanashi1   
+22 同じ話内容1             $txtMondaiOnajiHanashi1  
+23 独り言チェック1         $rdMondaiHitorigoto1     
+24 独り言内容1             $txtMondaiHitorigoto1    
+25 大声チェック1           $rdMondaiOogoe1          
+26 大声内容1               $txtMondaiOogoe1         
+27 自分勝手チェック1       $rdMondaiJibunKatte1     
+28 自分勝手内容1           $txtMondaiJibunKatte1    
+29 介護抵抗チェック1       $rdMondaiTeiko1          
+30 介護抵抗内容1           $txtMondaiTeiko1         
+31 話まとまりチェック1     $rdMondaiMatomaranai1    
+32 話まとまり内容1         $txtMondaiMatomaranai1   
+33 日常生活の課題          $txtareaMondai           
+34 日中独居チェック        $chkNicchuDokkyo         
+35 虐待チェック            $chkGyakutai             
+36 ターミナルチェック      $chkTerminal             
+37 成年後見チェック        $chkSeinenKouken         
+38 その他チェック          $chkTokubetsuSonota      
+39 具体的な状況            $txtareaGutaitekiJoukyou 
+40 備考                    $txtareaTokubetsuBiko    
+FIN
+
+# 項目有無チェック
+cat ${tmp}-sonota_0               |
+awk 'NF!="3"'                     |
+tee ${tmp}-sonota_check           |
+self 2                            |
+yarr                              |
+tr " " ","                        |
+awk '{print "その他：以下の項目が不正です。"$1}' > $tmp-err_message
+
+[ -s ${tmp}-sonota_check ] && error_exit $(cat $tmp-err_message)
+
+cat ${tmp}-sonota_0               |
+self 3                            |
+yarr                              > ${tmp}-sonota
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 1:ログインユーザ 2:更新日時
+echo "1" "${sdaytime}" "${USER_ID}" > ${tmp}-format
+ycat ${tmp}-assessment_kihonjoho ${tmp}-asessment_kadai ${tmp}-assessment_ADL ${tmp}-assessment_IADL ${tmp}-sonota ${tmp}-format > ${tmp}-assessment_input
+
+cp ${tmp}-assessment_kihonjoho $work_dir/assessment_kihonjoho
+cp $tmp-asessment_kadai $work_dir/assessment_kadai
+cp $tmp-assessment_ADL $work_dir/assessment_ADL
+cp ${tmp}-assessment_IADL $work_dir/assessment_IADL
+cp ${tmp}-sonota $work_dir/assessment_sonota
+cp $tmp-assessment_input $work_dir/assessment_base
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_kazoku_input
+# 家族構成データ
+seq $NyukyoshaKazokuVal  |
+while read kazokunum ; do
+   yukoflg="1"
+   knum=$((kazokunum-1))
+   nyukyoshashimei=$(nameread NyukyoshaKazokuShimei$knum $namedata | head -1)
+   nyukyoshazokugara=$(nameread NyukyoshaKazokuZokugara$knum $namedata | head -1)
+   nyukyoshanenrei=$(nameread NyukyoshaKazokuNenrei$knum $namedata | head -1)
+   nyukyoshakenkou=$(nameread NyukyoshaKazokuKenkou$knum $namedata | head -1)
+   if [ "$nyukyoshashimei" = "_" -o -z "$nyukyoshashimei" ] ; then
+      yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$nyukyoshashimei" "$nyukyoshazokugara" "$nyukyoshanenrei" "$nyukyoshakenkou" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_kazoku_input
+done
+[ $(retu ${tmp}-assessment_kazoku_input) -ne 9 ] && error_exit "家族構成データ不正"
+[ $(retu ${tmp}-assessment_kazoku_input | gyo) -ne 1 ] && error_exit "家族構成データ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_kinkyu_input
+# 緊急連絡先
+seq $NyukyoshaKinkyuVal  |
+while read kinkyunum ; do
+   yukoflg="1"
+   knnum=$((kinkyunum-1))
+   kinkyushimei=$(nameread NyukyoshaKinkyuShimei$knnum $namedata | head -1)
+   kinkyuzokugara=$(nameread NyukyoshaKinkyuZokugara$knnum $namedata | head -1)
+   kinkyujusho=$(nameread NyukyoshaKinkyuJusho$knnum $namedata | head -1)
+#   kinkyujusho=$(echo $kinkyujusho | sed 's/_/###SPACE###/g')
+   kinkyudenwa=$(nameread NyukyoshaKinkyuDenwa$knnum $namedata | head -1)
+   if [ "$kinkyushimei" = "_" -o -z "$kinkyushimei" ] ; then
+     yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$kinkyushimei" "$kinkyuzokugara" "$kinkyujusho" "$kinkyudenwa" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_kinkyu_input
+done
+[ $(retu ${tmp}-assessment_kinkyu_input) -ne 9 ] && error_exit "緊急連絡先データ不正"
+[ $(retu ${tmp}-assessment_kinkyu_input | gyo) -ne 1 ] && error_exit "緊急連絡先データ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_service_input
+# 利用サービス
+seq $RiyouServiceVal  |
+while read servicenum ; do
+   yukoflg="1"
+   snum=$((servicenum-1))
+   serviceshubetsu=$(nameread slGenzaiKaigoServiceShubetsu$snum $namedata | head -1)
+   servicejigyousho=$(nameread txtGenzaiKaigoServiceJigyousho$snum $namedata | head -1)
+   servicebiko=$(nameread txtGenzaiKaigoServiceBiko$snum $namedata | head -1)
+#   servicebiko=$(echo $servicebiko | sed 's/_/###SPACE###/g')
+   if [ "$serviceshubetsu" = "_" -o -z "$serviceshubetsu" ] ; then
+     yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$serviceshubetsu" "$servicejigyousho" "$servicebiko" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_service_input
+done
+[ $(retu ${tmp}-assessment_service_input) -ne 8 ] && error_exit "利用サービスデータ不正"
+[ $(retu ${tmp}-assessment_service_input | gyo) -ne 1 ] && error_exit "利用サービスデータ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_byouin_input
+# 受診病院
+seq $JushinJoukyouVal  |
+while read jushinnum ; do
+   yukoflg="1"
+   jnum=$((jushinnum-1))
+   byoumei=$(nameread txtJushinByouinmei$jnum $namedata | head -1)
+   isha=$(nameread txtJushinIshimei$jnum $namedata | head -1)
+   shinryoukamoku=$(nameread slJushinShinryouKamoku$jnum $namedata | head -1)
+   denwa=$(nameread txtJushinDenwabangou$jnum $namedata | head -1)
+   joukyou=$(nameread txtJushinJoukyou$jnum $namedata | head -1)
+#   joukyou=$(echo $joukyou | sed 's/_/###SPACE###/g')
+   if [ "$byoumei" = "_" -o -z "$byoumei" ] ; then
+     yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$byoumei" "$isha" "$shinryoukamoku" "$denwa" "$joukyou" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_byouin_input
+done
+[ $(retu ${tmp}-assessment_byouin_input) -ne 10 ] && error_exit "受信病院データ不正"
+[ $(retu ${tmp}-assessment_byouin_input | gyo) -ne 1 ] && error_exit "受信病院データ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_shoubyou_input
+# 傷病
+seq $ShoubyouVal  |
+while read syoubyounum ; do
+   yukoflg="1"
+   sbnum=$((syoubyounum-1))
+   syoubyoumei=$(nameread txtShoubyoumei$sbnum $namedata | head -1)
+#   syoubyoumei=$(echo $shoubyoumei | sed 's/_/###SPACE###/g')
+   syoubyouumu=$(nameread slShoubyouumu$sbnum $namedata | head -1)
+   syoubyoubui=$(nameread txtShoubyoubui$sbnum $namedata | head -1)
+#   syoubyoubui=$(echo $shoubyoubui | sed 's/_/###SPACE###/g')
+   if [ "$syoubyoumei" = "_" -o -z "$syoubyoumei" ] ; then
+      yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$syoubyoumei" "$syoubyouumu" "$syoubyoubui" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_shoubyou_input
+done
+[ $(retu ${tmp}-assessment_shoubyou_input) -ne 8 ] && error_exit "傷病データ不正"
+[ $(retu ${tmp}-assessment_shoubyou_input | gyo) -ne 1 ] && error_exit "傷病データ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+: > ${tmp}-assessment_mahi_input
+# 麻痺
+seq $MahiVal |
+while read mahinum ; do
+   yukoflg="1"
+   mhnum=$((mahinum-1))
+   mahi=$(nameread slMahi$mhnum $namedata | head -1)
+   mahiitami=$(nameread slMahiItami$mhnum $namedata | head -1)
+   mahibasho=$(nameread MahiBasho$mhnum $namedata | head -1)
+#   mahibasho=$(echo $mahibasho | sed 's/_/###SPACE###/g')
+   if [ "$mahi" = "_" -o -z "$mahi" ] ; then
+     yukoflg="9"
+   fi
+   echo "$Riyoushaid" "$hdShokaiSakuseidate" "$mahi" "$mahiitami" "$mahibasho" "$yukoflg" "${sdaytime}" "${USER_ID}" >> ${tmp}-assessment_mahi_input
+done
+[ $(retu ${tmp}-assessment_mahi_input) -ne 8 ] && error_exit "麻痺データ不正"
+[ $(retu ${tmp}-assessment_mahi_input | gyo) -ne 1 ] && error_exit "麻痺データ不正"
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+cp ${tmp}-assessment_input $tmp-assessment2_input
+cp ${tmp}-assessment_kazoku_input $tmp-assessment_kazoku2_input
+cp ${tmp}-assessment_byouin_input $tmp-assessment_byouin2_input
+cp ${tmp}-assessment_service_input $tmp-assessment_service2_input
+cp ${tmp}-assessment_kinkyu_input $tmp-assessment_kinkyu2_input
+cp ${tmp}-assessment_shoubyou_input $tmp-assessment_shoubyou2_input
+cp ${tmp}-assessment_mahi_input $tmp-assessment_mahi2_input
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/CARE_SHISETSU_ASSESSMENT   CARE_SHISETSU_ASSESSMENT
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_KAZOKU   ASSESSMENT_KAZOKU
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_KINKYU   ASSESSMENT_KINKYU
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_SERVICE   ASSESSMENT_SERVICE
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_BYOUIN   ASSESSMENT_BYOUIN
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_SHOUBYOU   ASSESSMENT_SHOUBYOU
+CARE_SHISETSU_ASSESSMENT/${Riyoushaid}/ASSESSMENT_MAHI   ASSESSMENT_MAHI
+FIN
+
+input_detail_dir=CARE_SHISETSU_ASSESSMENT/${Riyoushaid}
+
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時>間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+assessment CARE_SHISETSU_ASSESSMENT 2 321 322 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+
+
+##: > $tmp-add_pompa
+# 1:tmpファイル名 2:更新ファイル名 3:キーフィールド 4:更新時間フィールド 5:全体列数
+# 6:POMPA場所     7:INPUT場所
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+##if [ "$(gyo $tmp-assessment_kazoku_input)" != "0" ] ; then
+
+if [ "$(gyo ${tmp}-assessment_kazoku_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_kazoku ASSESSMENT_KAZOKU 2 8 9 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+if [ "$(gyo ${tmp}-assessment_byouin_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_byouin ASSESSMENT_BYOUIN 2 9 10 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+if [ "$(gyo ${tmp}-assessment_service_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_service ASSESSMENT_SERVICE 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+if [ "$(gyo ${tmp}-assessment_kinkyu_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_kinkyu ASSESSMENT_KINKYU 2 8 9 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+if [ "$(gyo ${tmp}-assessment_shoubyou_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_shoubyou ASSESSMENT_SHOUBYOU 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+if [ "$(gyo ${tmp}-assessment_mahi_input)" != "0" ] ; then
+cat <<- FIN >> $tmp-add_pompa
+assessment_mahi ASSESSMENT_MAHI 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+FIN
+fi
+
+
+#cat <<- FIN > $tmp-add_pompa
+#assessment_kazoku ASSESSMENT_KAZOKU 2 8 9 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_kazoku2 ASSESSMENT_KAZOKU 2 8 9 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_byouin ASSESSMENT_BYOUIN 2 9 10 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_byouin2 ASSESSMENT_BYOUIN 2 9 10 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_service ASSESSMENT_SERVICE 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_service2 ASSESSMENT_SERVICE 2 7 8 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_kinkyu ASSESSMENT_KINKYU 2 8 9 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_kinkyu2 ASSESSMENT_KINKYU 2 8 9 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_shoubyou ASSESSMENT_SHOUBYOU 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_shoubyou2 ASSESSMENT_SHOUBYOU 2 7 8 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_mahi ASSESSMENT_MAHI 2 7 8 ${pompa_dir}/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#assessment_mahi2 ASSESSMENT_MAHI 2 7 8 ${data_dir}/CAREPLAN/CARE_SHISETSU_ASSESSMENT/${Riyoushaid} ${input_dir}
+#FIN
+
+
+#--------------------------------------------------------------
+# データロック
+#$function_dir/FUNCTION.LOCK_CHECK $tmp-target-table
+#if [ $? -ne 0 ]; then
+  # エラー（ロックに失敗）
+#  error_unlock "ロック処理失敗"
+  ## error_exit ではなく error_unlock である点に注意！
+#fi
+
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+   
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 追加版作成
+# POMPAと指定されたキー項目をつかってキー項目のレコードを入れ替える
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+#  cp -p $tmp-${input_name}_input ${input_name}_input
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat <(gawk '$1!="'$Riyoushaid'"||$2!="'$hdShokaiSakuseidate'"' ${pompa_dir_name}/${file_name}) -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} > $tmp-${input_name}_new
+#  cp -p $tmp-${input_name}_new ${input_name}_new
+done
+#--------------------------------------------------------------
+
+# 列数チェック
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "($gyo $tmp-${input_name}_new)" != "0" ]; then
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+  fi
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-add_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  if [ "($gyo $tmp-${input_name}_new)" != "0" ]; then
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+  mkdir -p ${input_dir_name}/${today}/${input_detail_dir}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${input_detail_dir}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+  fi
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok"
+
+rm -f ${tmp}-*
+exit 0

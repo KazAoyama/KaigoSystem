@@ -1,0 +1,151 @@
+#!/bin/bash
+#
+# CARE_SHISETSU_CHECKLIST.SEARCH
+# チェックリスト　表示用CGI
+#
+# Written by R.Suzuki :2015/09/28
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/CARE_KAIGOSAKUSEI/CGI/CARE_KAIGOSAKUSEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+
+#--------------------------------------------------------------
+# 部屋番号検索の場合、施設利用者テーブルから入居者の情報を取得
+
+if [ $MODE = "search_room" ];then
+# SHISETSU_RIYOUSHA_STATUS
+# 1:施設id 2:建屋 3:フロア 4:ユニット 5:部屋番号 6:利用者id 7:契約開始
+  Riyoushaid=$(awk '$(NF-2)!=9 && $5=="'${room_select}'"{print $6,$7} ' ${riyosha_dir}/SHISETSU_RIYOUSHA_STATUS  |  LANG=C sort -k2,2 | self 1  |  head -n1 )
+fi
+#ここで取得した利用者IDをネームファイルに上書き
+awk '$1!="Riyoushaid"{ print $0}END{print "Riyoushaid '$Riyoushaid'"}' $namedata |
+awk '$1!="riyosha_name"{ print $0}END{print "riyosha_name '$Riyoushaid'"}' > $tmp-namedata_new
+#
+mv $tmp-namedata_new ${namedata}
+
+
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+# 利用者
+#[ -z "${Riyoushaid}" -o "${Riyoushaid}" = "_" ] && error_exit "利用者が不明です"
+
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+hdKinyubi
+Kinyubi
+KihonCheckListShinchou
+KihonCheckListTaiju
+KihonCheckListBMI
+FIN
+
+cat ${tmp}-header   |
+yarr                > ${tmp}-header_yoko
+
+#--------------------------------------------------------------
+# 基本チェックファイルの取得
+cat ${pompa_dir}/CHECKLIST/${Riyoushaid}/KIHONCHECK_CARE_SHISETSU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+if [ -z "${hdKinyubi}" -o "${hdKinyubi}" = "_" ] ; then
+  cat -
+else
+  awk '$2=="'${hdKinyubi}'"'
+fi |
+# --------------------------
+#--------------------------------------------------------------
+# 日付が指定されていない（初期状態）時は最新のものを表示する
+getlast 1 1                 |
+# 削除フラグ、ユーザ、更新日付をはずす
+delf 1 NF-2/NF            |
+#--------------------------------------------------------------
+tee $work_dir/result_kihon             |
+tee $tmp-kinyudate          |
+cat ${tmp}-header_yoko -    |
+tateyoko                    |
+# 基本チェック用データ
+awk '{print "k",$0}'        > ${tmp}-kihoncheck
+
+[ -z "${hdKinyubi}" -o "${hdKinyubi}" = "_" ] && hdKinyubi=$(self 1 $tmp-kinyudate)
+
+
+#--------------------------------------------------------------
+# チェックリストファイルの取得
+# 1:利用者ID 2:記入日   3:チェックリストID 4:チェック値 5:有効フラグ
+# 6:処理日   7:ユーザID
+cat ${pompa_dir}/CHECKLIST/${Riyoushaid}/CHECKLIST_CARE_SHISETSU |
+#--------------------------------------------------------------
+# 利用者ID
+awk '$1=="'${Riyoushaid}'"&&$2=="'$hdKinyubi'"'   |
+#--------------------------------------------------------------
+# 検索
+# --------------------------
+#if [ -z "${hdKinyubi}" -o "${hdKinyubi}" = "_" ] ; then
+#  cat -
+#else
+#  awk '$2=="'${hdKinyubi}'"'
+#fi |
+# --------------------------
+# チェックマスタよりチェック内容を取得
+LANG=C sort -k3,3       |
+join2 key=3 ${home_dir}/TBL/CONFIG/CHECKLIST_CARE_SHISETSU_KOUMOKU           |
+# 1:利用者ID  2:記入日   3:チェックリストID 4:チェック内容 5:チェックカテゴリ値
+# 6:YES時の値 7:No時の値 8:チェック値       9:有効フラグ   10:処理日
+# 11:ユーザID
+#--------------------------------------------------------------
+# 削除フラグ、ユーザ、更新日付をはずす
+delf NF-2/NF            |
+#--------------------------------------------------------------
+# チェックリスト用データ
+awk '{print "l",$0}'        > ${tmp}-checklist
+
+
+#cp $tmp-kihoncheck $work_dir/kihoncheck
+
+#cp $tmp-checklist $work_dir/checklist
+
+
+# チェックデータを表示
+cat ${tmp}-kihoncheck ${tmp}-checklist 
+
+
+## 終了
+rm -f $tmp-*
+exit 0

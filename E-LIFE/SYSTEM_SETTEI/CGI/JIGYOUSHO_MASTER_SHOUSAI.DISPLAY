@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# JIGYOUSHO_MASTER_SHOUSAI.DISPLAY : アセスメント表示
+#
+# Usage : JIGYOUSHO_MASTER_SHOUSAI.DISPLAY
+#
+# Written by K.Aoyama(HANDS.LAB)
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+
+
+rm -f $tmp-*
+
+
+# 変数の定義
+namedata=$1
+result_data=$2
+today="$(date +%Y%m%d)"
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+# 本日の日付
+curday=$(date +%Y%m%d | self 1)
+
+# 時期によって有効な事業所マスタの年月日を出す。
+ls -F ${home_dir}/TBL/JIGYOUSHO_MASTER |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-data_dir_date
+
+data_dir_date=$(cat $tmp-data_dir_date)
+
+
+cat ${home_dir}/TBL/CONFIG/KAIGOHOKEN_SERVICE_TYPE |
+self 1 2 3                                         > ${tmp}-service_type
+
+if [ -z "$JIGYOUSHO_ID" -o "$JIGYOUSHO_ID" = "_" ] ; then
+  : > $tmp-jigyousho_check
+else
+  cat ${home_dir}/TBL/JIGYOUSHO_MASTER/${data_dir_date}/SHISETSU_JIGYOUSHO_MASTER |
+  awk '$(NF-2)!="9"'           |
+  awk '$1=="'$JIGYOUSHO_ID'"'  > $tmp-jigyousho_check
+fi
+
+#--------------------------------------------------------------
+### モードによる表示の分岐
+case "${MODE}" in
+
+  # 初期表示
+  init | to_reset)
+    # 空のリストデータを作成する
+    : > $tmp-listdata
+  ;;
+
+  # 検索結果
+  search)
+    if [ "$(gyo ${result_data})" != 0 ] ; then
+      cat ${result_data} > $tmp-listdata
+    else
+      : > $tmp-listdata
+    fi
+  ;;
+
+  # 更新
+  regist | delete)
+    # 結果判定
+    result=$(awk '$1=="result"{print $2}' ${result_data})
+#    result_all="$(gyo ${listdata})"
+    if [ "${result}" = "ok" ] ; then
+      message=""
+    else
+      message=$(awk '$1=="message"{print $2}' ${result_data})
+      [ -z "${message}" ] && message="処理エラー"
+    fi
+    : > $tmp-listdata
+  ;;
+esac
+
+cat $tmp-listdata |
+awk '$1=="l"'     |
+delf 1            > $tmp-listdata_settei
+
+cat $tmp-listdata |
+awk '$1=="b"'     |
+# 1:事業所ID 2:電話 3:住所
+delf 1            > $tmp-listdata_info
+
+denwabangou=$(self 2 $tmp-listdata_info)
+jusho=$(self 3 $tmp-listdata_info)
+
+#--------------------------------------------------------------
+# メッセージがあればalertで表示させる
+if [ ! -z "${message}" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      alert('${message}');
+    </script>
+FIN
+elif [ "${MODE}" = "regist" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      window.close();
+    </script>
+FIN
+elif [ "${MODE}" = "delete" ] ; then
+cat << FIN > $tmp-html2
+    <script type="text/javascript" language="javascript">
+      window.close();
+    </script>
+FIN
+fi
+#--------------------------------------------------------------
+
+# 詳細表示
+shousai_display="none"
+[ "$shisetsu" = "1004" -o "$shisetsu" = "1005" ] && shousai_display="block"
+
+# 事業所のチェック
+awk '$2=="1004"' $tmp-jigyousho_check > $tmp-jigyousho_check_yokohama
+[ "$shisetsu" = "1004" ] && YokohamaCheck="checked"
+[ $(gyo $tmp-jigyousho_check_yokohama) -gt 0 ] && YokohamaCheck="checked"
+awk '$2=="1005"' $tmp-jigyousho_check > $tmp-jigyousho_check_baji
+[ "$shisetsu" = "1005" ] && BajiCheck="checked"
+[ $(gyo $tmp-jigyousho_check_baji) -gt 0 ] && BajiCheck="checked"
+
+
+# 時期によって有効な事業所マスタの年月日を出す。
+ls -F ${home_dir}/SYSTEM_SETTEI/HTML |
+grep / |
+sed 's/\///g' |
+LANG=C sort -k1,1    |
+awk '{print "1",$0}' |
+ychange num=1 |
+awk '$2<="'$curday'"&&"'$curday'"<$3{print $2}'      > $tmp-master_dir_date
+
+master_dir_date=$(cat $tmp-master_dir_date)
+
+
+cat << FIN | sed 's/ _$/ @/g' > $tmp-calsed
+###USERID### $USER_ID
+###SHISETSUID### $shisetsu
+###JIGYOUSHODENWABANGOU### $denwabangou
+###JIGYOUSHOJUSHO### $jusho
+###SHOUSAIDISPLAY### $shousai_display
+###YOKOHAMACHECK### $YokohamaCheck
+###BAJICHECK### $BajiCheck
+FIN
+
+
+cat $tmp-calsed      |
+sed 's/\\n/###KAIGYO###/g'     >  $tmp-calsed_kaigyozumi
+
+# HTMLの作成
+cat ${html_dir}/${master_dir_date}/JIGYOUSHO_MASTER_SHOUSAI.html |
+calsed -f $tmp-calsed_kaigyozumi - |
+sed 's/###KAIGYO###/\n/g'     |
+sed 's/###SPACE###/ /g'       |
+mojihame -l######SERVICE_TYPE###### - ${tmp}-service_type |
+mojihame -l###JIGYOUSHODATA### - ${tmp}-listdata_settei |
+tee $tmp-html |
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+if [ -e $tmp-html2 ] ; then
+  cat - $tmp-html2
+else
+  cat -
+fi |
+cat -
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+rm -f ${tmp}-*
+exit 0

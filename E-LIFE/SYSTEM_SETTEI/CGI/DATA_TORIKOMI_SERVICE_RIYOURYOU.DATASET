@@ -1,0 +1,333 @@
+#!/bin/bash
+#
+# DATA_TORIKOMI_RIYOUSHA.UPLOAD
+#
+# データ取込：利用者情報
+# Written by Y.kashiyama(tokyu-hands.co.jp) ; 20140306
+
+exec 2> /home/hands/E-LIFE/SYSTEM_SETTEI/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#-------------------------------------------------------------
+# 変数の定義
+param_name="$1"
+mime="$2"
+excel="$3"
+#excel="$1"
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+function error_exit {
+  message=$1
+  [ -z "${message}" ] && message="登録に失敗しました。"
+  echo "message ng ${message}"
+  rm -f $tmp-*
+  exit 0
+}
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 必要な値の取得
+#name-source "$param" > $tmp-source
+#source $tmp-source
+
+eval $(name-source ${param_name})
+
+mime-read -v $mime |
+grep FILE - |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' > $tmp-keiyakusho_name
+
+mime-read "FILE9" $mime > $tmp-excel_file
+
+#-------------------------------------------------------------
+
+#-------------------------------------------------------------
+# 拡張子チェック
+awk '$0~/filename="/' ${mime}         |
+awk '$0~/FILE9/'       |
+sed 's/^.*filename="\(.*\)".*$/\1/; s/^.*\\\([^\]*\)$/\1/; s/ /_/g; s/#/＃/g; s/%/％/g' |
+nkf -w80Lu                                |
+# 1:ファイル名
+sed 's/\./ /g'                            |
+self NF                                   |
+# 1:拡張子
+awk '$1~/xls/' > $tmp-filemark
+
+#cp $tmp-* /home/hands/work/okuda 
+## 画像ファイルの情報取得
+#identify $tmp-image                       > $tmp-identiy_image
+#[ $? != "0" ] && error_exit "MST_UPIMG002"
+#
+## 拡張子エラーなら終了
+[ ! -s $tmp-filemark ] && error_exit "エクセルではありません"
+#[ ! -s $tmp-identiy_image ] && error_exit "MST_UPIMG002"
+#[ $(gyo $tmp-identiy_image ) - gt "1" ] && error_exit "MST_UPIMG002"
+#-------------------------------------------------------------
+##-------------------------------------------------------------
+## ファイルサイズチェック
+#ls -l $tmp-image                          |
+#self 5                                    > $tmp-file_size
+#[ "$(cat $tmp-file_size)" -gt 5000000 ] && error_exit "MST_UPIMG003"
+##-------------------------------------------------------------
+# サービス利用料マスタ
+cat ${excel} |
+e2t2 1 a2 AB-  > $tmp-data
+# 1:ItemID          2:ItemName        3:ItemKana          4:DefaultCharge        5:Bikou
+# 6:TaxKind         7:InputKindEvery  8:InputKindDay      9:InputKindMonth       10:ReceiptTargetFlg
+# 11:TotalFlg       12:ServiceKind11  13:ServiceKind15    14:ServiceKind21       15:ServiceKind33
+# 16:ServiceKind43  17:ServiceKind51  18:ReductionFlg11   19:ReductionFlg15      20:ReductionFlg21
+# 21:ReductionFlg33 22:ReductionFlg43 23:ReductionFlg51   24:MedicalReductionFlg 25:TotalGroupID
+# 26:TotalGroupNo   27:SystemDispFlg  28:DoubleHistoryFlg
+
+[ -s "$tmp-data" ] || error_exit
+
+# サービス利用料実績
+cat ${excel} |
+e2t2 2 a2 u-  > $tmp-data2
+# 1:ChargeID    2:InputType     3:PayTargetPersonFlg 4:UserID      5:ContactID
+# 6:StaffID     7:ServiceType   8:ItemID             9:ChargeDay   10:UnitPrice
+# 11:Amount     12:TotalPrice   13:Bikou             14:PeidCharge 15:PeidFlg
+# 16:EditPlace  17:EditDatetime 18:EditUserID        19:EditPCName 20:EditPlaceID
+# 21:DeleteFlag
+
+[ -s "$tmp-data2" ] || error_exit
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#---------------------------
+# サービスマスタをつくる
+##/home/hands/E-LIFE/TBL/SEIKYU/SERVICE_MASTER
+## 1:施設 2:建屋 3:サービス項目ID 4:サービス区分(固定) 5:サービス名
+## 6:集計グループ 7:単価 8:表示順 9:課税フラグ 10:有効フラグ
+## 11:登録日時 12:USERID
+
+if [ -s /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/ServiceID ] ; then
+   now_serviceid="$(cat /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/ServiceID)"
+else
+   now_serviceid="00000"
+fi
+
+
+cat $tmp-data        |
+self 1 2 25 4 6 5    |
+# 1:サービス項目ID 2:サービス名 3:集計グループ 4:単価 5:課税フラグ
+# 6:備考
+awk '{print "'${Shisetsu}'","01",$1,"0",$2,$3,$4,$5,"1","2014071500000000","UserId"}' > $tmp-service_master_kari
+# 1:施設         2:建屋 3:サービス項目ID 4:サービス区分(固定) 5:サービス名
+# 6:集計グループ 7:単価 8:課税フラグ     9:有効フラグ         10:登録日時
+# 11:USERID
+
+ #-----------
+ # 通常マスタ
+ #-----------
+cat $tmp-service_master_kari |
+awk '$7!="0"'                |
+# 表示順番号を取得(あいしにあではIDの若い順表示だった)
+LANG=C sort -k3,3            |
+rank                         |
+# 1:表示順     2:施設         3:建屋 4:サービス項目ID 5:サービス区分(固定)
+# 6:サービス名 7:集計グループ 8:単価 9:課税フラグ     10:有効フラグ
+# 11:登録日時  12:USERID
+
+# 並び変え
+awk '{print $4,$2,$3,$1+"'${now_serviceid}'",$5,$6,$7,$8,$1,$9,$10,$11,$12}' |
+# 1:サービス項目ID 2:施設         3:建屋      4:NEWサービス項目ID 5:サービス区分(固定)
+# 6:サービス名     7:集計グループ 8:単価      9:表示順            10:課税フラグ
+# 11:有効フラグ    12:登録日時   13:USERID
+maezero 4.5                   > $tmp-service_master1
+
+ #--------------------------------------
+ # その他サービス利用料という項目を作る
+ #---------------------------------------
+sonota_serviceid_start="$(gyo $tmp-service_master1 | awk '{print $1}')"
+
+cat $tmp-service_master_kari |
+awk '$7=="0"'                |
+rank                         |
+awk '{print $4,$2,$3,"'${sonota_serviceid_start}'"+$1,$5,$6,$7,$8,"'${sonota_serviceid_start}'"+$1,$9,$10,$11,$12}' |
+maezero 4.5                  |
+cat $tmp-service_master1 -   |
+LANG=C sort                  > $tmp-service_master
+# 1:サービス項目ID 2:施設         3:建屋      4:NEWサービス項目ID 5:サービス区分(固定)
+# 6:サービス名     7:集計グループ 8:単価      9:表示順            10:課税フラグ
+# 11:有効フラグ    12:登録日時   13:USERID
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "サービス利用料マスタ作成にに失敗しました"
+[ ! -s "$tmp-service_master" -o "$(retu $tmp-service_master)" != "13" ] && error_exit "サービス利用料マスタ作成にに失敗しました"
+
+#-------------------------------------
+# サービス実績
+##/home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/$施設ID/$年月/$年月.SERVICE_TOUROKU
+##/DATA/E-LIFE/SEIKYU/SHISETSU/SERVICE_TOUROKU/$施設ID/$年月//$年月.SERVICE_TOUROKU
+## 1:利用者ID 2:利用日YYYYmmdd 3:サービス項目ID 4:金額 5:数量
+## 6:合計額 7:備考 8:課税区分 9:税率 10:消費税額
+## 11:税込金額 12:建屋 13:USERID 14:サービス利用料のID 15:登録日時
+
+ if [ -s /DATA/E-LIFE/KEIRI/KANRI/ID/SERVICE_TOUROKU ] ; then
+   now_service_tourokuid=$(cat /DATA/E-LIFE/KEIRI/KANRI/ID/SERVICE_TOUROKU)
+ else
+   now_service_tourokuid="0000000"
+ fi
+
+cat $tmp-data2 |
+# 1:ChargeID    2:InputType     3:PayTargetPersonFlg 4:UserID      5:ContactID
+# 6:StaffID     7:ServiceType   8:ItemID             9:ChargeDay   10:UnitPrice
+# 11:Amount     12:TotalPrice   13:Bikou             14:PeidCharge 15:PeidFlg
+# 16:EditPlace  17:EditDatetime 18:EditUserID        19:EditPCName 20:EditPlaceID
+# 21:DeleteFlag
+self 4 9 8 10/13 NF |
+# 1:UserID     2:ChargeDay 3:ItemID     4:UnitPrice 5:Amount
+# 6:TotalPrice 7:Bikou     8:DeleteFlag
+# 削除フラグがついているデータは取り込まない(本システムのサービス利用料では削除＝物理削除のため)
+awk '$NF!="-1"'     |
+delf NF             |
+awk '{print $0,"0",$2>="20140401"?"0.08":"0.05","0",$6,"01","UserId","2014071500000000"}' |
+# 1:利用者ID  2:利用日YYYYmmdd 3:サービス項目ID 4:金額      5:数量
+# 6:合計額    7:備考           8:課税区分       9:税率      10:消費税額
+# 11:税込金額 12:建屋          13:USERID        14:登録日時
+
+#サービス利用料登録IDをつける
+rank                |
+awk '{print $0,$1+"'${now_service_tourokuid}'"}' |
+self 2/NF-2 NF NF-1 |
+maezero 14.7        |
+LANG=C sort -u      > $tmp-service_jisseki_before
+# 1:利用者ID 2:利用日YYYYmmdd 3:サービス項目ID 4:金額 5:数量
+# 6:合計額   7:備考 8:課税区分 9:税率 10:消費税額
+# 11:税込金額 12:建屋 13:USERID 14:サービス利用料のID 15:登録日時
+
+# 利用者IDをひも付ける
+if [ -s $tmp-service_jisseki_before -a /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} ] ; then
+  cjoin1 key=1 /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_NUMBER_${Shisetsu} $tmp-service_jisseki_before |
+  delf 1 |
+  LANG=C sort -k3,3 > $tmp-service_jisseki1
+
+else
+  error_exit "利用者ID紐付けテーブルがないか、実績データの取込に失敗しました"
+fi
+
+# サービス利用料マスタとの紐付け
+if [ -s $tmp-service_jisseki1 -a $tmp-service_master ] ; then
+  cat $tmp-service_master |
+# 1:サービス項目ID 2:施設         3:建屋      4:NEWサービス項目ID 5:サービス区分(固定)
+# 6:サービス名     7:集計グループ 8:単価      9:表示順            10:課税フラグ
+# 11:有効フラグ    12:登録日時   13:USERID
+  self 1 4 6  |
+# 1:サービス項目ID 2:NEWサービス項目ID 3:サービス名
+  LANG=C sort |
+  cjoin1 key=3 - $tmp-service_jisseki1 |
+# 1:利用者ID            2:利用日YYYYmmdd 3:サービス項目ID 4:NEWサービス項目ID 5:サービス名
+# 6:金額                7:数量           8:合計額         9:備考              10:課税区分
+# 11:税率               12:消費税額      13:税込金額      14:建屋             15:USERID
+# 16:サービス利用料のID 17:登録日時
+  awk '{print $0,$4>="'${sonota_serviceid_start}'"?"("$5")"$9:$9}' |
+  self 1 2 4 6/8 NF 10/NF-1             > $tmp-riyousha_jisseki_all 
+# 1:利用者ID  2:利用日YYYYmmdd 3:NEWサービス項目ID 4:金額                5:数量
+# 6:合計額    7:備考           8:課税区分          9:税率                10:消費税額
+# 11:税込金額 12:建屋          13:USERID           14:サービス利用料のID 15:登録日時
+else
+  error_exit "サービス利用料実績取込にに失敗しました"
+fi
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit "サービス利用料実績取込にに失敗しました"
+
+[ ! -s "$tmp-riyousha_jisseki_all" -o "$(retu $tmp-riyousha_jisseki_all)" != "15" ] && error_exit "サービス利用料実績取込にに失敗しました"
+
+#--------------------
+# 取込施設のみの情報を指定の場所へ保存
+
+# サービスマスタを整形
+cat $tmp-service_master  |
+# 1:サービス項目ID 2:施設         3:建屋      4:NEWサービス項目ID 5:サービス区分(固定)
+# 6:サービス名     7:集計グループ 8:単価      9:表示順            10:課税フラグ
+# 11:有効フラグ    12:登録日時   13:USERID
+delf 1                   |
+#awk '{print $0,$3=="'${sonota_serviceid_maezero}'"?"その他":$5}' |
+#self 1/4 NF 6/NF-1       |
+LANG=C sort -u           > $tmp-service_master_${Shisetsu}_result
+
+cat $tmp-service_master_${Shisetsu}_result /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/SEIKYU/SERVICE_MASTER |
+LANG=C sort -u > $tmp-service_master_result
+
+# サービスマスタID
+new_serviceid="$(awk '$1=="'${Shisetsu}'"{print $3}' $tmp-service_master_result | LANG=C sort | tail -1)"
+
+# サービス登録ID
+new_service_tourokuid=$(LANG=C sort -k14,14 $tmp-riyousha_jisseki_all | tail -1 | self 14)
+
+cp -p $tmp-riyousha_jisseki_all /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/RIYOUSHA_SERVICE_JISSEKI_${Shisetsu}
+cp -p $tmp-service_master_${Shisetsu}_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/${Shisetsu}/SERVICE_MASTER_${Shisetsu}
+cp -p $tmp-service_master_result /home/hands/work/okuda/DATA_TORIKOMI_RESULT/SERVICE_MASTER
+echo "${new_serviceid}" > /home/hands/work/okuda/DATA_TORIKOMI_RESULT/SERVICE_ID
+echo "${new_service_tourokuid}"  > /home/hands/work/okuda/DATA_TORIKOMI_RESULT/SERVICE_TOUROKU
+
+#----------------------
+# テーブル更新
+
+  # サービスマスタ
+
+cp -p /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/SEIKYU/SERVICE_MASTER /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/SEIKYU/back/SERVICE_MASTER_${cur_time}
+cp -p /home/hands/E-LIFE/TBL/SEIKYU/SERVICE_MASTER /home/hands/E-LIFE/TBL/SEIKYU/back/SERVICE_MASTER_${cur_time}
+
+   cp $tmp-service_master_result /home/hands/E-LIFE/TBL/SEIKYU/SERVICE_MASTER
+   cp $tmp-service_master_result /home/hands/E-LIFE/SYSTEM_SETTEI/POMPA/SEIKYU/SERVICE_MASTER
+
+  # サービス実績
+  cat $tmp-riyousha_jisseki_all |
+  awk '{print substr($2,1,6)}'  |
+# 1:年月
+  while read NENGETSU ;do
+
+    cat $tmp-riyousha_jisseki_all |
+    awk '$2~/^'${NENGETSU}'/'     |
+    LANG=C sort > $tmp-data_${NENGETSU}
+
+   # 該当年月の実績があったら更新
+   if [ -s $tmp-data_${NENGETSU} ] ; then
+     mkdir -p /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}
+     mkdir -p /DATA/E-LIFE/SEIKYU/SHISETSU/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}
+      # 既にデータがあったら念のためバックアップとる
+      if [ -s /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/${NENGETSU}.SERVICE_TOUROKU ] ; then
+        mkdir -p /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/back
+        cp -p /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/${NENGETSU}.SERVICE_TOUROKU /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/back/${NENGETSU}.SERVICE_TOUROKU_${cur_time}
+      else
+        :
+      fi
+     cp $tmp-data_${NENGETSU} /home/hands/E-LIFE/KEIRI/POMPA/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/${NENGETSU}.SERVICE_TOUROKU
+     cp $tmp-data_${NENGETSU} /DATA/E-LIFE/SEIKYU/SHISETSU/SERVICE_TOUROKU/${Shisetsu}/${NENGETSU}/${NENGETSU}.SERVICE_TOUROKU
+   else
+     :
+   fi
+
+  done
+
+  # 管理番号
+  if [ -s /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/ServiceID ] ; then
+    mkdir -p /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/back
+    cp /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/ServiceID /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/back
+  else
+    :
+  fi
+  [ -s /DATA/E-LIFE/KEIRI/KANRI/ID/SERVICE_TOUROKU ] && cp -p /DATA/E-LIFE/KEIRI/KANRI/ID/SERVICE_TOUROKU /DATA/E-LIFE/KEIRI/KANRI/ID/back/SERVICE_TOUROKU_${cur_time}
+  echo "${new_serviceid}"       > /DATA/E-LIFE/SYSTEM_SETTEI/KANRI/SEIKYU/${Shisetsu}/ServiceID
+  echo "${new_service_tourokuid}"  > /DATA/E-LIFE/KEIRI/KANRI/ID/SERVICE_TOUROKU
+
+
+
+#-------------------------------------------------------------
+# データのチェック用
+#cp $tmp-*
+cp $tmp-* /home/hands/work/okuda/DATA_TORIKOMI_DATA 
+
+#-------------------------------------------------------------
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+echo "result ok"
+
+# 終了
+rm -f $tmp-*
+exit 0

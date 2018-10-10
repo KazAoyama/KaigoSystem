@@ -1,0 +1,183 @@
+#!/bin/bash
+#
+# MASTER_POPUP_UNIT.TOUROKU : ユニット登録
+#
+# Written by S.Otsubo
+
+# 更新対象
+# UNIT_NAME(ユニットが新規作成される場合)
+# SHISETSU_TATEYA_FLOOR_UNIT
+
+# 画面と直接やりとり
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+
+#rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    |
+sed 's/null//g'                > $tmp-name
+#cookie-name                    |
+#LANG=C sort                    > ${tmp}-cookie
+#------------------------------------------------------
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+sdaytime=$(date +%Y%m%d%H%M%S)
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo -e 'Content-type:text/plain; \n\n' |
+  cat - <(echo "${message}")
+#  echo "message ${message}"
+#  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat ${tmp}-taisyou |
+  self 1 |
+  while read File;do
+    rm -f ${home_dir}/TBL/MASTER_POPUP_UNIT/${File}.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新対象の設定
+cat << FIN > ${tmp}-taisyou
+SHISETSU_TATEYA_FLOOR_UNIT 5 6 1 4 7
+UNIT_NAME 3 4 1 1 5
+FIN
+# 1:テーブル名 2:削除フラグフィールド 3:更新時間フィールド 4:キーFROM 5:キーTO
+# 6:列数
+
+# SHISETSU_TATEYA_FLOOR_UNIT
+# 1:施設ID   2:建屋ID   3:フロア 4:ユニットID 5:削除フラグ
+# 6:更新日時 7:ユーザID
+# -
+# UNIT_NAME
+# 1:ユニットID 2:ユニット名 3:削除フラグ 4:更新日時 5:ユーザID
+
+# ${shinki_flg}=falseなら存在するユニットの名称メンテなので、
+# SHISETSU_TATEYA_FLOOR_UNITは更新しない
+if [ "${shinki_flg}" == "false" ] ; then
+  grep -v SHISETSU_TATEYA_FLOOR_UNIT ${tmp}-taisyou > ${tmp}-taisyou_new
+  mv ${tmp}-taisyou_new ${tmp}-taisyou
+fi
+#--------------------------------------------------------------
+
+#--------------------------------------------------------
+# 本日のinputディレクトリ作成
+
+[ -e ${input_dir}/${today} ] || mkdir ${input_dir}/${today}
+#--------------------------------------------------------
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+
+# ------------------------------------------
+# inputの値のチェック
+# (必須項目入力の件はjavascriptでチェック中)
+
+# 半角スペースは全角スペースへ
+# 改行コードは全角スペースへ
+unit_name_syuusei="$(echo "${Unit_name}" | tr " " "　" | sed 's/\\n/　/g')"
+
+# ユニット名は10文字まで。
+# 変換したものへチェック入れる
+[ "${#unit_name_syuusei}" -gt 10 ] && error_exit "ユニット名は10文字までです"
+[ "${#unit_name_syuusei}" -eq 0 ] && error_exit "ユニット名は10文字までです"
+# ------------------------------------------
+
+# ------------------------------------------
+# 更新データの作成
+
+# ロックファイル作成
+cat ${tmp}-taisyou |
+self 1 |
+while read File ; do
+  lockfile -1 -r 3 -l 10 ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "再度登録してください"
+
+# もしユニットIDがなければ新たに作成する
+if [ "${unit_key}" = "" -o "${unit_key}" = "_" ] ; then
+  last_unit_id="$([ -s ${home_dir}/TBL/SHISETSU_MASTER/UNIT_NAME ] && (awk '$3!="9"' ${home_dir}/TBL/SHISETSU_MASTER/UNIT_NAME | LANG=C sort -k1,1 -k4,4 | getlast 1 1 | tail -1 | self 1) || echo "00000")"
+  new_unit_id="$(echo "${last_unit_id}" | awk '{new_no=int($1+1); printf("%05d",new_no)}')"
+  # unit_keyに新しく設定した値をいれる
+  unit_key=${new_unit_id}
+fi
+
+# データの作成
+# input
+echo "${shisetsu_key} ${tateya_key} ${Floor} ${unit_key} 1 ${sdaytime} ${userid}" > ${tmp}-input_SHISETSU_TATEYA_FLOOR_UNIT
+echo "${unit_key} ${unit_name_syuusei} 1 ${sdaytime} ${userid}" > ${tmp}-input_UNIT_NAME
+# pompa
+cat ${tmp}-taisyou |
+delf 6 |
+while read File d_flg u_flg s_flg_from s_flg_to ; do
+  cat ${home_dir}/TBL/SHISETSU_MASTER/${File} ${tmp}-input_${File} |
+  LANG=C sort -k${s_flg_from},${s_flg_to} -k${u_flg},${u_flg} |
+  getlast ${s_flg_from} ${s_flg_to} > ${tmp}-pompa_${File}
+done
+
+# 列チェック
+cat  ${tmp}-taisyou |
+self 1 6 |
+while read File retu_no; do
+  [ "$(retu ${tmp}-input_${File})" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu ${tmp}-input_${File} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' ${tmp}-input_${File} | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+
+
+# 更新
+cat ${tmp}-taisyou |
+self 1 |
+while read Name ; do
+  # input
+  cp -p ${tmp}-input_${Name} ${input_dir}/${today}/$(basename ${0}).$(date +%Y%m%d%H%M%S).${userid}.${HOSTNAME}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  # pompa
+  cp -p ${tmp}-pompa_${Name} ${home_dir}/TBL/SHISETSU_MASTER/${Name}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+done
+[ -e ${tmp}-err ] && error_unlock "更新に失敗しました"
+
+
+# ロックファイル削除
+cat ${tmp}-taisyou |
+self 1 |
+while read File; do
+  rm ${home_dir}/TBL/SHISETSU_MASTER/${File}.LOCK
+done
+# ------------------------------------------
+
+# ここまできたらokかえす
+echo -e 'Content-type:text/plain; \n\n' |
+cat - <(echo "result ok")
+
+rm -f ${tmp}-*
+exit 0

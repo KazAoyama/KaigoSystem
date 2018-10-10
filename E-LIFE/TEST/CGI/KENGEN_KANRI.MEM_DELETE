@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# KENGEN_KANRI.MEM_DELETE : 権限管理メンバー削除CGI
+#
+# Usage : KENGEN_KANRI.MEM_DELETE ${namefile}
+#
+# Written by j.aoyagi(hands lab.inc)
+
+#--------------------ログ出力--------------------
+
+exec 2> /home/hands/E-LIFE/TEST/APLOG/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+#--------------------設定ファイル読込--------------------
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------変数設定--------------------
+tmp=/var/tmp/$$
+namefile=${1}
+current_time="$(date "+%Y%m%d%H%M%S")"
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリの設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TEST"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+apptbl_dir="${app_dir}/TBL"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+aplog_dir="${app_dir}/AP_LOG"
+download_dir="${app_dir}/DOWNLOAD"
+temp_dir="${app_dir}/TEMPLATE"
+
+
+
+# 必要な値の取得
+cat ${namefile} > ${tmp}-name
+cp ${tmp}-name namefile
+
+#--------------------エラー時の対応--------------------
+function error_exit(){
+  message=$1
+  echo ${message}
+
+  rm -f $tmp-*
+  exit 1
+}
+
+eval $(name-source ${namefile})
+
+
+######################  まずはKENGEN_GROUP_MEMBERの更新  ###############################################
+echo "${shisetsu_name}"     > ${tmp}-shisetsu_name
+echo "${kengen_name}"       > ${tmp}-kengen_name
+echo "${shozoku_member}"    > ${tmp}-del_member
+echo "${shisetsu_name}" "${kengen_name}" "${shozoku_member}" > ${tmp}-new_kengen_gr_member
+# 1:施設コード 2:権限Grコード 3:USER_ID
+
+
+# INPUTデータを保存
+cp -p ${tmp}-new_kengen_gr_member ${input_dir}/${today}/KENGEN_KANRI_MEMBER_DELETE.${current_time}.${USER_ID}.$(basename ${0}).${HOSTNAME}.${$}
+# 1:施設コード 2:権限Grコード 3:USER_ID
+
+
+# POMPAデータを更新
+
+lock_file=${pompa_dir}/KENGEN_GROUP/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+# データを分割する
+cat ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER      |
+# 1:施設コード 2:権限Grコード 3:USER_ID
+LANG=C sort -k3,3                                             |
+join0 +ng key=3 ${tmp}-del_member > ${tmp}-deluser_data 2> ${tmp}-deluser_igai
+# 1:施設コード 2:権限Grコード 3:USER_ID
+
+# delete_userのデータを加工する
+cat ${tmp}-deluser_data                                       |
+# 1:施設コード 2:権限Grコード 3:USER_ID
+awk '$1!="'${shisetsu_name}'" && $2!="'${kengen_name}'"'      > ${tmp}-deluser_new
+
+# 再び合体
+cat ${tmp}-deluser_new ${tmp}-deluser_igai                   |
+LANG=C sort -k1,1n -k2,2n -k3,3n                             |
+uniq                                                         > ${tmp}-new_pompa
+# 1:施設コード 2:権限Grコード 3:USER_ID
+  cp -p ${tmp}-new_pompa ${pompa_dir}/KENGEN_GROUP_MEMBER/KENGEN_GROUP_MEMBER
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+# TBLデータも保存しておこう
+lock_file=${apptbl_dir}/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+### 保存
+cp -p ${tmp}-new_pompa ${apptbl_dir}/KENGEN_GROUP_MEMBER
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+
+
+######################  次はUSER_KENGENの更新  ###############################################
+
+
+lock_file=${pompa_dir}/USER_KENGEN/KENGEN_KANRI.LOCK
+lockfile -1 -r 3 -l 10 ${lock_file} || error_exit "処理の途中でエラーが発生しました"
+
+cat ${pompa_dir}/USER_KENGEN/${shozoku_member}.USER_KENGEN      |
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+awk '$2!="'${shisetsu_name}'" && $3!="'${kengen_name}'"'        |
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+LANG=C sort -k1,1n -k2,2n -k3,3n -k4,4n                         > ${tmp}-new_userkengen
+# 1:USER_ID 2:施設コード 3:権限グループコード 4:順番 5:MENU名 6:MENUフラグ 7:CGI_NAME 8:CGIフラグ 9:権限ステータス 10:登録日時間
+mv ${tmp}-new_userkengen ${pompa_dir}/USER_KENGEN/${shozoku_member}.USER_KENGEN
+
+
+# ロック解除
+rm -f ${lock_file}
+unset lock_file
+
+
+# 終了
+rm -f $tmp-*
+
+exit 0

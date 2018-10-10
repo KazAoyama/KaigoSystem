@@ -1,0 +1,259 @@
+#!/bin/bash
+#
+# POP_KOJINJYOUHOU_SHOUSAI_KAIGOHOKEN.TOUROKU
+# 介護保険情報登録
+#
+# Written by T.Osako (Tokyu-hands.co.jp) :20100615
+
+#--------------------------------------------------------------
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/UNEI/CGI/UNEI.INI &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+# ディレクトリ設定
+cgi_dir="${home_dir}/UNEI/CGI"
+pompa_dir="${home_dir}/UNEI/POMPA/KIZUKI"
+input_dir="${home_dir}/UNEI/INPUT"
+kanri_dir="/DATA/E-LIFE/UNEI/KANRI/KIZUKI"
+data_dir="/DATA/E-LIFE/UNEI/KIZUKI"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+function error_exit {
+  message="$1"
+  echo "message ${message}"
+  echo "result ng"
+  rm -f $tmp-*
+  exit 1
+}
+function error_unlock {
+  message="$1"
+  cat $tmp-target-table |
+  while read table base ;do
+    rm -f $tmplock_dir/$table/$base.lock
+  : ;done
+  error_exit ${message}
+}
+#--------------------------------------------------------------
+
+#################################################################################################
+# 変更するのはここから
+#################################################################################################
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+parammime=$2
+# 必要な値の取得
+eval $(name-source ${namedata})
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 入力データのチェック
+#
+# [ -z "${Shimei}" -o "${Shimei}" = "_" ] && error_exit "氏名を入力してください。"
+# [ -z "${Shimeikana}" -o "${Shimeikana}" = "_" ] && error_exit "氏名カナを入力してください。"
+# [ -z "${SeinengappiYear}" -o "${SeinengappiYear}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiMonth}" -o "${SeinengappiMonth}" = "_" ] && error_exit "生年月日を入力してください。"
+# [ -z "${SeinengappiDay}" -o "${SeinengappiDay}" = "_" ] && error_exit "生年月日を入力してください。"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# データの取得
+Shisetsu="$(nameread "Shisetsu"   $namedata)"
+H1="$(nameread "Shisetsu"   $namedata)"
+H2="$(nameread "Hasseibi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g' | sed 's/\///g')" 
+H3="$(nameread "Hasseijikan"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H4="$(nameread "Houkokusha"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')" 
+H5="$(nameread "Kinyubi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g' | sed 's/\///g')" 
+H6="$(nameread "Kinyujikan"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H7="$(nameread "Jouhougen"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+[ -z "${H7}" -o "${H7}" = "_" ] && error_exit "情報源を選択してください"
+H8="$(nameread "txtJouhougen"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H9="$(nameread "Taishou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+[ -z "${H9}" -o "${H9}" = "_" ] && error_exit "対象を選択してください"
+H10="$(nameread "txtTaishou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H11="$(nameread "KizukiNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+[ -z "${H11}" -o "${H11}" = "_" ] && error_exit "内容を選択してください"
+H12="$(nameread "txtKizukiNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H13="$(nameread "txtKizukiShousai"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H14="$(nameread "Taioubi"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g' | sed 's/\///g')" 
+H15="$(nameread "Taioujikan"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H16="$(nameread "txtKizukiTaioujoukyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H17="$(nameread "txtKizukiKongoTaiou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H18="$(nameread "txtThanksAite"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H19="$(nameread "txtThanksNaiyou"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H20="$(nameread "txtKanriFeedback"     $namedata | sed 's/ /###SPACE###/g'| sed 's/\\n/###KAIGYO###/g')"
+H21="_"
+H22="_"
+H23="_"
+H24="_"
+H25="_"
+H26="_"
+
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# チェック
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 更新テーブル一覧
+#
+# 事故報ヒヤリヘッダーテーブル
+  # 発生場所テーブル
+  # 区分テーブル
+  # 身体テーブル
+# 事故報ヒヤリ詳細テーぶる
+#--------------------------------------------------------------
+  #####################
+  # 1:事故報ヒヤリヘッダーテーブル
+  #####################
+
+yukoflg="1"
+
+[ "$MODE" = "delete" ] && yukoflg="9"
+
+
+# 追加データの作成
+echo   "${H1}" "${H2}" "${H3}" "${H4}" "${H5}" \
+       "${H6}" "${H7}" "${H8}" "${H9}" "${H10}" \
+       "${H11}" "${H12}" "${H13}" "${H14}" "${H15}" \
+       "${H16}" "${H17}" "${H18}" "${H19}" "${H20}" \
+       "${H21}" "${H22}" "${H23}" "${H24}" "${H25}" \
+       "${H26}" \
+        "${yukoflg}" "${cur_time}" "${USERID}" >  $tmp-data
+# 1:施設ID      2:発生日            3:発生時刻      4:報告者        5:記入日
+# 6:記入時間    7:情報源            8:情報源手入力  9:対象          10:対象手入力
+# 11:気づき内容 12:気づき内容手入力 13:気づき詳細   14:対応日       15:対応時間
+# 16:対応状況   17:今後の対応       18:サンクス相手 19:サンクス内容 20:管理者フィードバック
+# 21:予備項目１ 22:予備項目２       23:予備項目３   24:予備項目４   25:予備項目５
+# 26:予備項目６ 27:有効フラグ       28:更新日       29:更新者
+
+[ -s $tmp-data -a "$(retu $tmp-data)" = "29" ] || error_exit 
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+# 気づきIDの取得
+KIZUKIID="$(nameread "KIZUKIID"  $namedata | sed 's/###KIZUKIID###//g')"
+
+if [ -z "${KIZUKIID}" -o "${KIZUKIID}" = "_" ] ; then
+    last_no="1"
+
+  mkdir -p ${kanri_dir}
+  [ -s ${kanri_dir}/KIZUKI_ID ] || echo "0000000001" > ${kanri_dir}/KIZUKI_ID
+
+  get_no ${last_no} ${kanri_dir}/KIZUKI_ID > $tmp-kizuki_id
+  KIZUKIID="$(cat $tmp-kizuki_id)"
+else
+  :
+fi
+
+# 気づきIDをつける
+awk '{print $0,"'${KIZUKIID}'"}' $tmp-data |
+self NF 1 2/NF-1                               > $tmp-kizuki_input
+
+[ $(plus ${PIPESTATUS[@]}) -eq 0 ] || error_exit
+
+#--------------------------------------------------------------
+mkdir -p ${pompa_dir}/${JIKOHOUHEADERID}
+# 更新対象ファイルのリスト化
+
+# 1:ファイルのパス 2:ファイル名
+## ロックファイル作成用テーブル
+## POMPAファイルがPOMPA直下でなく、店などのサブディレクトリ配下にいる場合には
+## 1フィールド目が「${TEN_CODE}/SAMPLE_DATA」などになる
+cat <<- FIN | LANG=C sort -u > $tmp-target-table
+KIZUKI_DATA KIZUKI_DATA
+FIN
+
+input_detail_dir=KIZUKI_DATA
+
+## 更新ファイルの作成とチェック用のテーブル
+## 6/7フィールド目は、アプリ間連携で別アプリの配下にあるINPUTを更新する場合用
+cat <<- FIN > $tmp-koushin_pompa
+kizuki KIZUKI_DATA 1 29 30 ${pompa_dir} ${input_dir}
+FIN
+
+#--------------------------------------------------------------
+#################################################################################################
+# 変更するのはここまで
+#################################################################################################
+
+#--------------------------------------------------------------
+# データロック
+#--------------------------------------------------------------
+cat $tmp-target-table |
+while read table base ;do
+   mkdir -p $tmplock_dir/$table
+   lockfile -1 -r 1 $tmplock_dir/$table/$base.lock
+   [ $? -ne 0 ] && :> $tmp-err
+   [ -e $tmp-err ] && break;
+: ; done
+
+[ -e $tmp-err ] && error_unlock "ロック処理に失敗しました。"
+
+#--------------------------------------------------------------
+# 更新版作成
+# POMPAと指定されたキー項目をつかってマージする
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  cat $tmp-${input_name}_input |
+  if [ -e ${pompa_dir_name}/${file_name} ] ; then
+    cat ${pompa_dir_name}/${file_name} -
+  else
+    cat -
+  fi |
+  LANG=C sort -k1,${sort_key} -k${time_key},${time_key} |
+  getlast 1 ${sort_key}        > $tmp-${input_name}_new
+done
+#--------------------------------------------------------------
+#--------------------------------------------------------------
+# 列数チェック
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  [ "$(retu $tmp-${input_name}_new)" != "${retu_no}" ] && : > $tmp-err
+  [ "$(retu $tmp-${input_name}_new | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu_no}'"' $tmp-${input_name}_new | gyo)" != "0" ] && : > $tmp-err
+done
+[ -e $tmp-err ] && error_unlock "列数エラー"
+## error_exit ではなく error_unlock である点に注意！
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# バッチ側で処理中なら更新させずに落とす
+#[ -e ${tmptmplock_dir}/BATCH.SAMPLE_LOCK ] && error_unlock "システム処理中"
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 更新
+cat $tmp-koushin_pompa         |
+while read input_name file_name sort_key time_key retu_no pompa_dir_name input_dir_name ; do
+  mkdir -p ${pompa_dir_name}
+  mkdir -p ${input_dir_name}
+
+  mv -f $tmp-${input_name}_input ${input_dir_name}/${today}/${file_name}.${cur_time}.$(basename $0).$$
+  mv -f $tmp-${input_name}_new ${pompa_dir_name}/${file_name}
+done
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# ロックの解除
+cat $tmp-target-table |
+while read table base ;do
+  rm -f $tmplock_dir/$table/$base.lock
+: ;done
+#--------------------------------------------------------------
+
+echo "result ok" "${KIZUKIID}"
+
+
+## 終了
+rm -f $tmp-*
+exit 0

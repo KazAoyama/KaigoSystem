@@ -1,0 +1,220 @@
+#!/bin/bash
+#
+# KAIGOJISSEKI_GRAPH_WEEKLY_HAIBEN.PRINT : 月間バイタルグラフ印刷
+#
+# Usage : KAIGOJISSEKI_GRAPH_WEEKLY_HAIBEN.PRINT namefile datafile
+#
+# Written by j.aoyagi(HandsLab.inc)
+
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/SHISETSU_KAIGOKIROKU/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+#
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/SHISETSU_KAIGOKIROKU"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA/KAIGOJISSEKI"
+input_dir="${app_dir}/INPUT/KAIGOJISSEKI"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+domain="http://e-life.hands-lab.com"
+current_time="$(date "+%Y%m%d%H%M%S")"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+
+# 必要な値の取得
+eval $(name-source ${namefile})
+#--------------------------------------------------------
+
+[ -z "${MODE}" ] && MODE="init"
+#--------------------------------------------------------------
+
+
+# 利用者名の取得
+cat ${riyosha_dir}/RIYOUSHA_MASTER                           |
+self 1 2                                                     > $tmp-riyosha_master
+riyosha="$(cat $tmp-riyosha_master | join0 key=1 <(echo "${riyosha_name}") | self 2)"
+
+
+# フロアの取得
+# SHISETSU_TATEYA_FLOOR_ROOMのマスタ準備
+echo $shisetsu > $tmp-shisetsu
+cat ${tbl_dir}/SHISETSU_MASTER/SHISETSU_TATEYA_FLOOR_UNIT_ROOM               |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+join0 key=1 $tmp-shisetsu                                    |
+join0 key=2 <(echo "02")                                     |
+awk '$9=="1"'                                                > $tmp-shisetsu_tateya_floor_id
+# ユニットマスタの準備
+cat ${tbl_dir}/SHISETSU_MASTER/UNIT_NAME                     |
+self 1 2                                                     > $tmp-unit_master
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 3                                                       |
+LANG=C sort -u -k1,1n                                        |
+awk '{print $1,$1"F"}'                                       > ${tmp}-floor_name
+floor_name="$(cat $tmp-floor_name | awk '$1=="'${floor}'"{print $2}')"
+
+
+# ユニットの取得
+cat $tmp-shisetsu_tateya_floor_id                            |
+# 1:施設id 2:建屋id 3:フロア 4:ユニットid 5:居室 6・・・
+self 4                                                       |
+# 1:UNIT_CODE 2:UNIT_NAME
+LANG=C sort -u -k1,1n                                        |
+join1 key=1 $tmp-unit_master                                 > $tmp-unit_name
+
+unit_name="$(cat $tmp-unit_name | awk '$1=="'${unit}'"{print $2}')"
+
+
+# 作成日が渡って来なかったら当日をセット
+if [ "${hd_sakuseibi}" = "_" -o -z "${hd_sakuseibi}" ];then
+  hd_sakuseibi=$(date +%Y%m%d)
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"年"getsu"月"hi"日"}')
+  to_sakuseibi=$(mdate ${hd_sakuseibi}/-6)
+  text_to_sakuseibi=$(echo ${to_sakuseibi} | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"年"getsu"月"hi"日"}')
+else
+  text_sakuseibi=$(date +%Y%m%d | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"年"getsu"月"hi"日"}')
+  to_sakuseibi=$(mdate ${hd_sakuseibi}/-6)
+  text_to_sakuseibi=$(echo ${to_sakuseibi} | awk '{nen=substr($1,1,4);getsu=substr($1,5,2);hi=substr($1,7,2);print nen"年"getsu"月"hi"日"}')
+fi
+
+# searchfileの処理
+if [ -e "${searchfile}" ];then
+  # 普通
+  cat ${searchfile}      |
+  awk '$1=="futu"'      |
+  delf 1                 > ${tmp}-futu
+
+  # 軟便
+  cat ${searchfile}      |
+  awk '$1=="nanben"'     |
+  delf 1                 > ${tmp}-nanben
+
+  # 不消化便
+  cat ${searchfile}      |
+  awk '$1=="fushoka"'     |
+  delf 1                 > ${tmp}-fushoka
+
+  # 水様便
+  cat ${searchfile}      |
+  awk '$1=="suiyo"'     |
+  delf 1                 > ${tmp}-suiyo
+
+  # 硬便
+  cat ${searchfile}      |
+  awk '$1=="katai"'     |
+  delf 1                 > ${tmp}-katai
+
+  # 血便
+  cat ${searchfile}      |
+  awk '$1=="ketsu"'     |
+  delf 1                 > ${tmp}-ketsu
+
+  # 下剤
+  cat ${searchfile}      |
+  awk '$1=="gezai"'     |
+  delf 1                 > ${tmp}-gezai
+
+  # 下剤
+  cat ${searchfile}      |
+  awk '$1=="hainyo"'     |
+  delf 1                 > ${tmp}-hainyo
+
+  # 水分摂取
+  cat ${searchfile}      |
+  awk '$1=="suibun"'     |
+  delf 1                 > ${tmp}-suibun
+
+  echo "###FUTU###" "$(cat ${tmp}-futu)" >> ${tmp}-calsed1
+  echo "###NANBEN###" "$(cat ${tmp}-nanben)" >> ${tmp}-calsed1
+  echo "###FUSHOKA###" "$(cat ${tmp}-fushoka)" >> ${tmp}-calsed1
+  echo "###SUIYO###" "$(cat ${tmp}-suiyo)" >> ${tmp}-calsed1
+  echo "###KATAI###" "$(cat ${tmp}-katai)" >> ${tmp}-calsed1
+  echo "###KETSU###" "$(cat ${tmp}-ketsu)" >> ${tmp}-calsed1
+  echo "###GEZAI###" "$(cat ${tmp}-gezai)" >> ${tmp}-calsed1
+  echo "###HAINYO###" "$(cat ${tmp}-hainyo)" >> ${tmp}-calsed1
+  echo "###SUIBUN###" "$(cat ${tmp}-suibun)" >> ${tmp}-calsed1
+else
+  :                     > ${tmp}-header
+  echo ""               > ${tmp}-taijyu_hyo
+  :                     > ${tmp}-taijyu_header
+  :                     > ${tmp}-taion_hyo
+  :                     > ${tmp}-taion_header
+  :                     > ${tmp}-myakuhaku_hyo
+  :                     > ${tmp}-myakuhaku_header
+  :                     > ${tmp}-kokyu_hyo
+  :                     > ${tmp}-kokyu_header
+  :                     > ${tmp}-ketsu_ue_hyo
+  :                     > ${tmp}-ketsu_shita_hyo
+  :                     > ${tmp}-ketsu_ue_header
+  :                     > ${tmp}-ketsu_shita_header
+fi
+
+
+#######################################################################################
+# calsedするfileをつくろう
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed1
+###FLOOR_NAME### ${floor_name}
+###UNIT_NAME### ${unit_name}
+###RIYOSHA_NAME### ${riyosha}
+###FROM### ${text_sakuseibi}
+###TO### ${text_to_sakuseibi}
+###PASSWORD### ${password}
+###keyword### ${keyword}
+###DOMAIN### ${domain}
+FIN
+
+cat  ${tmp}-calsed1 >  ${tmp}-calsed
+
+cat ${html_dir}/KAIGOJISSEKI_GRAPH_WEEKLY_HAIBEN_PRINT.html   |
+calsed -f ${tmp}-calsed -   > $tmp-base_pdf.html
+
+/home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.KAIGOJISSEKI_GRAPH_WEEKLY_HAIBEN.pdf
+#--------------------------------------------------------------
+#formhame -d"_" - ${namedata}
+
+# HTML の出力
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/SHISETSU_KAIGOKIROKU/DOWNLOAD/${current_time}.KAIGOJISSEKI_GRAPH_WEEKLY_HAIBEN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+#rm -f ${tmp}-*
+exit 0

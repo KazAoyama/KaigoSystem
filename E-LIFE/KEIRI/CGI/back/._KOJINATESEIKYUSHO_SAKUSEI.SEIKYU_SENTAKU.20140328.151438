@@ -1,0 +1,284 @@
+#!/bin/bash
+#
+# KOJINATESEIKYUSHO_SAKUSEI.SEIKYU_SENTAKU : 請求
+#
+# Usage : KOJINATESEIKYUSHO_SAKUSEI.SEIKYU_SENTAKU namefile
+#
+# Written by S.Otsubo
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+source /home/hands/E-LIFE/KEIRI/CGI/KOJINATESEIKYUSHO_SAKUSEI.INI &> /dev/null
+
+# ログ
+[ ! -e /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today} ] && mkdir /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}
+exec 2> /home/hands/E-LIFE/KEIRI/TRACE_LOG/${today}/LOG.$(basename ${0}).${HOSTNAME}.${current_time}; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+# ---------------------------------------
+# 変数
+
+namefile=${1}
+eval $(name-source ${namefile})
+
+# mode
+if [ -n "${MODE}" -a "${MODE}" != "_" ];then
+  :
+else
+  MODE="init"
+fi
+
+# 処理年月
+syori_nengetsu="${year}${month}"
+# ---------------------------------------
+
+# かりに
+tmp=/home/hands/work/otsubo/sentaku
+cp -p ${namefile} ${tmp}-name
+# ---------------------------------------
+function error_exit {
+  message="${1}"
+  cat ${tmp}-lock |
+  while read name ;do
+    rm -f ${name}.LOCK
+  done
+  echo "${message}"
+#  rm ${tmp}-*
+  exit 1
+}
+# ---------------------------------------
+
+# ---------------------------------------
+[ ! -e ${input_dir}/${today} ] && mkdir ${input_dir}/${today}
+[ ! -e ${input_dir}/${today}/SEIKYU/ ] && mkdir ${input_dir}/${today}/SEIKYU/
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル作成
+
+cat << FIN > ${tmp}-lock
+${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD
+FIN
+cat ${tmp}-lock |
+while read File shikibetu; do
+  lockfile -1 -r 3 -l 180 ${File}.LOCK
+done
+# ---------------------------------------
+
+# ---------------------------------------
+# 確定ファイルがあったら変更できない
+
+LANG=C sort -k1,1 ${seikyu_dir}/SEIKYU_KAKUTEI/SEIKYU_KAKUTEI.${shisetsu} |
+awk '$4!="9"' |
+# 1:施設ID 2:確定年月 3:確定ステータス 4:削除フラグ 5:更新日
+# 6:更新者
+cjoin0 key=2 <(echo "${year}${month}") |
+getlast 1 1 > ${tmp}-kakutei_file
+if [ -s ${tmp}-kakutei_file ] ; then
+  kakutei_status="$(self 3 ${tmp}-kakutei_file)"
+  case "${kakutei_status}" in
+    1 )
+      err_mes="仮確定済みのため変更できません"
+    ;;
+    2 )
+      err_mes="当月確定済みのため変更できません"
+    ;;
+  esac
+  error_exit "${err_mes}"
+fi
+# ---------------------------------------
+
+# ---------------------------------------
+# チェックボックスの人リストを作成する(チェック入っていても入って無くても取得)
+# disabledかけてるものについては値が送信されないはず(請求処理時の繰越と合算、繰越処理時の合算)
+
+case "${MODE}" in
+  seikyu_koushin )
+    awk '$1~/taisho_s/{print $1,$2}' ${namefile} |
+    # 1:name 2:value
+    # -
+    # value=onなら2 value=offなら1をふってソートしてgetlast(onとoffが送信される＝onである)
+    awk '{if($2=="on"){flg="2"}else{flg="1"}; print $1,flg,$2}' - |
+    # 1:name 2:flg 3:value
+    LANG=C sort |
+    getlast 1 1 |
+    delf 2 |
+    # 1:name 2:value
+    sed 's/taisho_s//g' - |
+    tr "_" " " |
+    # 1:入居者ID 2:請求年月 3:合算フラグ 4:value
+    LANG=C sort
+  ;;
+  seikyu_koushin_kurikoshi )
+    awk '$1~/taisho/{print $1,$2}' ${namefile} |
+    # 1:name 2:value
+    sed 's/taisho//g' - |
+    tr "_" " " |
+    # 1:入居者ID 2:請求年月 3:合算フラグ 4:value
+    LANG=C sort
+  ;;
+esac > ${tmp}-check_list
+# ---------------------------------------
+
+# ---------------------------------------
+# 処理を開始
+
+# 合算フラグのある年月は別処理
+cjoin0 +ng key=3 <(echo "1") ${tmp}-check_list > ${tmp}-gassan_list 2> ${tmp}-normal_list
+
+# 通常分はヘッダを取得して更新する
+case "${MODE}" in
+  # ----------------
+  # 1=>2,5
+  # 2=>5
+  # 5=>2
+  seikyu_koushin )
+    cat ${tmp}-normal_list |
+    while read ID nengetsu flg value ; do
+      cjoin0 key=1/2 <(echo "${nengetsu} ${ID}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+      awk '$24!="9"' |
+      LANG=C sort -k1,2 -k25,25 |
+      getlast 1 2 > ${tmp}-head_normal_kari
+
+      # 変更できないステータスはまじってないか
+      awk '$3!="1"&&$3!="2"&&$3!="5"' ${tmp}-head_normal_kari > ${tmp}-err_file
+      [ -s ${tmp}-err_file ] && break; 
+    
+      awk '{if("'${value}'"=="on"){$3="5";}
+       else if("'${value}'"=="off"){$3="2";};
+            $25="'${current_time}'"; $26="'${userid}'"; print}' ${tmp}-head_normal_kari
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+      # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+    done > ${tmp}-head_normal
+    # あってはいけないけどもしあればエラーで落とす
+    [ -s ${tmp}-err_file ] && error_exit "更新できないステータスがあります"
+  ;;
+  # ----------------
+  # ----------------
+  # 3=>4
+  # 4=>3
+  seikyu_koushin_kurikoshi )
+    cat ${tmp}-normal_list |
+    while read ID nengetsu flg value ; do
+      cjoin0 key=1/2 <(echo "${nengetsu} ${ID}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+      awk '$24!="9"' |
+      LANG=C sort -k1,2 -k25,25 |
+      getlast 1 2 > ${tmp}-head_normal_kari
+
+      # 変更できないステータスはまじってないか
+      awk '$3!="3"&&$3!="4"' ${tmp}-head_normal_kari > ${tmp}-err_file
+      [ -s ${tmp}-err_file ] && break; 
+    
+      awk '{if("'${value}'"=="on"){$3="5";}
+       else if("'${value}'"=="off"){$3="2";};
+            $25="'${current_time}'"; $26="'${userid}'"; print}' ${tmp}-head_normal_kari
+      # 1:処理月            2:入居者ID          3:請求ステータス  4:施設ID         5:建屋ID
+      # 6:フロア            7:ユニットID        8:居室番号        9:支払合算相手ID 10:明細ファイル名
+      # 11:請求書設定フラグ 12:仮請求書出力時間 13:請求書出力時間 14:請求確定月    15:予備
+      # 16:予備             17:予備             18:予備           19:予備          20:予備
+      # 21:予備             22:予備             23:予備           24:削除フラグ    25:更新時間
+      # 26:更新者
+    done > ${tmp}-head_normal
+    # あってはいけないけどもしあればエラーで落とす
+    [ -s ${tmp}-err_file ] && error_exit "更新できないステータスがあります"
+  ;;
+  # ----------------
+esac
+
+
+# 合算分は、誰と合算するか取得して、その人と同じステータスにする(ヘッダの処理月+合算相手IDを取得すればおｋ)
+: > ${tmp}-err_file
+cat ${tmp}-gassan_list |
+while read ID nengetsu flg value ; do
+  cjoin0 key=1/2 <(echo "${nengetsu} ${ID}") ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+  awk '$24!="9"' |
+  LANG=C sort -k1,2 -k25,25 |
+  getlast 1 2 > ${tmp}-head_ngassan_kari
+
+  # 合算相手のステータスを取得
+  self 1 9 ${tmp}-head_gassan_kari |
+  cjoin0 key=1/2 - ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+  awk '$24!="9"' |
+  LANG=C sort -k1,2 -k25,25 |
+  getlast 1 2 |
+  self 3 > ${tmp}-gassan_status
+  gassan_status="$(cat ${tmp}-gassan_status)"
+
+  # 変更できないステータスはまじってないか
+  awk '$3!="1"&&$3!="2"&&$3!="5"$3!="3"&&$3!="4"' ${tmp}-head_gassan_kari > ${tmp}-err_file
+  [ -s ${tmp}-err_file ] && break; 
+
+  awk '{$3="'${gassan_status}'"; $25="'${current_time}'"; $26="'${userid}'"; print}' ${tmp}-head_gassan_kari
+done > ${tmp}-head_gassan
+# あってはいけないけどもしあればエラーで落とす
+[ -s ${tmp}-err_file ] && error_exit "更新できないステータスがあります"
+
+
+# 合算と通常をあわせてinput
+cat ${tmp}-head_gassan ${tmp}-head_normal |
+LANG=C sort -k1,2 -k25,25 > ${tmp}-input
+
+# L4作成
+cat ${tmp}-input ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD |
+LANG=C sort -k1,2 -k25,25 > ${tmp}-L4
+# ---------------------------------------
+
+# ---------------------------------------
+# チェック・更新
+
+cat << FIN > ${tmp}-koushin_file_input
+${tmp}-input ${input_dir}/${today}/SEIKYU/SEIKYU_HEAD.INPUT.$(basename ${0}).${current_time} 26
+FIN
+
+cat << FIN > ${tmp}-koushin_file_L4
+${tmp}-L4 ${seikyu_dir}/${shisetsu}/HEAD/SEIKYU_HEAD 26
+FIN
+
+# チェック
+self 1 3 ${tmp}-koushin_file_input |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+self 1 3 ${tmp}-koushin_file_L4 |
+while read file retu ; do
+  [ "$(retu ${file})" != "${retu}" ] && : > $tmp-err
+  [ "$(retu ${file} | gyo)" != "1" ] && : > $tmp-err
+  [ "$(awk 'NF!="'${retu}'"' ${file} | gyo)" != "0" ] && : > $tmp-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e $tmp-err ] && error_exit "列数エラー"
+
+# 更新
+cat ${tmp}-koushin_file_input ${tmp}-koushin_file_L4 |
+while read File okiba retu ; do
+  cp -p ${File} ${okiba}
+  [ "${?}" != "0" ] && : > ${tmp}-err
+  [ -e ${tmp}-err ] && break;
+done
+[ -e ${tmp}-err ] && error_exit "ファイル作成中にエラー発生"
+# ---------------------------------------
+
+# ---------------------------------------
+# ロックファイル削除
+
+cat ${tmp}-lock |
+while read File; do
+  rm ${File}.LOCK
+done
+# ---------------------------------------
+
+echo "更新完了！"
+
+#rm -f ${tmp}-*
+exit 0
+

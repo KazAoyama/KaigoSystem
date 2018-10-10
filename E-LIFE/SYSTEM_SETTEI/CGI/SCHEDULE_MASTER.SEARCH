@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# SCHEDULE_MASTER.SEARCH
+# スケジュールマスタ　検索用CGI
+#
+# Written by K.Aoyama :20131228
+
+#--------------------------------------------------------------
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).$HOSTNAME.$(date +%Y%m%d) ; set -xv
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+rm -f $tmp-*
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+function error_exit {
+  rm -f $tmp-*
+  exit 0
+}
+#--------------------------------------------------------------
+
+#--------------------------------------------------------------
+# 変数の定義
+namedata=$1
+
+# 必要な値の取得
+eval $(name-source ${namedata})
+#--------------------------------------------------------------
+
+# テスト
+
+#--------------------------------------------------------------
+# 入力データのチェック
+# ユーザＩＤ
+[ -z "${userid}" -o "${userid}" = "_" ] && error_exit "ログインユーザが不明です"
+
+#--------------------------------------------------------------
+# ヘッダー部分生成
+#--------------------------------------------------------------
+cat <<- FIN > $tmp-header
+FIN
+
+#--------------------------------------------------------------
+# ファイルの取得
+cat ${home_dir}/TBL/SCHEDULE_MASTER/SCHEDULE_MASTER |
+# 1:施設       2:スケジュールID 3:スケジュール 4:スケジュールタイプ 5:費用
+# 6:有効フラグ 7:処理時間       8:ユーザID
+#--------------------------------------------------------------
+awk '$1=="'${shisetsu}'"'     |
+delf 1 NF-2/NF  > ${tmp}-schedule_master_work
+[ $(plus ${PIPESTATUS[@]}) -ne 0 ] && error_exit "スケジュールマスタ取得エラー"
+
+
+:> $tmp-schedule_master_sort
+if [ -s ${home_dir}/TBL/SCHEDULE_MASTER/SCHEDULE_MASTER_ADD ] ; then
+  cat ${home_dir}/TBL/SCHEDULE_MASTER/SCHEDULE_MASTER_ADD |
+  awk '$1=="'$shisetsu'"&&$(NF-2)!="9"'    |
+# 1:スケジュールID 2:表示順
+  self 2 3 |
+  LANG=C sort -k1,1 > $tmp-schedule_master_sort
+fi
+
+[ "$(gyo $tmp-schedule_master_sort)" = "0" ] && echo "_" "_" > $tmp-schedule_master_sort
+
+cat ${tmp}-schedule_master_work |
+LANG=C sort -k1,1 |
+join2 +"99" key=1 $tmp-schedule_master_sort |
+LANG=C sort -k2n,2n  |
+self 1 3/NF 2      > $tmp-schedule_master
+
+
+#--------------------------------------------------------------
+# 出力
+cat ${tmp}-schedule_master
+
+
+## 終了
+rm -f $tmp-*
+exit 0

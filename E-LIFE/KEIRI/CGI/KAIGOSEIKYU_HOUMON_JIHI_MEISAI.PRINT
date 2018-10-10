@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# KAIGOSEIKYU_HOUMON_JIHI_MEISAI.PRINT : 日常生活費明細一覧
+#
+# Usage : KAIGOSEIKYU_HOUMON_JIHI_MEISAI.PRINT namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/KEIRI/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+current_time="$(date "+%Y%m%d%H%M%S")"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/KEIRI"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+master_tbl_dir="${home_dir}/E-LIFE/TBL/SEIKYU"
+hometbl_dir="${home_dir}/E-LIFE/TBL"
+domain="http://e-life.hands-lab.com"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+seikyu_dir="/DATA/E-LIFE/SEIKYU/KYOTAKU"
+work=${app_dir}/WORK
+
+# 引数設定
+namefile=${1}
+searchfile=${2}
+
+# eval
+eval $(name-source ${namefile})
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+
+# 対象ファイル呼出
+cat ${pompa_dir}/SHISETSU/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.JIHI_SERVICE    > $tmp-from_pompa
+cat ${pompa_dir}/SHISETSU/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.NICHIJYOSEIKATSUHI    |
+awk '{print $1,$2,$3,$3$4}' >> $tmp-from_pompa
+
+
+# 対象者ごとに処理をするリスト作成
+# 印刷は名前の順
+awk '$(NF-2)!=9' /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_MASTER |
+self 1 3 > $tmp-riyosha_kana
+cat $tmp-from_pompa                 |
+self 1                              |
+LANG=C sort -u -k1,1                |
+join1 key=1 $tmp-riyosha_kana       |
+LANG=C sort -k2,2                   |
+self 1                              |
+yarr                                > $tmp-member
+
+
+# ダウンロードディレクトリ
+mkdir -p ${app_dir}/DOWNLOAD/${today}/${userid}/${current_time}
+
+# ページ分けとりあえず中止
+## 介護のリスト作成
+#GYO="8"
+#gyo=$(tarr $tmp-member | gyo)
+#warizan=$(echo $GYO $gyo | lcalc '$2/$1' | marume -sage 1.0 | lcalc '$1+1')
+#seq 1 ${warizan} |
+#while read A ;do
+#  echo $A $GYO   |
+#  lcalc '$1*$2'
+#done             > $tmp-gyogyo
+#
+#cat $tmp-gyogyo      |
+#while read G ;do
+#  cat $tmp-member    |
+#  tarr               |
+#  tail -n$G          |
+#  head -n${GYO}      |
+#  yarr
+#done                 > $tmp-list_kansei
+
+# 対象者ごとにデータを作成
+#cat $tmp-list_kansei               |
+#while read A B C D E F G H ;do
+#  echo $A $B $C $D $E $F $G $H     > $tmp-taishosha
+for member in $(cat $tmp-member);do
+  # 月毎の処理
+  cat $tmp-from_pompa               |
+  awk '$1=="'${member}'"{print $4}' |
+  LANG=C sort -u -k1,1n  |
+  yarr                   > $tmp-month_list
+
+  for month in $(cat $tmp-month_list);do
+
+    # 対象者のデータを準備
+    cat ${pompa_dir}/SHISETSU/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.JIHI_SERVICE          |
+    awk '$1=="'${member}'" && $4=="'${month}'"'                                                       > $tmp-taisho_data
+    # 対象者名とフリガナ
+    # マスタ準備
+    cat ${riyosha_dir}/RIYOUSHA_KIHON       |
+    join0 key=1 <(echo $member)             |
+    awk '$9!=9'                             |
+    self 1 2                                > $tmp-riyosha_kihon
+    # 1:利用ID 2:利用者氏名
+  
+    STARTDAY=$(echo $month | awk '{print $1"01"}')
+    ENDDAY=$(mdate -e ${month}m | tarr | tail -n1)
+    cat /DATA/E-LIFE/UNEI/RIYOUSHA/RIYOUSHA_KAIGOHOKEN |
+    join0 key=1 <(echo $member)                        |
+    awk '$23<="'${ENDDAY}'" && $28>="'${STARTDAY}'"'   |
+    LANG=C sort -k23,23                                |
+    tail -n1                                           |
+    # 1:利用者ID            2:介護保険ID          3:介護度            4:保険者番号                                        5:保険者名
+    # 6:被保険者番号        7:性別                8:生年月日和暦元号  9:和暦誕生年                                        10:和暦誕生月
+    # 11:和暦誕生日         12:郵便番号           13:住所             14:認定年月和暦元号                                 15:認定和暦年
+    # 16:認定和暦月         17:認定和暦日         18:認定西暦         19:有効期間from和暦元号                             20:有効期間from和暦年
+    # 21:有効期間from和暦月 22:有効期間from和暦日 23:有効期間from西暦 24:有効期間to和暦元号                               25:有効期間to和暦年
+    # 26:有効期間to和暦月   27:有効期間to和暦日   28:有効期間to西暦   29:居宅介護支援者又は介護予防事業者及びその事業者名 30:認定審査会の意見及び>サービスの種類指定
+    # 31:備考               32:利用者負担率
+    self 1 3 4 6                                       |
+    join1 key=1 $tmp-riyosha_kihon                     > $tmp-kaigohoken_joho
+    # 1:利用者ID 2:利用者名 3:介護度 4:保険者番号 5:被保険者番号
+    [ "$(gyo $tmp-kaigohoken_joho)" = 0 ] && echo "$member" "0 --- ---" | join1 key=1 $tmp-riyosha_kihon > $tmp-kaigohoken_joho
+    
+    # 請求年月和暦変換
+    cat ${tbl_dir}/ZEIRITSU_GENGOU_MASTER/GENGOU                    |
+    awk '$5!="9"{print $1,$2,$3,$4}'                                > $tmp-gengou_master
+    
+    # 明細データから得るもの
+    cat $tmp-taisho_data                     |
+    self 1 4 8 9 13                          > $tmp-meisai_data_pre
+    # 1:利用者ID 2:提供年月 3:名称 4:備考 5:金額
+
+    # 日常生活費も追加
+    if [ -e ${pompa_dir}/SHISETSU/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.NICHIJYOSEIKATSUHI ];then
+      cat ${pompa_dir}/SHISETSU/${shisetsu}/${seikyu_nengetsu}/${seikyu_nengetsu}.NICHIJYOSEIKATSUHI |
+      awk '$1=="'${member}'" && $12!=9{print $1,$3$4,"その他",$6,$9}'
+    else
+      :
+    fi                                         > $tmp-nichijyo
+
+    # 合体
+    cat $tmp-meisai_data_pre $tmp-nichijyo     > $tmp-meisai_data
+
+    TEIKYO_MONTH=$(cat $tmp-meisai_data | self 2 | tail -n1) 
+    RIYOSHA_MEI=$(cat $tmp-kaigohoken_joho | self 2 | tail -n1) 
+    HOKENSHA=$(cat $tmp-kaigohoken_joho | self 4 | tail -n1) 
+    HI_HOKENSHA=$(cat $tmp-kaigohoken_joho | self 5 | tail -n1)
+    awk '{print "'${TEIKYO_MONTH}'","'${RIYOSHA_MEI}'","'${HOKENSHA}'","'${HI_HOKENSHA}'",$3,$5,$4,"0"}' $tmp-meisai_data |
+    awk '{if(NR==1){print $0}else{$1="&nbsp;";$2="&nbsp;";$3="&nbsp;";$4="&nbsp;";print}}'              |
+    # 1:提供年月 2:利用者名 3:保険者番号 4:被保険者番号 5:名称
+    # 6:金額 7:備考 8:請求済金額
+    tee $tmp-body_meisai         |
+    comma 6                      > $tmp-body
+    cat $tmp-body_meisai         |
+    sm2 0 0 6 6                  |
+    comma 1                      > $tmp-goukei
+    # mojihame
+    cat ${html_dir}/JIHI_MEISAI_ICHIRAN.html  |
+    awk '/\<body_start\>/,/\<body_end\>/'              |
+    mojihame -lLABEL - ${tmp}-body                     |
+    mojihame -lSEDSED - $tmp-goukei
+  done
+done                                          > $tmp-nakamihtml
+
+  #######################################################################################
+      # calsedするfile
+  
+  # 請求年月
+  TAOSHO_MONTH=$(echo $seikyu_nengetsu | awk '{print substr($1,1,4)"年"substr($1,5,2)"月分"}')
+
+cat <<- FIN | sed 's/ _$/ @/g' >> ${tmp}-calsed
+###DOMAIN### ${domain}
+###TAISHO_MONTH### ${TAOSHO_MONTH}
+FIN
+    # htmlfile
+    cat ${html_dir}/JIHI_MEISAI_ICHIRAN.html         |
+    awk '/\<header_start\>/,/\<header_end\>/'        |
+    calsed -f ${tmp}-calsed -                        > $tmp-header.html
+
+    # # htmlファイルの残り
+cat <<- FIN | sed 's/ _$/ @/g' > ${tmp}-last.html
+    </table>
+  </body>
+</html>
+FIN
+    cat $tmp-header.html $tmp-nakamihtml ${tmp}-last.html > $tmp-base_pdf.html
+    /home/hands/E-LIFE/TOOL/wkhtmltopdf-amd64 --orientation Landscape $tmp-base_pdf.html ${app_dir}/DOWNLOAD/${current_time}.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf
+
+# pdf合体
+#######################################################################################
+#gs -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -sPAPERSIZE=a4 -dNOPLATFONTS -sOutputFile=${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${current_time}.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf ${home_dir}/E-LIFE/KEIRI/DOWNLOAD/${today}/${userid}/${current_time}/*.pdf
+
+# HTMLの作成
+cat << EOF > ${tmp}-html.html
+<HTML>
+  <HEAD>
+    <SCRIPT type="text/javascript" language="Javascript">
+      //<![CDATA[
+      window.onload=init
+      function init(){
+           window.open("/E-LIFE/KEIRI/DOWNLOAD/${current_time}.KAIGOSEIKYU_HOUMON_KAIGOKYUFU_ICHIRAN.pdf","pdfprint");
+           window.self.close();
+      }
+      //]]>
+    </SCRIPT>
+  </HEAD>
+</HTML>
+EOF
+
+cat ${tmp}-html.html
+
+
+rm -f ${tmp}-*
+exit 0
+

@@ -1,0 +1,248 @@
+#!/bin/bash
+#
+# TATEKAEKIN.SEARCH : 立替金サーチ
+#
+# Usage : TATEKAEKIN.SEARCH namefile datafile
+#
+# Written by j.aoyagi(hands lab.inc)
+
+
+# 設定ファイル読込
+source /home/hands/.bashrc &> /dev/null
+
+#--------------------ログ出力--------------------
+mkdir -p /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)
+exec 2> /home/hands/E-LIFE/TATEKAEKIN/APLOG/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date "+%Y%m%d"); set -xv
+
+
+# 変数設定
+tmp=/var/tmp/${$}
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+today="$(date +%Y%m%d)"
+this_month="$(date +%Y%m)"
+
+# ディレクトリ設定
+home_dir="/home/hands"
+app_dir="${home_dir}/E-LIFE/TATEKAEKIN"
+cgi_dir="${app_dir}/CGI"
+html_dir="${app_dir}/HTML"
+pompa_dir="${app_dir}/POMPA"
+input_dir="${app_dir}/INPUT"
+apptbl_dir="${app_dir}/TBL"
+kyoutsu_dir="${home_dir}/E-LIFE/KYOUTSU/HTML"
+test_tbl_dir="${home_dir}/E-LIFE/TEST/TBL"
+riyosha_dir="/DATA/E-LIFE/UNEI/RIYOUSHA"
+tbl_dir="${home_dir}/E-LIFE/TBL"
+work="${app_dir}/WORK"
+
+# 引数設定
+namefile=${1}
+
+# eval
+eval $(name-source ${namefile})
+
+
+echo ${userid}  > ${tmp}-user
+echo ${password} > ${tmp}-pass
+echo ${shisetsu} > ${tmp}-shisetsu
+
+# searchする施設と年月を取得してデータを呼び出す
+from_month="$(echo ${hd_kensaku_hiduke_from} | awk '{print substr($1,1,6)}')"
+to_month="$(echo ${hd_kensaku_hiduke_to} | awk '{print substr($1,1,6)}')"
+keisan=$(mdate ${from_month}m ${to_month}m)
+# 入力日で検索が有効だったら
+if [ -n $nyuryokubi -a $nyuryokubi != "_" ];then
+  search_date=$(echo $nyuryokubi | dayslash -r yyyy-mm-dd 1)
+else
+  :
+fi
+if [ "${keisan}" -ne "0" ];then
+  mdate -e ${to_month}m/${keisan} > ${tmp}-searchmonth
+else
+  echo ${to_month}                > ${tmp}-searchmonth
+fi
+
+# データを一旦サーチする
+for month in $(cat ${tmp}-searchmonth);do
+  cat ${pompa_dir}/${shisetsu}/${month}/${month}.TATEKAEKIN  |
+  awk '$1>="'${hd_kensaku_hiduke_from}'" && $1<="'${hd_kensaku_hiduke_to}'"'
+done |
+if [ -n $search_date -a $search_date != "_" ];then
+  awk '$15~/'$search_date'/'
+else
+  cat -
+fi                                   > ${tmp}-month_data
+# 立替方法で絞り
+cat ${tmp}-month_data                |
+# 1:立替日付 2:立替対象 3:対象者ID 4:入出金フラグ 5:立替方法
+# 6:立替項目フラグ 7:立替項目 8:摘要 9:入金額 10:出金額
+# 11:所属建屋 12:所属フロア 13:所属ユニット 14:ID 15:登録時間
+LANG=C sort -k5,5n                   |
+case ${tatekae_houhou} in
+  all )
+    cat -
+  ;;
+  genkin )
+    join0 key=5 <(echo "1")
+  ;;
+  seikyusho )
+    join0 key=5 <(echo "2")
+  ;;
+  sonota )
+    join0 key=5 <(echo "3")
+  ;;
+esac                                 > ${tmp}-tatekae_houhou
+# 対象で絞込み
+case ${tatekae_taisho} in
+  all )
+    cat ${tmp}-tatekae_houhou |
+    awk '$2=="sonota"' > ${tmp}-sonota
+    cat ${tmp}-tatekae_houhou |
+    awk '$2=="nyukyosha"'  |
+    case ${floor} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$12=="'${floor}'"'
+      ;;
+    esac                   |
+    case ${unit} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$13=="'${unit}'"'
+      ;;
+    esac                   |
+    # 入居者の場合はさらに絞り込み
+    if [ "${riyosha_name}" = "00" ];then
+      if [ "${tateya}" != "00" ];then
+        awk '$11=="'${tateya}'"'
+      else
+        cat -
+      fi
+    else
+      if [ "${tateya}" != "00" ];then
+        awk '$11=="'${tateya}'"'
+      else
+        cat -
+      fi                           |
+      LANG=C sort -k3,3n           |
+      join0 key=3 <(echo ${riyosha_name})
+    fi                             > ${tmp}-nyukyosha
+    cat  ${tmp}-sonota ${tmp}-nyukyosha
+  ;;
+  igai )
+    cat ${tmp}-tatekae_houhou |
+    awk '$2=="sonota"'
+  ;;
+  nyukyosha )
+    cat ${tmp}-tatekae_houhou |
+    awk '$2=="nyukyosha"'  |
+    if [ "${tateya}" != "00" ];then
+      awk '$11=="'${tateya}'"'
+    else
+      cat -
+    fi                       |
+    case ${floor} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$12=="'${floor}'"'
+      ;;
+    esac                   |
+    case ${unit} in
+      0 )
+        cat -
+      ;;
+      * )
+        awk '$13=="'${unit}'"'
+      ;;
+    esac                   |
+    # 入居者の場合はさらに絞り込み
+    if [ "${riyosha_name}" = "00" ];then
+      cat -
+    else
+      LANG=C sort -k3,3n           |
+      join0 key=3 <(echo ${riyosha_name})
+    fi
+  ;;
+esac                                 |
+
+# 入出金で絞込み
+case ${nyushukkin} in
+  # 全て
+  all )
+    cat -
+  ;;
+  # 出金
+  shukkin )
+    LANG=C sort -k4,4n               |
+    join0 key=4 <(echo "2")
+  ;;
+  nyukin )
+    LANG=C sort -k4,4n               |
+    join0 key=4 <(echo "1")
+  ;;
+esac                                 |
+# 項目で絞り込む場合は絞り込む
+if [ -n "${shiborikomi_suru}" -a "${shiborikomi_suru}" != "_" ];then
+  # 絞込み
+  case ${shiborikomi_kin} in
+    nyukin )
+      LANG=C sort -k6,6             |
+      join0 key=6 <(echo "1")        |
+      LANG=C sort -k7,7             |
+      join0 key=7 <(echo ${nyukin_koumoku})
+    ;;
+    shukkin )
+      LANG=C sort -k6,6             |
+      join0 key=6 <(echo "2")        |
+      LANG=C sort -k7,7             |
+      join0 key=7 <(echo ${shukkin_koumoku})
+    ;;
+  esac
+else
+  cat -
+fi                                   > $tmp-keisan_totyu
+
+cp $tmp-keisan_totyu ${work}/keisan_buta
+zandakan="0"
+LANG=C sort -k1,1 -k15,15 $tmp-keisan_totyu  |
+self 9 10 14                                 |
+while read nyukin shukkin tatekae_id ; do
+  echo ${zandakan} ${nyukin} ${shukkin} ${tatekae_id} |
+  lcalc '$4,$1+$2-$3'                   > $tmp-zandakan
+  zandakan=$(self 2 $tmp-zandakan)
+  cat $tmp-zandakan                     
+done                                     |
+LANG=C sort -k1,1                        > $tmp-zandakadaka
+
+cp $tmp-zandakadaka ${work}/zandakadaka
+LANG=C sort -k14,14 $tmp-keisan_totyu    |
+join1 key=14 $tmp-zandakadaka            |
+tee ${work}/keisan |
+self 1/10 15 11/14 16                    > $tmp-search_data
+# 1:立替日付       2:立替対象  3:対象者ID    4:入出金フラグ  5:立替方法
+# 6:立替項目フラグ 7:立替項目  8:摘要        9:入金額        10:出金額
+# 11:残高          12:所属建屋 13:所属フロア 14:所属ユニット 15:ID
+# 16:登録時間
+
+cat ${tmp}-search_data               |
+juni                                 |
+tee ${work}/sort |
+self 2/NF 1                          > $tmp-sort_zumi
+# 合計の計算
+cat ${tmp}-search_data               |
+tee ${work}/goukei |
+sm2 0 0 9 10                         |
+lcalc '$1,$2,$1-$2'                  > ${tmp}-goukei
+cat ${tmp}-goukei ${tmp}-sort_zumi
+rm -f ${tmp}-*
+exit 0
+

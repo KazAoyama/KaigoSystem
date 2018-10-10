@@ -1,0 +1,56 @@
+#!/bin/bash
+#
+# KINYUU_MASTER.CHECK : 金融マスタ 登録前チェック
+#
+# Written by S.Otsubo
+
+# ログ
+source /home/hands/E-LIFE/SYSTEM_SETTEI/CGI/SYSTEM_SETTEI.INI &> /dev/null
+source /home/hands/.bashrc &> /dev/null
+
+mkdir -p ${log_dir}/$(date +%Y%m%d)
+exec 2> ${log_dir}/$(date +%Y%m%d)/LOG.$(basename ${0}).${HOSTNAME}.$(date +%Y%m%d) ; set -xv
+
+#ゴミtmpの消去
+rm -f $tmp-*
+
+#------------------------------------------------------
+# パラメーターの取得
+dd bs=${CONTENT_LENGTH}        |
+cgi-name -d_ -i_               |
+LANG=C sort                    > $tmp-name
+#------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 必要な値の取得
+eval $(name-source $tmp-name)
+
+# ディレクトリ設定
+test_tbl_dir="${home_dir}/TEST/TBL"
+#--------------------------------------------------------
+
+
+#--------------------------------------------------------
+# 新規なのか上書きなのかチェック
+
+# 金融機関のみかどちらもかで分岐
+if [ "${is_kikan_check}" = "true" -a "${is_shiten_check}" = "true" ] ; then
+  # どちらもチェックする
+  # 機関・支店コードが存在しない場合は新規、それ以外は上書き
+  cjoin0 key=1/2 <(echo "${kikan_code} ${shiten_code}") ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_SHITEN_NAME > ${tmp}-shinki_check
+  [ -s ${tmp}-shinki_check ] && message="金融機関コード${kikan_code}、支店コード${shiten_code}の内容を上書きします" || message="入力された内容で新規登録します"
+else
+  # 金融機関のみチェックする
+  # 機関コードが存在しない場合は新規、それ以外は上書き
+  cjoin0 key=1 <(echo "${kikan_code}") ${home_dir}/TBL/KINYUU_MASTER/KINYUUKIKAN_NAME > ${tmp}-shinki_check
+  [ -s ${tmp}-shinki_check ] && message="金融機関コード${kikan_code}の内容を上書きします" || message="入力された内容で新規登録します"
+fi
+#--------------------------------------------------------
+
+echo -e 'Content-type:text/plain; \n\n' |
+cat - <(echo "${message}")
+
+
+rm -f ${tmp}-*
+exit 0
