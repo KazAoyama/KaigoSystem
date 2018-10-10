@@ -37,7 +37,7 @@ cp ${tmp}-name $work_dir/param_name
 
 #------------------------------------------------------------
 upl key=1 ${tmp}-cookie $tmp-name > $tmp-name.new0
-cp -p $tmp-name $tmp-name_origin
+#cp -p $tmp-name $tmp-name_origin
 mv -f $tmp-name.new0 $tmp-name
 
 #echo "USER_ID kaizen" >> $tmp-name
